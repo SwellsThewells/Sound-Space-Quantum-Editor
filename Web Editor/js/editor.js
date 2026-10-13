@@ -9,22 +9,14 @@
         Timing, Patterns, Easing, RenderMode, ObjectMode, clamp, roundEven, Formats,
     } = SSQE;
 
-    const STAGE_W = 1920, STAGE_H = 1080;
-    const TRACK = { x: 0, y: 0, w: 1920, h: 86 };
-    const GRID = { x: 810, y: 390, w: 300, h: 300 };
-    const TIMELINE = { x: 0, y: 1016, w: 1344, h: 64 };
-    const PLAY_PAUSE = { x: 1344, y: 1016, w: 64, h: 64 };
-    const TEMPO = { x: 1408, y: 1016, w: 512, h: 64 };
-    const MUSIC_VOLUME = { x: 1856, y: 760, w: 40, h: 256 };
-    const SFX_VOLUME = { x: 1792, y: 760, w: 40, h: 256 };
-    const MUSIC_MUTE = { x: 1868, y: 750, w: 16, h: 16 };
-    const SFX_MUTE = { x: 1804, y: 750, w: 16, h: 16 };
+    const G = SSQE.GUI;
 
-    const FONT = 'SSQEMain, "Source Sans Pro", "Segoe UI", Arial, sans-serif';
+    // current screen rects of the track and grid controls (updated on resize like Control.Resize)
+    let TRACK = { x: 0, y: 0, w: 1920, h: 86 };
+    let GRID = { x: 810, y: 390, w: 300, h: 300 };
 
     const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
     const fmtInt = n => Math.trunc(n).toLocaleString('en-US');
-    const fmtTime = ms => `${Math.trunc(ms / 60000)}:${String(Math.trunc(ms % 60000 / 1000)).padStart(2, '0')}`;
 
     // GuiGrid.objectLookup - which special object a grid key places
     const OBJECT_LOOKUP = {
@@ -80,12 +72,6 @@
             this.trackStartRel = 0;
             this.trackEndRel = 1;
 
-            // sliders
-            this.sliderDrag = null;
-            this.hoveringBookmark = null;
-            this.timelineWasPlaying = false;
-
-            this.toasts = [];
             this.clipboard = [];
             this.running = false;
             this.lastFrame = performance.now();
@@ -99,9 +85,11 @@
 
         start() {
             this.running = true;
+            this.ui = SSQE.buildEditorWindow(this);
+            this.win = new G.Window(this.app, this.ui.controls);
+            this.win.keys = this.keys;
             this.attachInput();
             this.resize();
-            this.panels = new SSQE.Panels(this);
             this.music.setTempo(this.map.tempo);
             this.raf = requestAnimationFrame(t => this.frame(t));
         }
@@ -112,7 +100,6 @@
             this.detachInput();
             if (this.music.isPlaying)
                 this.pauseMusic();
-            this.panels && this.panels.destroy();
         }
 
         // used while the web player runs a playtest on top of the editor
@@ -151,10 +138,11 @@
             this.app.scheduleCacheSave();
         }
 
+        // GuiWindowEditor.ShowInfo / ShowWarn / ShowError / ShowOther
         toast(text, kind = 'info') {
             const s = this.settings;
             const color = kind === 'warn' ? s.color2 : kind === 'error' ? [255, 200, 0] : kind === 'other' ? [255, 109, 0] : s.color1;
-            this.toasts = [{ text, color, time: performance.now() }];
+            this.ui && this.ui.Toast.show(text, color);
         }
 
         // ------------------------------------------------------------ music helpers (MusicPlayer.Play/Pause)
@@ -254,6 +242,7 @@
                 keydown: e => this.onKeyDown(e),
                 keyup: e => this.onKeyUp(e),
                 resize: () => this.resize(),
+                paste: e => this.onPaste(e),
                 contextmenu: e => {
                     if (e.target === this.canvas)
                         e.preventDefault();
@@ -270,6 +259,7 @@
             window.addEventListener('keydown', this.handlers.keydown);
             window.addEventListener('keyup', this.handlers.keyup);
             window.addEventListener('resize', this.handlers.resize);
+            window.addEventListener('paste', this.handlers.paste);
             window.addEventListener('contextmenu', this.handlers.contextmenu);
             window.addEventListener('blur', this.handlers.blur);
         }
@@ -283,6 +273,7 @@
             window.removeEventListener('keydown', h.keydown);
             window.removeEventListener('keyup', h.keyup);
             window.removeEventListener('resize', h.resize);
+            window.removeEventListener('paste', h.paste);
             window.removeEventListener('contextmenu', h.contextmenu);
             window.removeEventListener('blur', h.blur);
         }
@@ -294,18 +285,11 @@
             this.canvas.height = Math.floor(h * dpr);
             this.canvas.style.width = w + 'px';
             this.canvas.style.height = h + 'px';
-
-            this.scale = Math.min(w / STAGE_W, h / STAGE_H);
-            this.offsetX = (w - STAGE_W * this.scale) / 2;
-            this.offsetY = (h - STAGE_H * this.scale) / 2;
             this.dpr = dpr;
 
-            const stage = document.getElementById('editor-stage');
-            stage.style.transform = `translate(${this.offsetX}px, ${this.offsetY}px) scale(${this.scale})`;
-        }
-
-        toStage(e) {
-            return [(e.clientX - this.offsetX) / this.scale, (e.clientY - this.offsetY) / this.scale];
+            this.win.resize(w, h);
+            TRACK = this.ui.Track.rect;
+            GRID = this.ui.Grid.rect;
         }
 
         updateModifiers(e) {
@@ -318,70 +302,81 @@
             return e.target === this.canvas;
         }
 
+        // GuiWindow.Render -> MouseMove, then the grid / track MouseMove handlers
         onMouseMove(e) {
             this.updateModifiers(e);
-            const [x, y] = this.toStage(e);
+            const x = e.clientX, y = e.clientY;
             this.mouse.x = x;
             this.mouse.y = y;
 
+            this.win.mouseMove(x, y);
             this.gridMouseMove(x, y);
             this.trackMouseMove(x, y);
-            this.sliderMouseMove(x, y);
-            this.timelineHover(x, y);
         }
 
+        // GuiWindow.MouseDown: controls are visited in reverse order, so the track and grid come first
         onMouseDown(e) {
             this.updateModifiers(e);
-            if (!this.isCanvasEvent(e)) {
-                // GuiTrack.MouseDownRightGlobal: clicking elsewhere still clears the timing point selection
+            if (!this.isCanvasEvent(e))
                 return;
-            }
             if (document.activeElement && document.activeElement !== document.body)
                 document.activeElement.blur();
 
-            const [x, y] = this.toStage(e);
+            const x = e.clientX, y = e.clientY;
             this.mouse.x = x;
             this.mouse.y = y;
+            this.win.mouseMove(x, y);
+            this.win.buttonClicked = false;
 
             if (e.button === 0) {
                 this.mouse.left = true;
 
-                if (this.sliderMouseDown(x, y))
-                    return;
-
-                if (inRect(TRACK, x, y))
+                if (inRect(TRACK, x, y)) {
                     this.trackMouseDownLeft(x, y);
+                    this.win.buttonClicked = true;
+                }
                 this.trackMouseDownLeftGlobal(x, y);
-                this.gridMouseDownLeftGlobal(x, y);
+
+                if (!this.win.buttonClicked && !this.win.hoveringInteractive())
+                    this.gridMouseDownLeftGlobal(x, y);
+                if (inRect(GRID, x, y))
+                    this.win.buttonClicked = true;
+
+                this.win.mouseDown(x, y, 0);
             } else if (e.button === 2) {
                 this.mouse.right = true;
 
-                if (this.sliderMouseDownRight(x, y))
-                    return;
-
+                // GuiTrack.MouseDownRightGlobal
                 this.map.selectedPoint = null;
-                if (inRect(TRACK, x, y))
-                    this.trackMouseDownRight(x, y);
-                else
+                const hoveringList = this.ui.controls.some(c => c instanceof G.ButtonList && c.visible && c.hovering);
+                if (!inRect(TRACK, x, y) && !hoveringList)
                     this.map.clearSelected();
+                if (inRect(TRACK, x, y)) {
+                    this.trackMouseDownRight(x, y);
+                    this.win.buttonClicked = true;
+                }
+
+                this.win.mouseDown(x, y, 2);
             }
         }
 
         onMouseUp(e) {
             this.updateModifiers(e);
-            const [x, y] = this.toStage(e);
+            const x = e.clientX, y = e.clientY;
 
             if (e.button === 0 && this.mouse.left) {
                 this.mouse.left = false;
-                this.sliderMouseUp();
                 this.trackMouseUpLeft(x, y);
                 this.gridMouseUpLeftGlobal(x, y);
+                this.win.mouseUp(x, y, 0);
             } else if (e.button === 2 && this.mouse.right) {
                 this.mouse.right = false;
                 this.selecting = false;
+                this.win.mouseUp(x, y, 2);
             }
         }
 
+        // GuiWindowEditor.MouseScroll
         onWheel(e) {
             if (!this.isCanvasEvent(e))
                 return;
@@ -391,35 +386,45 @@
                 return;
 
             const delta = e.deltaY < 0 ? 1 : -1;
-            const [x, y] = this.toStage(e);
-
-            // scrolling over a slider adjusts it (GuiSlider)
-            for (const slider of this.sliders()) {
-                if (slider.wheel && inRect(slider.rect, x, y)) {
-                    slider.set(clamp(slider.get() + slider.step * delta, slider.min, slider.max));
-                    return;
-                }
-            }
+            this.win.scroll(e.clientX, e.clientY, delta);
+            if (this.win.root.consumesScroll())
+                return;
 
             if (this.keys.shift) {
                 const step = 0.5 * (this.keys.ctrl ? 1 : 2) * delta;
                 this.map.beatDivisor = clamp(this.map.beatDivisor + step, 0, 31);
-                this.panels && this.panels.refresh();
             } else if (this.keys.ctrl)
                 this.map.incrementZoom(delta);
             else
                 this.scroll(delta < 0 !== this.settings.reverseScroll, 1);
         }
 
+        // Windowing.TextboxFocused - canvas textboxes plus the HTML inputs of the floating windows
         textboxFocused() {
+            if (this.win.textboxFocused())
+                return true;
             const el = document.activeElement;
             return el && (el.tagName === 'INPUT' && !['checkbox', 'range', 'button', 'color', 'file'].includes(el.type) || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+        }
+
+        onPaste(e) {
+            if (this.win.textboxFocused()) {
+                e.preventDefault();
+                this.win.paste((e.clipboardData || window.clipboardData).getData('text'));
+            }
         }
 
         onKeyDown(e) {
             this.updateModifiers(e);
             if (this.app.dialogOpen())
                 return;
+
+            if (this.win.textboxFocused()) {
+                const handled = this.win.keyDown(e);
+                if (handled === true || (e.key === ' '))
+                    e.preventDefault();
+                return;
+            }
             if (this.textboxFocused()) {
                 if (e.code === 'Escape')
                     document.activeElement.blur();
@@ -427,19 +432,27 @@
             }
 
             const binds = SSQE.Settings.compareKeybind(this.settings, e.code, this.keys.ctrl, this.keys.alt, this.keys.shift);
-            if (binds.length || ['Space', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code))
+            if (binds.length || ['Space', 'ArrowLeft', 'ArrowRight', 'Tab', 'F11'].includes(e.code))
                 e.preventDefault();
 
             for (const bind of binds)
                 this.runKeybind(bind);
 
             // GuiTrack.KeyDown
-            if (e.code === 'Space' && !e.repeat && (!this.trackDragging || this.draggingObjects.length || this.draggingDuration) && this.sliderDrag?.name !== 'timeline')
+            if (e.code === 'Space' && !e.repeat && (!this.trackDragging || this.draggingObjects.length || this.draggingDuration) && !this.ui.Timeline.dragging)
                 this.togglePlay();
             if (e.code === 'ArrowLeft' || e.code === 'ArrowRight')
                 this.scroll(e.code === 'ArrowLeft');
             if (e.code === 'Escape')
                 this.map.clearSelected();
+
+            // MainWindow: F11 toggles fullscreen
+            if (e.code === 'F11') {
+                if (document.fullscreenElement)
+                    document.exitFullscreen().catch(() => { });
+                else
+                    document.documentElement.requestFullscreen().catch(() => { });
+            }
         }
 
         onKeyUp(e) {
@@ -557,7 +570,6 @@
             SSQE.Settings.save(this.settings);
             this.music.updateVolume();
             this.app.applyTheme();
-            this.panels && this.panels.refresh();
         }
 
         // ------------------------------------------------------------ editing actions
@@ -707,6 +719,10 @@
         }
 
         // ------------------------------------------------------------ grid (GuiGrid.cs)
+
+        get gridTextScale() {
+            return GRID.w / 300;
+        }
 
         get cellSize() {
             return GRID.w / 3;
@@ -1109,130 +1125,6 @@
             }
         }
 
-        // ------------------------------------------------------------ sliders (GuiSlider / GuiSliderTimeline)
-
-        sliders() {
-            const s = this.settings;
-            return [
-                {
-                    name: 'timeline', rect: TIMELINE, min: 0, max: this.totalTime || 1, step: (this.totalTime || 1) / 2000,
-                    get: () => this.currentTime, set: v => this.currentTime = v, wheel: false,
-                },
-                {
-                    name: 'tempo', rect: TEMPO, min: 0, max: 1.4, step: 0.05, def: 0.9,
-                    get: () => this.map.tempoSlider, set: v => this.setTempoSlider(v), wheel: true,
-                },
-                {
-                    name: 'music', rect: MUSIC_VOLUME, min: 0, max: 1, step: 0.01, def: 0.05, reverse: true,
-                    get: () => s.masterVolume, set: v => { s.masterVolume = v; this.settingsChanged(); }, wheel: true,
-                },
-                {
-                    name: 'sfx', rect: SFX_VOLUME, min: 0, max: 1, step: 0.01, def: 0.1, reverse: true,
-                    get: () => s.sfxVolume, set: v => { s.sfxVolume = v; this.settingsChanged(); }, wheel: true,
-                },
-            ];
-        }
-
-        sliderLine(slider) {
-            const r = slider.rect;
-            return r.w > r.h
-                ? { x: r.x + r.h / 2, y: r.y + r.h / 2 - 1.5, w: r.w - r.h, h: 3, horizontal: true }
-                : { x: r.x + r.w / 2 - 1.5, y: r.y + r.w / 2, w: 3, h: r.h - r.w, horizontal: false };
-        }
-
-        sliderSetFromMouse(slider, x, y) {
-            const line = this.sliderLine(slider);
-            let progress = line.horizontal ? (x - line.x) / line.w : (y - line.y) / line.h;
-            if (slider.reverse)
-                progress = 1 - progress;
-            const step = slider.step / slider.max;
-            progress = Math.round(progress / step) * step;
-            slider.set(clamp(slider.max * progress, slider.min, slider.max));
-        }
-
-        sliderMouseDown(x, y) {
-            if (inRect(PLAY_PAUSE, x, y)) {
-                this.togglePlay();
-                return true;
-            }
-            if (inRect(MUSIC_MUTE, x, y)) {
-                this.settings.muteMusic = !this.settings.muteMusic;
-                this.settingsChanged();
-                return true;
-            }
-            if (inRect(SFX_MUTE, x, y)) {
-                this.settings.muteSfx = !this.settings.muteSfx;
-                this.settingsChanged();
-                return true;
-            }
-
-            if (this.hoveringBookmark) {
-                if (this.music.isPlaying)
-                    this.pauseMusic();
-                this.currentTime = this.keys.shift ? this.hoveringBookmark.endMs : this.hoveringBookmark.ms;
-                return true;
-            }
-
-            for (const slider of this.sliders()) {
-                if (inRect(slider.rect, x, y)) {
-                    if (slider.name === 'timeline') {
-                        this.timelineWasPlaying = this.music.isPlaying;
-                        if (this.music.isPlaying)
-                            this.pauseMusic();
-                    }
-                    this.sliderDrag = slider;
-                    this.sliderSetFromMouse(slider, x, y);
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        sliderMouseDownRight(x, y) {
-            if (this.hoveringBookmark) {
-                if (this.music.isPlaying)
-                    this.pauseMusic();
-                this.currentTime = this.keys.shift ? this.hoveringBookmark.ms : this.hoveringBookmark.endMs;
-                return true;
-            }
-
-            for (const slider of this.sliders()) {
-                if (inRect(slider.rect, x, y)) {
-                    if (slider.def !== undefined)
-                        slider.set(slider.def);
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        sliderMouseMove(x, y) {
-            if (this.sliderDrag) {
-                const slider = this.sliders().find(s => s.name === this.sliderDrag.name);
-                this.sliderSetFromMouse(slider, x, y);
-            }
-        }
-
-        sliderMouseUp() {
-            if (this.sliderDrag && this.sliderDrag.name === 'timeline' && this.timelineWasPlaying && !this.settings.pauseScroll)
-                this.playMusic();
-            this.sliderDrag = null;
-        }
-
-        timelineHover(x, y) {
-            const line = this.sliderLine({ rect: TIMELINE });
-            const yPos = line.y + line.h / 2;
-            const max = this.totalTime || 1;
-            this.hoveringBookmark = null;
-
-            for (const b of this.map.bookmarks) {
-                const xPos = line.x + b.ms / max * line.w;
-                const endX = line.x + b.endMs / max * line.w;
-                if (inRect({ x: xPos - 4, y: yPos - 40, w: 8 + (endX - xPos), h: 8 }, x, y))
-                    this.hoveringBookmark = b;
-            }
-        }
-
         // ------------------------------------------------------------ frame
 
         frame(now) {
@@ -1274,35 +1166,33 @@
             return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
         }
 
-        text(str, x, y, size, color, align = 'left', baseline = 'top') {
-            const ctx = this.ctx;
-            ctx.font = `${size}px ${FONT}`;
-            ctx.fillStyle = color;
-            ctx.textAlign = align;
-            ctx.textBaseline = baseline;
-            ctx.fillText(str, x, y);
+        // draws text with the editor's font layout; (x, y) is positioned according to align/baseline
+        text(str, x, y, size, color, align = 'left', baseline = 'top', font = 'main') {
+            if (!str)
+                return;
+            str = String(str);
+            if (align === 'center')
+                x -= G.Text.width(str, size, font) / 2;
+            else if (align === 'right')
+                x -= G.Text.width(str, size, font);
+            const h = G.Text.height(size, font) * str.split('\n').length;
+            if (baseline === 'middle')
+                y -= h / 2;
+            else if (baseline === 'bottom')
+                y -= h;
+            G.Text.draw(this.ctx, str, x, y, size, font, color);
         }
 
         render(frametime) {
             const ctx = this.ctx;
-            const s = this.settings;
-            const dpr = this.dpr;
-
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-            ctx.setTransform(this.scale * dpr, 0, 0, this.scale * dpr, this.offsetX * dpr, this.offsetY * dpr);
+            ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
-            ctx.fillStyle = `rgba(30,30,30,${s.editorBGOpacity / 255})`;
-            ctx.fillRect(0, 0, STAGE_W, STAGE_H);
-
-            this.renderTrack();
-            this.renderGrid();
-            this.renderBottom();
-            this.renderLabels();
-            this.renderToast();
-
-            this.panels && this.panels.update();
+            this.ui.update();
+            this.win.process(frametime);
+            this.win.render(ctx);
         }
 
         // ------------------------------------------------------------ grid rendering
@@ -1311,7 +1201,7 @@
             const ctx = this.ctx;
             ctx.beginPath();
             if (this.settings.gridSquircles && ctx.roundRect)
-                ctx.roundRect(x, y, w, h, Math.min(w, h) * 0.125 * 1.5);
+                ctx.roundRect(x, y, w, h, Math.min(w, h) * (this.settings.gridSquircleRadius ?? 0.125) * 1.5);
             else
                 ctx.rect(x, y, w, h);
             if (fill) {
@@ -1346,6 +1236,14 @@
 
         line(x1, y1, x2, y2, color, width = 1) {
             const ctx = this.ctx;
+            // GL draws thin lines as whole pixels; snap straight 1px lines to pixel centres so they aren't blurred away
+            if (width === 1) {
+                const snap = v => Math.floor(v) + 0.5;
+                if (x1 === x2)
+                    x1 = x2 = snap(x1);
+                if (y1 === y2)
+                    y1 = y2 = snap(y1);
+            }
             ctx.beginPath();
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
@@ -1412,7 +1310,7 @@
                     const gx = i % 3, gy = Math.trunc(i / 3);
                     if (map.renderMode !== RenderMode.Notes && map.objectMode !== ObjectMode.Note && (!lookup || !lookup[`${2 - gx},${2 - gy}`]))
                         return;
-                    this.text(SSQE.Settings.keyName(code), GRID.x + gx * cell + cell / 2, GRID.y + gy * cell + cell / 2, 38, 'rgb(52,52,52)', 'center', 'middle');
+                    this.text(SSQE.Settings.keyName(code), GRID.x + gx * cell + cell / 2, GRID.y + gy * cell + cell / 2, 38 * this.gridTextScale, 'rgb(52,52,52)', 'center', 'middle');
                 });
             }
 
@@ -1463,7 +1361,7 @@
 
             if (s.gridNumbers) {
                 for (const d of drawn)
-                    this.text(fmtInt(d.i + 1), d.x + noteSize / 2, d.y + noteSize / 2, 28, this.color(4, d.progress), 'center', 'middle');
+                    this.text(fmtInt(d.i + 1), d.x + noteSize / 2, d.y + noteSize / 2, 28 * this.gridTextScale, this.color(4, d.progress), 'center', 'middle');
             }
 
             // special objects
@@ -1668,25 +1566,10 @@
             ctx.lineWidth = 1;
             ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
 
-            // waveform
+            // waveform (Waveform.Render: a line strip through the left/right samples of each 2ms step)
             const wave = this.music.waveform;
-            if (s.waveform && wave) {
-                const waveOffset = this.music.musicOffset - 15;
-                const start = Math.max(0, Math.floor(msX(0)));
-                const end = Math.min(W, Math.ceil(msX(totalTime)));
-                ctx.fillStyle = this.color(3);
-                for (let x = start; x < end; x++) {
-                    const ms = (x - cursorPos) * pxToMs + currentTime - waveOffset;
-                    const [lo, hi] = wave.range(ms, ms + pxToMs);
-                    if (s.classicWaveform) {
-                        const amp = Math.max(-lo, hi);
-                        ctx.fillRect(x, H - amp * H, 1, amp * H);
-                    } else {
-                        const top = H / 2 - hi * H / 2, bottom = H / 2 - lo * H / 2;
-                        ctx.fillRect(x, top, 1, Math.max(1, bottom - top));
-                    }
-                }
-            }
+            if (s.waveform && wave)
+                this.renderWaveform(wave, msX, minMs, maxMs, H);
 
             this.hoveringObject = null;
             this.hoveringDuration = null;
@@ -1944,18 +1827,8 @@
                 this.line(msX(this.selectMsEnd), 0, msX(this.selectMsEnd), H, this.color(5));
             }
 
-            // labels
-            const size = H / 4;
-            const anyHover = labels.some(l => l.hover);
-            for (const l of labels) {
-                const alpha = anyHover && !l.hover ? 0.2 : 1;
-                this.text(l.a, l.x, H, size, this.color(0, alpha));
-                this.text(l.b, l.x, H * 1.2, size, this.color(1, alpha));
-            }
-            for (const l of bpmLabels) {
-                this.text(l.a, l.x, H + H / 2, size, this.color(0));
-                this.text(l.b, l.x, H * 1.2 + H / 2, size, this.color(1));
-            }
+            // labels are drawn in the text pass (GuiTrack.PostRender)
+            this.trackLabels = { labels, bpmLabels, H };
 
             // hit sounds and metronome
             if (toPlay !== this.lastPlayedObject) {
@@ -1976,178 +1849,61 @@
             }
         }
 
+        renderWaveform(wave, msX, minMs, maxMs, H) {
+            const ctx = this.ctx;
+            const offset = this.music.musicOffset - 15;
+            const stepMs = wave.resolution * 1000;
+            const first = Math.max(0, Math.floor((minMs - offset) / stepMs) - 1);
+            const last = Math.min(wave.count, Math.ceil((maxMs - offset) / stepMs) + 1);
+            if (last <= first)
+                return;
+
+            ctx.beginPath();
+            if (this.settings.classicWaveform) {
+                for (let i = first; i < last; i++) {
+                    const x = msX(i * stepMs + offset);
+                    const y = (2 - Math.max(Math.abs(wave.left[i]), Math.abs(wave.right[i])) * 2) * H / 2;
+                    i === first ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+                }
+            } else {
+                for (let i = first; i < last; i++) {
+                    const x = msX(i * stepMs + offset);
+                    if (i === first)
+                        ctx.moveTo(x, (wave.left[i] + 1) * H / 2);
+                    else
+                        ctx.lineTo(x, (wave.left[i] + 1) * H / 2);
+                    ctx.lineTo(x, (wave.right[i] + 1) * H / 2);
+                }
+            }
+            ctx.strokeStyle = this.color(3);
+            ctx.lineWidth = 0.75;
+            ctx.stroke();
+        }
+
+        // GuiTrack.PostRender
+        renderTrackText() {
+            const data = this.trackLabels;
+            if (!data)
+                return;
+            const { labels, bpmLabels, H } = data;
+            const size = H / 4;
+            const anyHover = labels.some(l => l.hover);
+            for (const l of labels) {
+                const alpha = anyHover && !l.hover ? 0.2 : 1;
+                this.text(l.a, l.x, H, size, this.color(0, alpha));
+                this.text(l.b, l.x, H * 1.2, size, this.color(1, alpha));
+            }
+            for (const l of bpmLabels) {
+                this.text(l.a, l.x, H + H / 2, size, this.color(0));
+                this.text(l.b, l.x, H * 1.2 + H / 2, size, this.color(1));
+            }
+        }
+
         strokeBox(x, y, w, h, color) {
             const ctx = this.ctx;
             ctx.strokeStyle = color;
             ctx.lineWidth = 1;
             ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-        }
-
-        // ------------------------------------------------------------ bottom bar (timeline, play/pause, tempo, volumes)
-
-        renderSlider(slider) {
-            const ctx = this.ctx;
-            const line = this.sliderLine(slider);
-            const value = slider.get();
-            let progress = slider.max === 0 ? 0.5 : value / slider.max;
-            if (slider.reverse)
-                progress = 1 - progress;
-
-            ctx.fillStyle = 'rgb(75,75,75)';
-            ctx.beginPath();
-            ctx.roundRect ? ctx.roundRect(line.x, line.y, line.w, line.h, 1.5) : ctx.rect(line.x, line.y, line.w, line.h);
-            ctx.fill();
-
-            const cx = line.horizontal ? line.x + line.w * progress : line.x + line.w / 2;
-            const cy = line.horizontal ? line.y + line.h / 2 : line.y + line.h * progress;
-
-            const hovering = inRect(slider.rect, this.mouse.x, this.mouse.y) || this.sliderDrag?.name === slider.name;
-            ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-            ctx.fill();
-            if (hovering) {
-                ctx.beginPath();
-                for (let k = 0; k < 6; k++) {
-                    const a = (90 + k * 60) * Math.PI / 180;
-                    k ? ctx.lineTo(cx + Math.cos(a) * 12, cy + Math.sin(a) * 12) : ctx.moveTo(cx + Math.cos(a) * 12, cy + Math.sin(a) * 12);
-                }
-                ctx.closePath();
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-            }
-            return line;
-        }
-
-        renderBottom() {
-            const ctx = this.ctx;
-            const map = this.map;
-            const [timeline, tempo, music, sfx] = this.sliders();
-            const max = this.totalTime || 1;
-
-            // timeline: visible track range, ticks for notes / points / objects and bookmarks
-            const line = this.sliderLine(timeline);
-            const y = line.y + line.h / 2;
-
-            ctx.fillStyle = 'rgb(75,75,75)';
-            ctx.fillRect(line.x, line.y, line.w, line.h);
-            ctx.fillStyle = this.color(2);
-            ctx.fillRect(line.x + this.trackStartRel * line.w, line.y, (this.trackEndRel - this.trackStartRel) * line.w, line.h);
-
-            const ticks = (items, y1, y2, width) => {
-                let prevX = -1;
-                ctx.fillStyle = '#fff';
-                for (const o of items) {
-                    const x = line.x + o.ms / max * line.w;
-                    if (x - 1 >= prevX) {
-                        ctx.fillRect(x - width / 2, Math.min(y1, y2), width, Math.abs(y2 - y1));
-                        prevX = x;
-                    }
-                }
-            };
-            ticks(map.notes.items, y + 3, y + 5, 1);
-            ticks(map.timingPoints, y - 10, y - 6, 2);
-            ticks(map.vfxObjects.items, y + 7, y + 9, 2);
-            ticks(map.specialObjects.items, y + 7, y + 9, 2);
-
-            for (const b of map.bookmarks) {
-                const x = line.x + b.ms / max * line.w;
-                const endX = line.x + b.endMs / max * line.w;
-                ctx.fillStyle = this.hoveringBookmark === b ? this.color(1, 0.75) : this.color(2, 0.75);
-                ctx.fillRect(x - 4, y - 40, 8 + (endX - x), 8);
-            }
-            if (this.hoveringBookmark) {
-                const x = line.x + this.hoveringBookmark.ms / max * line.w;
-                this.text(this.hoveringBookmark.text, x, y - 40, 16, this.color(1), 'left', 'bottom');
-            }
-
-            // progress marker
-            const progress = this.currentTime / max;
-            const cx = line.x + line.w * progress;
-            ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(cx, y, 4, 0, Math.PI * 2);
-            ctx.fill();
-
-            this.renderSlider(tempo);
-            this.renderSlider(music);
-            this.renderSlider(sfx);
-
-            // play / pause button
-            const p = PLAY_PAUSE;
-            ctx.fillStyle = inRect(p, this.mouse.x, this.mouse.y) ? '#fff' : 'rgba(255,255,255,0.75)';
-            if (this.music.isPlaying) {
-                ctx.fillRect(p.x + 22, p.y + 20, 7, 24);
-                ctx.fillRect(p.x + 36, p.y + 20, 7, 24);
-            } else {
-                ctx.beginPath();
-                ctx.moveTo(p.x + 23, p.y + 18);
-                ctx.lineTo(p.x + 45, p.y + 32);
-                ctx.lineTo(p.x + 23, p.y + 46);
-                ctx.closePath();
-                ctx.fill();
-            }
-
-            // mute toggles
-            for (const [r, muted] of [[MUSIC_MUTE, this.settings.muteMusic], [SFX_MUTE, this.settings.muteSfx]]) {
-                ctx.strokeStyle = muted ? this.color(8) : this.color(0);
-                ctx.lineWidth = 1.5;
-                ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
-                if (muted) {
-                    this.line(r.x + 3, r.y + 3, r.x + r.w - 3, r.y + r.h - 3, this.color(8), 1.5);
-                    this.line(r.x + r.w - 3, r.y + 3, r.x + 3, r.y + r.h - 3, this.color(8), 1.5);
-                } else {
-                    ctx.fillStyle = this.color(0);
-                    ctx.fillRect(r.x + 4, r.y + 4, r.w - 8, r.h - 8);
-                }
-            }
-        }
-
-        renderLabels() {
-            const s = this.settings;
-            const map = this.map;
-            const c1 = this.color(0), c2 = this.color(1);
-            const total = this.totalTime;
-            const line = this.sliderLine({ rect: TIMELINE });
-
-            this.text('Zoom:', 565 + 40, 172 + 15, 28, c1, 'center', 'middle');
-            this.text(`${Math.round(map.zoom * 100)}%`, 640 + 40, 172 + 15, 28, c2, 'center', 'middle');
-
-            if (this.clickMode !== 'both')
-                this.text(`Click: ${this.clickMode === 'select' ? 'Select' : 'Place'}`, GRID.x + GRID.w / 2, 816 + 21, 28, c1, 'center', 'middle');
-
-            this.text(`PLAYBACK SPEED - ${Math.round(map.tempo * 100)}%`, TEMPO.x + TEMPO.w / 2, 1048 + 15, 26, c1, 'center', 'middle');
-            this.text('Music', MUSIC_VOLUME.x + 20, 720 + 12, 22, c1, 'center', 'middle');
-            this.text('SFX', SFX_VOLUME.x + 20, 720 + 12, 22, c1, 'center', 'middle');
-            this.text(String(Math.round(s.masterVolume * 100)), MUSIC_VOLUME.x + 20, 996 + 25, 22, c1, 'center', 'middle');
-            this.text(String(Math.round(s.sfxVolume * 100)), SFX_VOLUME.x + 20, 996 + 25, 22, c1, 'center', 'middle');
-
-            this.text(fmtTime(this.currentTime), 32, 1048 + 16, 26, c1, 'center', 'middle');
-            this.text(fmtTime(total), 1280 + 32, 1048 + 16, 26, c1, 'center', 'middle');
-            const progress = this.currentTime / (total || 1);
-            this.text(`${fmtInt(this.currentTime)}ms`, line.x + line.w * progress, 1012 + 16, 24, c1, 'center', 'middle');
-
-            const count = map.renderMode === RenderMode.Notes ? `${fmtInt(map.notes.length)} Notes`
-                : map.renderMode === RenderMode.VFX ? `${fmtInt(map.vfxObjects.length)} Objects` : `${fmtInt(map.specialObjects.length)} Objects`;
-            this.text(count, TIMELINE.w / 2, 1048 + 16, 26, c1, 'center', 'middle');
-
-            // lyric / fever previews in extra object mode
-            if (map.renderMode === RenderMode.Special) {
-                const mode = map.objectMode;
-                if (mode === ObjectMode.Disabled || mode === ObjectMode.Lyric) {
-                    const [text, alpha] = this.lyricPreview();
-                    this.text(text, STAGE_W / 2, 860 + 28, 48, this.color(1, alpha), 'center', 'middle');
-                }
-                if (mode === ObjectMode.Disabled || mode === ObjectMode.Fever) {
-                    const t = this.currentTime;
-                    if (map.specialObjects.items.some(o => o instanceof Fever && t >= o.ms && t <= o.ms + o.duration)) {
-                        this.ctx.strokeStyle = this.color(10, 0.8);
-                        this.ctx.lineWidth = 6;
-                        this.ctx.strokeRect(GRID.x - 20, GRID.y - 20, GRID.w + 40, GRID.h + 40);
-                    }
-                }
-            }
         }
 
         // GuiWindowEditor.Render lyric preview
@@ -2193,22 +1949,175 @@
                 text = text.slice(0, -1);
             return [text, alpha];
         }
+    }
 
-        renderToast() {
-            const toast = this.toasts[0];
-            if (!toast)
-                return;
-            const age = (performance.now() - toast.time) / 1000;
-            if (age > 2) {
-                this.toasts = [];
-                return;
-            }
-            const alpha = age < 1.5 ? 1 : 1 - (age - 1.5) / 0.5;
-            const y = 960 - Math.min(age, 0.15) / 0.15 * 10;
-            this.text(toast.text, STAGE_W / 2, y, 34, this.rgba(toast.color, alpha), 'center', 'middle');
+    // GuiGrid / GuiTrack as controls in the editor window: they draw through the editor
+    class GridControl extends G.Control {
+        draw() {
+            this.editor.renderGrid();
         }
     }
 
+    class TrackControl extends G.Control {
+        draw() {
+            this.editor.renderTrack();
+        }
+
+        drawText() {
+            this.editor.renderTrackText();
+        }
+    }
+
+    // GuiSliderTimeline
+    class TimelineSlider extends G.Slider {
+        init() {
+            super.init();
+            this.canReset = false;
+            this.playRightClickSound = false;
+            this.hoveringBookmark = null;
+            this.wasPlaying = false;
+            this.get = () => this.editor.currentTime;
+            this.set = v => this.editor.currentTime = v;
+            this.max = () => this.editor.totalTime || 1;
+        }
+
+        get step() {
+            return (this.editor.totalTime || 1) / 2000;
+        }
+
+        set step(v) { }
+
+        lineRectT() {
+            const r = this.rect;
+            return { x: r.x + r.h / 2, y: r.y + r.h / 2 - 1.5, w: r.w - r.h, h: 3 };
+        }
+
+        draw(ctx) {
+            const e = this.editor;
+            const map = e.map;
+            const line = this.lineRectT();
+            const max = e.totalTime || 1;
+            const y = line.y + line.h / 2;
+
+            G.fillSquircle(ctx, line, this.cornerRadius, e.settings.color2);
+            ctx.fillStyle = e.color(2);
+            ctx.fillRect(line.x + e.trackStartRel * line.w, line.y, (e.trackEndRel - e.trackStartRel) * line.w, line.h);
+
+            // progress marker + hover (GuiSlider.Draw)
+            const [cx, cy] = [line.x + line.w * (e.currentTime / max), y];
+            ctx.beginPath();
+            ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+            ctx.fillStyle = e.color(0);
+            ctx.fill();
+            const hover = this.anims.hover.value;
+            if (hover > 0) {
+                ctx.beginPath();
+                const radius = 12 * hover, rot = (90 * hover) * Math.PI / 180;
+                for (let k = 0; k < 6; k++) {
+                    const a = rot + k * Math.PI / 3;
+                    k ? ctx.lineTo(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius) : ctx.moveTo(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius);
+                }
+                ctx.closePath();
+                ctx.strokeStyle = e.color(0);
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+
+            // bookmarks
+            for (const b of map.bookmarks) {
+                const x = line.x + b.ms / max * line.w;
+                const endX = line.x + b.endMs / max * line.w;
+                ctx.fillStyle = this.hoveringBookmark === b ? e.color(1, 0.75) : e.color(2, 0.75);
+                ctx.fillRect(x - 4, y - 40, 8 + (endX - x), 8);
+            }
+
+            // note / point / object ticks
+            const widthDiff = (this.window ? this.window.width : 1920) / 1920;
+            const ticks = (items, y1, y2, width) => {
+                let prevX = -1;
+                ctx.fillStyle = '#fff';
+                for (const o of items) {
+                    const x = line.x + o.ms * (line.w / max);
+                    if (x - 1 >= prevX) {
+                        ctx.fillRect(x - width / 2, Math.min(y1, y2), width, Math.abs(y2 - y1));
+                        prevX = x;
+                    }
+                }
+            };
+            ticks(map.notes.items, y + 5, y + 3, 1 * widthDiff);
+            ticks(map.timingPoints, y - 10, y - 6, 2 * widthDiff);
+            ticks(map.vfxObjects.items, y + 9, y + 7, 2 * widthDiff);
+            ticks(map.specialObjects.items, y + 9, y + 7, 2 * widthDiff);
+        }
+
+        drawText(ctx) {
+            if (!this.hoveringBookmark)
+                return;
+            const line = this.lineRectT();
+            const max = this.editor.totalTime || 1;
+            const x = line.x + this.hoveringBookmark.ms / max * line.w;
+            const y = line.y + line.h / 2;
+            G.Text.draw(ctx, this.hoveringBookmark.text, x, y - 40 - G.Text.height(16), 16, 'main', this.editor.settings.color2);
+        }
+
+        mouseMove(x, y) {
+            super.mouseMove(x, y);
+            const line = this.lineRectT();
+            const yPos = line.y + line.h / 2;
+            const max = this.editor.totalTime || 1;
+            this.hoveringBookmark = null;
+            for (const b of this.editor.map.bookmarks) {
+                const xPos = line.x + b.ms / max * line.w;
+                const endX = line.x + b.endMs / max * line.w;
+                if (inRect({ x: xPos - 4, y: yPos - 40, w: 8 + (endX - xPos), h: 8 }, x, y))
+                    this.hoveringBookmark = b;
+            }
+        }
+
+        mouseDownLeft(x, y, window) {
+            const e = this.editor;
+            if (!this.hoveringBookmark) {
+                this.wasPlaying = e.music.isPlaying;
+                if (e.music.isPlaying)
+                    e.pauseMusic();
+            }
+            super.mouseDownLeft(x, y, window);
+        }
+
+        mouseDownLeftGlobal(x, y, window) {
+            const e = this.editor;
+            if (this.hoveringBookmark) {
+                if (e.music.isPlaying)
+                    e.pauseMusic();
+                e.currentTime = e.keys.shift ? this.hoveringBookmark.endMs : this.hoveringBookmark.ms;
+            }
+            super.mouseDownLeftGlobal(x, y, window);
+        }
+
+        mouseUpLeft(x, y) {
+            if (this.dragging && this.wasPlaying && !this.editor.settings.pauseScroll)
+                this.editor.playMusic();
+            super.mouseUpLeft(x, y);
+        }
+
+        mouseDownRightGlobal(x, y, window) {
+            const e = this.editor;
+            if (this.hoveringBookmark) {
+                if (e.music.isPlaying)
+                    e.pauseMusic();
+                e.currentTime = e.keys.shift ? this.hoveringBookmark.ms : this.hoveringBookmark.endMs;
+            }
+            super.mouseDownRightGlobal(x, y, window);
+        }
+    }
+
+    // the hover area of the timeline covers the bookmarks above the line as well
+    TimelineSlider.prototype.contains = function (x, y) {
+        return G.Control.prototype.contains.call(this, x, y) || !!this.hoveringBookmark;
+    };
+
+    SSQE.GridControl = GridControl;
+    SSQE.TrackControl = TrackControl;
+    SSQE.TimelineSlider = TimelineSlider;
     SSQE.Editor = Editor;
-    SSQE.EditorLayout = { STAGE_W, STAGE_H, TRACK, GRID };
 })();

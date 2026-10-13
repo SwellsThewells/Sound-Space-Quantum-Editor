@@ -226,59 +226,35 @@
 
     // ---------------------------------------------------------------- waveform
 
+    // Waveform.Load: one left/right sample pair every 2ms (Settings.waveformDetail = 5), normalised to the peak
     class Waveform {
         constructor(audio) {
-            // 2ms buckets of min/max over all channels (Settings.waveformDetail = 5 -> 1/500s)
             this.resolution = 0.002;
-            const rate = audio.sampleRate;
-            const per = Math.max(1, Math.round(rate * this.resolution));
+            const per = audio.sampleRate * this.resolution;
             const length = audio.length;
-            const count = Math.ceil(length / per);
-            const min = new Float32Array(count);
-            const max = new Float32Array(count);
-            const channels = [];
-            for (let c = 0; c < audio.numberOfChannels; c++)
-                channels.push(audio.getChannelData(c));
+            const count = Math.floor(length / per);
+            const l = audio.getChannelData(0);
+            const r = audio.numberOfChannels > 1 ? audio.getChannelData(1) : l;
+            const left = new Float32Array(count);
+            const right = new Float32Array(count);
 
             let peak = 0;
-            for (let b = 0; b < count; b++) {
-                let lo = 0, hi = 0;
-                const end = Math.min(length, (b + 1) * per);
-                for (let i = b * per; i < end; i += 4) {
-                    for (const ch of channels) {
-                        const v = ch[i];
-                        if (v < lo) lo = v;
-                        if (v > hi) hi = v;
-                    }
-                }
-                min[b] = lo;
-                max[b] = hi;
-                peak = Math.max(peak, -lo, hi);
+            for (let i = 0; i < count; i++) {
+                const index = Math.min(length - 1, Math.round((i + 1) * per));
+                left[i] = l[index];
+                right[i] = r[index];
+                peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]));
             }
 
             if (peak > 0)
-                for (let b = 0; b < count; b++) {
-                    min[b] /= peak;
-                    max[b] /= peak;
+                for (let i = 0; i < count; i++) {
+                    left[i] /= peak;
+                    right[i] /= peak;
                 }
 
-            this.min = min;
-            this.max = max;
+            this.left = left;
+            this.right = right;
             this.count = count;
-        }
-
-        // returns [min, max] (-1..1) for a time range in ms of the song
-        range(startMs, endMs) {
-            let a = Math.floor(startMs / 1000 / this.resolution);
-            let b = Math.ceil(endMs / 1000 / this.resolution);
-            a = Math.max(0, a);
-            b = Math.min(this.count, Math.max(b, a + 1));
-            let lo = 0, hi = 0;
-            for (let i = a; i < b; i++) {
-                if (this.min[i] < lo) lo = this.min[i];
-                if (this.max[i] > hi) hi = this.max[i];
-            }
-            return [lo, hi];
         }
     }
 

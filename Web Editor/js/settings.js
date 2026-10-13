@@ -109,6 +109,22 @@
         modchartGame: 'Novastra',
         modchartStyle: 0,
         modchartDirection: 0,
+
+        // settings screen (most only matter to the desktop renderer, but are kept so the screen matches)
+        skipDownload: true,
+        useVSync: false,
+        checkUpdates: true,
+        limitPlayerFPS: false,
+        lowerBackgroundFPS: true,
+        controlGradients: true,
+        msaa: true,
+        waveformDetail: 5,
+        fontScale: 1,
+        gridSquircleDetail: 8,
+        gridSquircleRadius: 0.125,
+        fpsLimit: 60,
+        createGame: 'Sound Space',
+        playtestGame: 'SSQE Player',
     };
 
     const clone = v => JSON.parse(JSON.stringify(v));

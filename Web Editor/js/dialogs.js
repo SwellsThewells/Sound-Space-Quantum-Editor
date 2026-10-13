@@ -1,9 +1,94 @@
 'use strict';
 
-// Port of NewGUI/Forms (TimingsWindow, BookmarksWindow, ExportSSPM, BPMTapper) and NewGUI/Dialogs (MessageDialog)
+// Port of NewGUI/Forms (TimingsWindow, BookmarksWindow, ExportSSPM, BPMTapper - Avalonia windows, laid out from their
+// .axaml files) and NewGUI/Dialogs/MessageDialog (the in-editor message box from GuiWindowDialog)
 (function () {
     const { TimingPoint, Bookmark, Timing, DIFFICULTIES } = SSQE;
     const el = (...a) => SSQE.el(...a);
+
+    // absolutely positioned element inside an Avalonia panel
+    const at = (node, x, y, w, h) => {
+        Object.assign(node.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+        return node;
+    };
+    const aButton = (text, onClick, x, y, w, h) => at(el('button', { class: 'av-button', type: 'button', onclick: onClick }, text), x, y, w, h);
+    const aLabel = (text, x, y, w, h, cls = '') => at(el('div', { class: `av-label ${cls}` }, text), x, y, w, h);
+    const aBox = (x, y, w, h, value = '', cls = '') => {
+        const box = at(el('input', { type: 'text', class: `av-textbox ${cls}`, spellcheck: 'false' }), x, y, w, h);
+        box.value = value;
+        return box;
+    };
+    const aCheck = (text, checked, x, y, w, h) => {
+        const input = el('input', { type: 'checkbox' });
+        input.checked = checked;
+        const label = at(el('label', { class: 'av-check' }, input, el('span', { class: 'av-check-box' }), el('span', {}, text)), x, y, w, h);
+        return { label, input };
+    };
+
+    // DataGrid with RowHeight 20, GridLinesVisibility All and RowBackground WhiteSmoke
+    class DataGrid {
+        constructor(columns, x, y, w, h) {
+            this.columns = columns;
+            this.rows = [];
+            this.selected = new Set();
+            this.anchor = -1;
+            this.onSelect = null;
+            this.onActivate = null;
+            this.body = el('div', { class: 'av-grid-body' });
+            this.node = at(el('div', { class: 'av-grid', tabindex: '0' },
+                el('div', { class: 'av-grid-head' }, columns.map(([name, width]) => el('div', { style: { width: width + 'px' } }, name))),
+                this.body), x, y, w, h);
+            this.node.addEventListener('keydown', e => {
+                if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    this.rows.forEach((_, i) => this.selected.add(i));
+                    this.render();
+                    this.onSelect && this.onSelect();
+                }
+            });
+        }
+
+        setRows(rows, keep) {
+            this.rows = rows;
+            this.selected = new Set([...this.selected].filter(i => i < rows.length && (!keep || keep(rows[i].item))));
+            this.render();
+        }
+
+        selectedItems() {
+            return [...this.selected].sort((a, b) => a - b).map(i => this.rows[i].item);
+        }
+
+        select(index) {
+            this.selected = new Set(index >= 0 ? [index] : []);
+            this.anchor = index;
+            this.render();
+        }
+
+        render() {
+            this.body.innerHTML = '';
+            this.rows.forEach((row, i) => {
+                const r = el('div', { class: 'av-grid-row' + (this.selected.has(i) ? ' selected' : '') },
+                    row.cells.map((c, k) => el('div', { style: { width: this.columns[k][1] + 'px' } }, String(c))));
+                r.addEventListener('mousedown', e => {
+                    if (e.shiftKey && this.anchor >= 0) {
+                        this.selected = new Set();
+                        for (let k = Math.min(this.anchor, i); k <= Math.max(this.anchor, i); k++)
+                            this.selected.add(k);
+                    } else if (e.ctrlKey || e.metaKey) {
+                        this.selected.has(i) ? this.selected.delete(i) : this.selected.add(i);
+                        this.anchor = i;
+                    } else {
+                        this.selected = new Set([i]);
+                        this.anchor = i;
+                    }
+                    this.render();
+                    this.onSelect && this.onSelect();
+                });
+                r.addEventListener('dblclick', () => this.onActivate && this.onActivate(row.item));
+                this.body.append(r);
+            });
+        }
+    }
 
     class Dialogs {
         constructor(app) {
@@ -17,15 +102,16 @@
             return this.modals > 0;
         }
 
-        // ------------------------------------------------------------ generic modal dialogs
+        // ------------------------------------------------------------ MessageDialog (GuiWindowDialog, 450x160 at 735,460)
 
-        modal(title, body, buttons, opts = {}) {
+        modal(body, buttons, opts = {}) {
             return new Promise(resolve => {
-                const overlay = el('div', { class: 'dlg-overlay' });
+                const overlay = el('div', { class: 'msg-overlay' });
                 const close = value => {
                     overlay.remove();
                     this.modals--;
                     document.removeEventListener('keydown', onKey, true);
+                    window.removeEventListener('resize', place);
                     resolve(value);
                 };
                 const onKey = e => {
@@ -38,45 +124,78 @@
                     }
                 };
 
-                const box = el('div', { class: 'dlg-box' + (opts.wide ? ' wide' : '') },
-                    el('div', { class: 'dlg-title' }, title),
-                    el('div', { class: 'dlg-body' }, body),
-                    el('div', { class: 'dlg-buttons' }, buttons.map(([text, value, cls]) =>
-                        el('button', { class: `ss-button ${cls || ''}`, type: 'button', onclick: () => close(typeof value === 'function' ? value() : value) }, text))),
+                const offset = 3 - buttons.length;
+                const box = el('div', { class: 'msg-box' + (opts.tall ? ' tall' : '') },
+                    el('div', { class: 'msg-drag' }),
+                    el('button', { class: 'msg-close', type: 'button', onclick: () => close(opts.cancelValue ?? null) }),
+                    el('div', { class: 'msg-inner' },
+                        el('div', { class: 'msg-icon', style: { backgroundImage: `url(assets/${opts.icon || 'Info'}.png)` } }),
+                        el('div', { class: 'msg-text' }, body),
+                        buttons.map(([text, value], i) => el('button', {
+                            class: 'msg-button', type: 'button', style: { left: (198 + 85 * (i + offset)) + 'px', fontSize: text.length > 6 ? '15px' : '' },
+                            onclick: () => close(typeof value === 'function' ? value() : value),
+                        }, text))),
                 );
+
+                // drag strip
+                let dx = 0, dy = 0;
+                box.firstChild.addEventListener('mousedown', e => {
+                    const sx = e.clientX - dx, sy = e.clientY - dy;
+                    const move = ev => {
+                        dx = ev.clientX - sx;
+                        dy = ev.clientY - sy;
+                        place();
+                    };
+                    const up = () => {
+                        window.removeEventListener('mousemove', move);
+                        window.removeEventListener('mouseup', up);
+                    };
+                    window.addEventListener('mousemove', move);
+                    window.addEventListener('mouseup', up);
+                });
+
+                // stretched with the window like every other GUI control (1920x1080 origin)
+                const place = () => {
+                    const sx = window.innerWidth / 1920, sy = window.innerHeight / 1080;
+                    box.style.transform = `translate(${734 * sx + dx}px, ${427 * sy + dy}px) scale(${sx}, ${sy})`;
+                };
+                place();
+                window.addEventListener('resize', place);
+
                 overlay.append(box);
                 this.layer.append(overlay);
                 this.modals++;
                 document.addEventListener('keydown', onKey, true);
 
-                const focus = box.querySelector('input, textarea, select') || box.querySelector('button');
+                const focus = box.querySelector('input, textarea') || box.querySelector('.msg-button');
                 setTimeout(() => focus && focus.focus(), 0);
             });
         }
 
-        message(text, title = 'Sound Space Quantum Editor') {
-            return this.modal(title, el('pre', { class: 'dlg-text' }, text), [['OK', true]], { enterValue: true });
+        message(text, icon = 'Info') {
+            return this.modal(text, [['OK', true]], { enterValue: true, icon });
         }
 
-        confirm(text, buttons = [['Yes', 'yes'], ['No', 'no']], title = 'Sound Space Quantum Editor') {
-            return this.modal(title, el('pre', { class: 'dlg-text' }, text), buttons, { cancelValue: 'cancel' });
+        confirm(text, buttons = [['Yes', 'yes'], ['No', 'no']], icon = 'Warning') {
+            return this.modal(text, buttons, { cancelValue: 'cancel', icon });
         }
 
         prompt(title, label, value = '', multiline = false) {
-            const input = multiline ? el('textarea', { class: 'ss-input dlg-textarea' }) : el('input', { type: 'text', class: 'ss-input' });
+            const input = multiline ? el('textarea', { class: 'msg-input multiline', spellcheck: 'false' }) : el('input', { type: 'text', class: 'msg-input', spellcheck: 'false' });
             input.value = value;
-            return this.modal(title, el('div', {}, el('div', { class: 'ss-label' }, label), input),
-                [['OK', () => input.value, 'primary'], ['Cancel', null]], { enterValue: multiline ? undefined : () => input.value });
+            return this.modal(el('div', { class: 'msg-form' }, el('div', {}, label), input),
+                [['OK', () => input.value], ['Cancel', null]], { enterValue: multiline ? undefined : () => input.value, tall: multiline });
         }
 
-        // ------------------------------------------------------------ floating windows (non-modal)
+        // ------------------------------------------------------------ Avalonia windows (non-modal)
 
-        floating(id, title, body, onClose) {
+        floating(id, title, width, height, controls, onClose) {
             this.windows[id]?.close();
 
-            const win = el('div', { class: 'dlg-window' },
-                el('div', { class: 'dlg-title' }, title, el('button', { class: 'dlg-x', type: 'button', onclick: () => close() }, '✕')),
-                el('div', { class: 'dlg-body' }, body));
+            const panel = el('div', { class: 'av-panel', style: { width: width + 'px', height: height + 'px' } }, controls);
+            const win = el('div', { class: 'av-window' },
+                el('div', { class: 'av-title' }, el('span', {}, title), el('button', { class: 'av-x', type: 'button', title: 'Close', onclick: () => close() })),
+                panel);
 
             const close = () => {
                 win.remove();
@@ -84,7 +203,10 @@
                 onClose && onClose();
             };
 
-            // drag by the title bar
+            // WindowStartupLocation="CenterScreen"
+            win.style.left = Math.max(0, (window.innerWidth - width - 2) / 2) + 'px';
+            win.style.top = Math.max(0, (window.innerHeight - height - 32) / 2) + 'px';
+
             const titleBar = win.firstChild;
             titleBar.addEventListener('mousedown', e => {
                 if (e.target.tagName === 'BUTTON')
@@ -102,6 +224,9 @@
                 window.addEventListener('mousemove', move);
                 window.addEventListener('mouseup', up);
             });
+            win.addEventListener('mousedown', () => this.layer.lastChild !== win && this.layer.append(win));
+            // these are separate windows in the desktop editor, so their keys never reach the editor
+            win.addEventListener('keydown', e => e.stopPropagation());
 
             this.layer.append(win);
             this.windows[id] = { close, win };
@@ -113,49 +238,57 @@
                 w.close();
         }
 
-        // ------------------------------------------------------------ BPM setup (TimingsWindow)
+        notOnWeb(what) {
+            this.message(`${what} isn't available in the web editor.`);
+        }
+
+        // ------------------------------------------------------------ BPM setup (TimingsWindow.axaml, 390x635)
 
         timings(editor) {
             const map = editor.map;
             const s = editor.settings;
+            const X = 15, Y = 15, O = Y + 375;
 
-            const list = el('select', { class: 'dlg-list', multiple: 'multiple', size: 10 });
-            const bpmBox = el('input', { type: 'number', class: 'ss-input', step: 'any' });
-            const offsetBox = el('input', { type: 'number', class: 'ss-input', step: '1' });
-            const moveBox = el('input', { type: 'number', class: 'ss-input', step: '1', value: '0' });
-            const adjust = el('input', { type: 'checkbox' });
-            adjust.checked = s.adjustNotes;
-            adjust.addEventListener('change', () => {
-                s.adjustNotes = adjust.checked;
+            const grid = new DataGrid([['BPM', 180], ['Ms', 180]], X, Y, 360, 370);
+            const bpmBox = aBox(X + 80, O, 90, 20, '0');
+            const offsetBox = aBox(X + 80, O + 25, 90, 20, '0');
+            const moveBox = aBox(X + 175, O + 50, 90, 20, '0');
+            const adjust = aCheck('Adjust notes when changing points', s.adjustNotes, X + 55, O + 78, 250, 20);
+            adjust.input.addEventListener('change', () => {
+                s.adjustNotes = adjust.input.checked;
                 SSQE.Settings.save(s);
             });
+            const startBox = aBox(X + 182, O + 180, 86, 22, '0');
+            const endBox = aBox(X + 182, O + 208, 86, 22, '0');
+            const resultBox = aBox(X + 274, O + 208, 86, 22, '0', 'readonly center');
+            resultBox.readOnly = true;
 
             let lastVersion = -1;
-            const selectedPoints = () => [...list.selectedOptions].map(o => map.timingPoints[+o.value]).filter(Boolean);
+            const selectedPoints = () => grid.selectedItems();
 
             const resetList = () => {
                 const selected = new Set(selectedPoints());
-                list.innerHTML = '';
+                grid.selected = new Set();
                 map.timingPoints.forEach((p, i) => {
-                    const o = el('option', { value: i }, `${+p.bpm.toFixed(3)} BPM  —  ${p.ms} ms`);
-                    o.selected = selected.has(p) || p === map.selectedPoint;
-                    list.append(o);
+                    if (selected.has(p))
+                        grid.selected.add(i);
                 });
+                grid.setRows(map.timingPoints.map(p => ({ item: p, cells: [+p.bpm.toFixed(3), p.ms] })));
                 lastVersion = map.version;
             };
 
-            list.addEventListener('change', () => {
+            grid.onSelect = () => {
                 const p = selectedPoints()[0];
                 if (p) {
                     bpmBox.value = p.bpm;
                     offsetBox.value = p.ms;
                 }
-            });
+            };
 
-            offsetBox.addEventListener('change', () => {
+            offsetBox.addEventListener('input', () => {
                 const v = parseInt(offsetBox.value, 10);
-                if (Number.isFinite(v))
-                    offsetBox.value = Math.min(v, Math.trunc(map.duration));
+                if (Number.isFinite(v) && v > map.duration)
+                    offsetBox.value = Math.trunc(map.duration);
             });
 
             const add = () => {
@@ -223,26 +356,32 @@
                     this.tryParse('OSU', () => setPoints(parseOsuTiming(text)));
             };
 
-            const body = el('div', { class: 'timings' },
-                list,
-                el('div', { class: 'dlg-grid2' },
-                    el('label', {}, 'BPM', bpmBox),
-                    el('label', {}, 'Offset (ms)', offsetBox)),
-                el('div', { class: 'dlg-row' },
-                    btn('Add', add), btn('Update', update), btn('Delete', del),
-                    btn('Current Pos', () => offsetBox.value = Math.trunc(editor.currentTime))),
-                el('div', { class: 'dlg-grid2' },
-                    el('label', {}, 'Move Selected Points (ms)', moveBox),
-                    el('div', { class: 'dlg-bottom' }, btn('Move', move))),
-                el('label', { class: 'ss-check' }, adjust, el('span', {}, 'Adjust notes when changing points')),
-                el('div', { class: 'dlg-row' },
-                    btn('BPM Tapper', () => this.tapper()),
-                    btn('Paste osu! Timing', pasteOsu),
-                    btn('Paste .chart', pasteCh),
-                    btn('Open Beatmap', openBeatmap)),
-            );
+            const twoLine = text => text.split('\n').map((t, i) => [i ? el('br') : null, t]).flat();
 
-            const win = this.floating('timings', 'BPM Setup', body, () => clearInterval(timer));
+            const controls = [
+                grid.node,
+                aLabel('  BPM', X, O, 80, 20), bpmBox,
+                aLabel('  Offset (ms)', X, O + 25, 80, 20), offsetBox,
+                aButton('Add Point', add, X + 175, O, 90, 20),
+                aButton('Update Point', update, X + 175, O + 25, 90, 20),
+                aButton('Delete Point', del, X + 270, O, 90, 20),
+                aButton('Current Pos', () => offsetBox.value = Math.trunc(editor.currentTime), X + 270, O + 25, 90, 20),
+                moveBox, aButton('Move Points', move, X + 270, O + 50, 90, 20),
+                aLabel('  Move Selected Points (ms)', X, O + 50, 170, 20),
+                adjust.label,
+                aButton(twoLine('Paste OSU\nTimings'), pasteOsu, X, O + 125, 86, 50),
+                aButton(twoLine('Paste ADOFAI\nTimings'), () => this.notOnWeb('Importing ADOFAI timings'), X + 92, O + 125, 86, 50),
+                aButton(twoLine('Paste Clone\nHero Timings'), pasteCh, X + 183, O + 125, 86, 50),
+                aButton(twoLine('Open\nBeatmap\nTimings'), openBeatmap, X + 274, O + 125, 86, 50),
+                aButton(twoLine('Open BPM\nTapper'), () => this.tapper(), X, O + 180, 86, 50),
+                aLabel('Start (ms)  ', X + 92, O + 180, 86, 22, 'right'),
+                aLabel('End (ms)  ', X + 92, O + 208, 86, 22, 'right'),
+                startBox, endBox,
+                aButton('Detect BPM', () => this.notOnWeb('BPM detection'), X + 274, O + 180, 86, 22),
+                resultBox,
+            ];
+
+            const win = this.floating('timings', 'BPM Setup', 390, 635, controls, () => clearInterval(timer));
             const timer = setInterval(() => {
                 if (map.version !== lastVersion)
                     resetList();
@@ -252,12 +391,9 @@
             const current = Timing.getCurrentBpm(map, editor.currentTime);
             const index = map.timingPoints.indexOf(current);
             if (index >= 0) {
-                list.options[index].selected = true;
+                grid.select(index);
                 bpmBox.value = current.bpm;
                 offsetBox.value = current.ms;
-            } else if (map.timingPoints.length) {
-                bpmBox.value = map.timingPoints[0].bpm;
-                offsetBox.value = map.timingPoints[0].ms;
             }
             return win;
         }
@@ -267,16 +403,18 @@
                 fn();
             } catch (e) {
                 console.warn(e);
-                this.message(`Failed to parse beatmap\n[ ${kind} : ${e.name} ]`);
+                this.message(`Failed to parse beatmap\n[ ${kind} : ${e.name} ]`, 'Error');
             }
         }
 
-        // BPMTapper
+        // ------------------------------------------------------------ BPMTapper.axaml (226x244)
+
         tapper() {
             let taps = 0, tapping = false, start = 0;
-            const bpmLabel = el('div', { class: 'tap-bpm' }, '');
-            const decLabel = el('div', { class: 'tap-dec' }, '');
-            const decimals = el('input', { type: 'number', class: 'ss-input', value: '2', min: '0', max: '6' });
+            const X = 21, Y = 12;
+            const bpmLabel = aLabel('', X, Y, 184, 32, 'boxed big');
+            const decLabel = aLabel('', X, Y + 74, 184, 24, 'boxed');
+            const decimals = aBox(X + 96, Y + 37, 88, 30, '2', 'bold');
 
             const reset = () => {
                 taps = 0;
@@ -293,7 +431,7 @@
                     bpmLabel.textContent = '0';
                     decLabel.textContent = '0';
                 } else {
-                    const d = parseInt(decimals.value, 10) || 0;
+                    const d = Math.min(Math.max(parseInt(decimals.value, 10) || 0, 0), 15);
                     const mins = (performance.now() - start) / 60000;
                     const bpm = (taps - 1) / mins;
                     bpmLabel.textContent = Math.round(bpm);
@@ -301,64 +439,66 @@
                 }
             };
 
-            const tapButton = btn('TAP', tap, 'primary tap-button');
-            const body = el('div', { class: 'tapper', tabindex: '0' },
+            const tapButton = aButton('TAP OR PRESS ANY KEY', tap, X, Y + 108, 184, 65);
+            const controls = [
                 bpmLabel, decLabel,
+                aLabel('Decimal Places', X, Y + 37, 96, 30),
+                decimals,
                 tapButton,
-                el('div', { class: 'dlg-row' }, btn('Reset', reset), el('label', {}, 'Decimals ', decimals)),
-                el('div', { class: 'ss-label' }, 'Click TAP or press any key while this window is focused.'));
+                aButton('RESET', reset, X, Y + 179, 184, 41),
+            ];
 
-            body.addEventListener('keydown', e => {
+            const win = this.floating('tapper', 'BPM Tapper', 226, 244, controls);
+            const panel = win.win.lastChild;
+            panel.tabIndex = 0;
+            panel.addEventListener('keydown', e => {
                 if (e.target === decimals || e.repeat)
                     return;
                 e.preventDefault();
                 e.stopPropagation();
                 tap();
             });
-
-            this.floating('tapper', 'BPM Tapper', body);
-            setTimeout(() => body.focus(), 0);
+            setTimeout(() => panel.focus(), 0);
         }
 
-        // ------------------------------------------------------------ bookmarks (BookmarksWindow)
+        // ------------------------------------------------------------ BookmarksWindow.axaml (650x450)
 
         bookmarks(editor) {
             const map = editor.map;
-            const list = el('select', { class: 'dlg-list', multiple: 'multiple', size: 10 });
-            const textBox = el('input', { type: 'text', class: 'ss-input' });
-            const startBox = el('input', { type: 'number', class: 'ss-input', step: '1' });
-            const endBox = el('input', { type: 'number', class: 'ss-input', step: '1' });
+            const X = 15, Y = 15, O = Y + 375;
+
+            const grid = new DataGrid([['Text', 420], ['Start Ms', 100], ['End Ms', 100]], X, Y, 620, 370);
+            const textBox = aBox(X + 60, O, 300, 20);
+            const startBox = aBox(X + 60, O + 25, 147, 20, '0');
+            const endBox = aBox(X + 213, O + 25, 147, 20, '0');
 
             let lastVersion = -1;
-            const selected = () => [...list.selectedOptions].map(o => map.bookmarks[+o.value]).filter(Boolean);
+            const selected = () => grid.selectedItems();
 
             const resetList = () => {
                 const sel = new Set(selected());
-                list.innerHTML = '';
+                grid.selected = new Set();
                 map.bookmarks.forEach((b, i) => {
-                    const o = el('option', { value: i }, `${b.text}  —  ${b.ms}${b.endMs !== b.ms ? `-${b.endMs}` : ''} ms`);
-                    o.selected = sel.has(b);
-                    list.append(o);
+                    if (sel.has(b))
+                        grid.selected.add(i);
                 });
+                grid.setRows(map.bookmarks.map(b => ({ item: b, cells: [b.text, b.ms, b.endMs] })));
                 lastVersion = map.version;
             };
 
-            list.addEventListener('change', () => {
+            grid.onSelect = () => {
                 const b = selected()[0];
                 if (b) {
                     textBox.value = b.text;
                     startBox.value = b.ms;
                     endBox.value = b.endMs;
                 }
-            });
-            list.addEventListener('dblclick', () => {
-                const b = selected()[0];
-                if (b) {
-                    if (editor.music.isPlaying)
-                        editor.pauseMusic();
-                    editor.currentTime = b.ms;
-                }
-            });
+            };
+            grid.onActivate = b => {
+                if (editor.music.isPlaying)
+                    editor.pauseMusic();
+                editor.currentTime = b.ms;
+            };
 
             const add = () => {
                 const ms = parseInt(startBox.value, 10), end = parseInt(endBox.value, 10);
@@ -394,17 +534,17 @@
                 endBox.value = t;
             };
 
-            const body = el('div', { class: 'bookmarks' },
-                list,
-                el('label', {}, 'Text', textBox),
-                el('div', { class: 'dlg-grid2' },
-                    el('label', {}, 'Start (ms)', startBox),
-                    el('label', {}, 'End (ms)', endBox)),
-                el('div', { class: 'dlg-row' }, btn('Add', add), btn('Update', update), btn('Delete', del), btn('Current Pos', currentPos)),
-                el('div', { class: 'ss-label' }, 'Double-click a bookmark to jump to it.'),
-            );
+            const controls = [
+                grid.node,
+                aLabel('Text', X, O, 60, 20), textBox,
+                aLabel('Offset', X, O + 25, 60, 20), startBox, endBox,
+                aButton('Add Bookmark', add, X + 375, O, 117, 20),
+                aButton('Update Bookmark', update, X + 375, O + 25, 117, 20),
+                aButton('Delete Bookmark', del, X + 503, O, 117, 20),
+                aButton('Current Pos', currentPos, X + 503, O + 25, 117, 20),
+            ];
 
-            const win = this.floating('bookmarks', 'Bookmarks', body, () => clearInterval(timer));
+            const win = this.floating('bookmarks', 'Bookmarks', 650, 450, controls, () => clearInterval(timer));
             const timer = setInterval(() => {
                 if (map.version !== lastVersion)
                     resetList();
@@ -414,100 +554,110 @@
             return win;
         }
 
-        // ------------------------------------------------------------ SSPM export (ExportSSPM)
+        // ------------------------------------------------------------ ExportSSPM.axaml (344x358)
 
-        async exportSspm(editor) {
+        exportSspm(editor) {
             const map = editor.map;
             const p = map.props;
+            const X = 12, Y = 12;
 
-            const idBox = el('input', { type: 'text', class: 'ss-input', value: map.soundId });
-            const nameBox = el('input', { type: 'text', class: 'ss-input', value: p.songName });
-            const diffBox = el('select', { class: 'ss-input' }, DIFFICULTIES.map(d => el('option', { value: d }, d)));
+            const idBox = aBox(X + 84, Y, 236, 20, map.soundId, 'readonly dark');
+            idBox.readOnly = true;
+            const nameBox = aBox(X + 84, Y + 25, 236, 20, p.songName);
+            const diffBox = at(el('select', { class: 'av-combo' }, DIFFICULTIES.map(d => el('option', { value: d }, d))), X + 84, Y + 50, 236, 20);
             diffBox.value = p.difficulty || 'N/A';
-            const customBox = el('input', { type: 'text', class: 'ss-input', value: p.customDifficulty });
-            const mapperBox = el('textarea', { class: 'ss-input dlg-textarea' });
+            const customBox = aBox(X + 184, Y + 74, 136, 20, p.customDifficulty);
+            const mapperBox = at(el('textarea', { class: 'av-textbox', spellcheck: 'false' }), X + 84, Y + 99, 236, 130);
             mapperBox.value = p.mappers;
-            const useCover = el('input', { type: 'checkbox' });
-            useCover.checked = p.useCover;
-            const coverInput = el('input', { type: 'file', accept: 'image/png,image/jpeg' });
-            const coverLabel = el('span', { class: 'ss-label' }, map.coverBytes ? 'Using cover from the loaded map' : 'Default cover');
+            let coverFile = null;
+            const coverBox = aBox(X + 84, Y + 236.5, 176, 25, map.coverBytes ? 'Loaded map cover' : 'Default', 'readonly dark');
+            coverBox.readOnly = true;
+            const useCover = aCheck('Use Cover', p.useCover, X + 84, Y + 274, 236, 20);
 
-            const body = el('div', { class: 'export' },
-                el('label', {}, 'Map ID', idBox),
-                el('label', {}, 'Song Name', nameBox),
-                el('div', { class: 'dlg-grid2' },
-                    el('label', {}, 'Difficulty', diffBox),
-                    el('label', {}, 'Custom Difficulty', customBox)),
-                el('label', {}, 'Mappers (one per line)', mapperBox),
-                el('label', { class: 'ss-check' }, useCover, el('span', {}, 'Include cover')),
-                el('div', { class: 'dlg-row' }, coverInput, coverLabel),
-            );
+            const selectCover = async () => {
+                const file = await this.app.pickFile('image/png,image/jpeg');
+                if (file) {
+                    coverFile = file;
+                    coverBox.value = file.name;
+                }
+            };
 
-            const result = await this.modal('Export SSPM', body, [['Export', 'export', 'primary'], ['Cancel', null]], { wide: true });
-            if (result !== 'export')
-                return;
+            const finish = async () => {
+                p.songName = nameBox.value;
+                p.difficulty = diffBox.value;
+                p.customDifficulty = customBox.value;
+                p.mappers = mapperBox.value;
+                p.useCover = useCover.input.checked;
+                editor.onMapChanged();
 
-            p.songName = nameBox.value;
-            p.difficulty = diffBox.value;
-            p.customDifficulty = customBox.value;
-            p.mappers = mapperBox.value;
-            p.useCover = useCover.checked;
-            editor.onMapChanged();
-
-            let cover = null;
-            if (useCover.checked) {
-                if (coverInput.files[0]) {
-                    cover = new Uint8Array(await coverInput.files[0].arrayBuffer());
-                    map.coverBytes = cover;
-                } else if (map.coverBytes)
-                    cover = map.coverBytes;
-                else {
-                    try {
-                        cover = new Uint8Array(await (await fetch('assets/Cover.png')).arrayBuffer());
-                    } catch {
-                        this.message('The default cover could not be loaded (open the editor through a web server, or choose a cover image). Exporting without a cover.');
+                let cover = null;
+                if (useCover.input.checked) {
+                    if (coverFile) {
+                        cover = new Uint8Array(await coverFile.arrayBuffer());
+                        map.coverBytes = cover;
+                    } else if (map.coverBytes)
+                        cover = map.coverBytes;
+                    else {
+                        try {
+                            cover = new Uint8Array(await (await fetch('assets/Cover.png')).arrayBuffer());
+                        } catch {
+                            this.message('The default cover could not be loaded (open the editor through a web server, or select a cover image). Exporting without a cover.', 'Warning');
+                        }
                     }
                 }
-            }
 
-            const id = SSQE.Formats.fixId(idBox.value.trim() || map.soundId);
-            const audio = await this.app.storage.getAudio(map.soundId);
-            if (!audio) {
-                this.message('No audio is loaded for this map.');
-                return;
-            }
+                const audio = await this.app.storage.getAudio(map.soundId);
+                if (!audio) {
+                    this.message('No audio is loaded for this map.', 'Error');
+                    return;
+                }
 
-            const mappers = mapperBox.value.split('\n').map(m => m.trim()).filter(Boolean);
-            const bytes = SSQE.Formats.writeSspm(map, {
-                songId: id,
-                mapName: nameBox.value,
-                mappers: (mappers.length ? mappers : ['None']).join('\n'),
-                difficulty: diffBox.value,
-                customDifficulty: customBox.value,
-            }, new Uint8Array(await audio.arrayBuffer()), cover);
+                const id = SSQE.Formats.fixId(map.soundId);
+                const mappers = mapperBox.value.split('\n').map(m => m.trim()).filter(Boolean);
+                const bytes = SSQE.Formats.writeSspm(map, {
+                    songId: id,
+                    mapName: nameBox.value,
+                    mappers: (mappers.length ? mappers : ['None']).join('\n'),
+                    difficulty: diffBox.value,
+                    customDifficulty: customBox.value,
+                }, new Uint8Array(await audio.arrayBuffer()), cover);
 
-            this.app.download(new Blob([bytes], { type: 'application/octet-stream' }), `${id}.sspm`);
-            editor.toast('EXPORTED SSPM');
+                this.app.download(new Blob([bytes], { type: 'application/octet-stream' }), `${id}.sspm`);
+                win.close();
+                editor.toast('EXPORTED SSPM');
+            };
+
+            const controls = [
+                aLabel('Map ID', X, Y, 84, 20), idBox,
+                aLabel('Song Name', X, Y + 25, 84, 20), nameBox,
+                aLabel('Difficulty', X, Y + 50, 84, 20), diffBox,
+                aLabel('Custom Difficulty (Optional)', X, Y + 74, 184, 20), customBox,
+                aLabel(['Mapper(s)', el('br'), el('br'), '(One per line)'], X, Y + 99, 84, 60, 'top'), mapperBox,
+                aLabel('Cover Image', X, Y + 239, 84, 20), coverBox,
+                aButton('Select', selectCover, X + 265, Y + 236.5, 55, 25),
+                useCover.label,
+                aButton('Finish', finish, X, Y + 298, 320, 36),
+            ];
+
+            const win = this.floating('exportSspm', 'Export SSPM', 344, 358, controls);
+            return win;
         }
 
-        // ------------------------------------------------------------ save as
+        // ------------------------------------------------------------ save as (stands in for the native save dialog)
 
         saveAs(map, canUseFolders) {
-            const nameBox = el('input', { type: 'text', class: 'ss-input', value: map.fileId });
+            const input = el('input', { type: 'text', class: 'msg-input', spellcheck: 'false' });
+            input.value = map.fileId;
             const info = canUseFolders
-                ? 'Choose a folder to save the map (.txt) and its properties (.ini) into. Later saves go to the same files.'
-                : 'Your browser can\'t write to folders, so the map (.txt) and its properties (.ini) will be downloaded.';
+                ? 'Save the map (.txt) and its properties (.ini) to a folder, or download them.'
+                : 'The map (.txt) and its properties (.ini) will be downloaded.';
+            const result = mode => () => ({ name: input.value, mode });
             const buttons = canUseFolders
-                ? [['Choose Folder', () => ({ name: nameBox.value, mode: 'folder' }), 'primary'], ['Download', () => ({ name: nameBox.value, mode: 'download' })], ['Cancel', null]]
-                : [['Download', () => ({ name: nameBox.value, mode: 'download' }), 'primary'], ['Cancel', null]];
-
-            return this.modal('Save Map As', el('div', {}, el('label', {}, 'File name', nameBox), el('div', { class: 'ss-label' }, info)), buttons,
-                { enterValue: () => ({ name: nameBox.value, mode: canUseFolders ? 'folder' : 'download' }) });
+                ? [['Folder', result('folder')], ['Download', result('download')], ['Cancel', null]]
+                : [['OK', result('download')], ['Cancel', null]];
+            return this.modal(el('div', { class: 'msg-form' }, el('div', {}, info), input), buttons,
+                { enterValue: result(canUseFolders ? 'folder' : 'download') });
         }
-    }
-
-    function btn(text, onClick, cls = '') {
-        return el('button', { class: `ss-button ${cls}`, type: 'button', onclick: onClick }, text);
     }
 
     // TimingsWindow.ParseOSU

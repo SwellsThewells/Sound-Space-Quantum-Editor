@@ -18,6 +18,11 @@ need a web server, because browsers block `fetch` for local files.
 
 ## What's included
 
+The menu, create, settings, keybinds and editor screens are drawn on a canvas with the same
+layouts, fonts, textures and control styles as the desktop editor, so they look the same at any
+window size. BPM Setup, Bookmarks, BPM Tapper and Export SSPM use the layouts from the desktop
+editor's Avalonia windows, and message boxes look like the desktop editor's.
+
 - **Menu:** Create New Map, Load Map, Paste Map, Settings, and the open-maps bar. Open maps and
   their audio are kept in the browser (IndexedDB), standing in for the editor's `cached/` folder,
   so they're still there after a reload.
@@ -62,6 +67,10 @@ need a web server, because browsers block `fetch` for local files.
 
 - Ctrl+T is reserved by browsers, so BPM Setup defaults to **Alt+T**. You can rebind it in
   Settings.
+- Some settings only affect the desktop renderer, so they're on the Settings screen but have no
+  effect: VSync, FPS limits, anti-aliasing, font scale, waveform detail and squircle detail.
+- Open Editor Folder, the Rhythia and Novastra paths, Detect BPM and Paste ADOFAI Timings show a
+  message saying they aren't available.
 - Map VFX objects are kept when you load and save a map, but there's no VFX editing UI. The
   desktop editor's "Edit Map VFX" button isn't wired up either.
 - Missing from the web version:

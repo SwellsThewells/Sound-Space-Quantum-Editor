@@ -88,22 +88,24 @@
             this.music = new SSQE.Audio.MusicPlayer(this.settings);
             this.openMaps = []; // Mapping.Cache: { key, map|null, rec }
             this.mapIndex = 0;
+            this.screen = null;
+            this.changelog = '';
             this.editor = null;
             this.cacheTimer = null;
             this.autosaveTimer = null;
         }
 
         async init() {
+            SSQE.GUI.setSettings(this.settings);
+            await SSQE.GUI.loadFonts();
             await this.storage.open();
             const recs = (await this.storage.getMaps()) || [];
             recs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
             this.openMaps = recs.map(rec => ({ key: rec.key, map: null, rec }));
 
             this.applyTheme();
-            this.bindMenu();
-            this.showScreen('menu');
-            this.renderMapList();
             this.loadChangelog();
+            this.showMenu();
             this.startAutosaving();
 
             window.addEventListener('beforeunload', e => {
@@ -117,11 +119,11 @@
             // buttons and checkboxes shouldn't keep keyboard focus, otherwise Space would also "click" them
             document.addEventListener('click', e => {
                 const target = e.target.closest('button, input[type=checkbox], input[type=range]');
-                if (target && !target.closest('.dlg-overlay'))
+                if (target && !target.closest('.msg-overlay'))
                     setTimeout(() => target.blur(), 0);
             }, true);
             document.addEventListener('change', e => {
-                if (e.target.tagName === 'SELECT' && !e.target.closest('.dlg-overlay, .dlg-window'))
+                if (e.target.tagName === 'SELECT' && !e.target.closest('.msg-overlay, .av-window'))
                     e.target.blur();
             }, true);
 
@@ -148,10 +150,17 @@
             return this.dialogs.isModalOpen();
         }
 
+        // the menu, create, settings and keybinds windows are canvas screens (screens.js); the editor runs its own loop
         showScreen(name) {
-            for (const id of ['menu', 'create', 'settings', 'editor'])
-                document.getElementById(`screen-${id}`).style.display = id === name ? '' : 'none';
+            if (this.screen) {
+                this.screen.stop();
+                this.screen = null;
+            }
             document.body.dataset.screen = name;
+            if (name !== 'editor') {
+                this.screen = SSQE.Screens[name](this);
+                this.screen.start();
+            }
         }
 
         // ------------------------------------------------------------ helpers
@@ -199,44 +208,85 @@
 
         // ------------------------------------------------------------ menu (GuiWindowMenu)
 
-        bindMenu() {
-            const $ = id => document.getElementById(id);
-            $('menu-create').onclick = () => this.openCreate();
-            $('menu-load').onclick = async () => {
-                const files = await this.pickFile('.txt,.ini,.sspm,.osu,audio/*,.asset,.mp3,.ogg,.wav,.flac,.m4a,.opus', true);
-                if (files.length)
-                    this.loadFiles(files);
-            };
-            $('menu-paste').onclick = async () => {
-                const text = await this.readClipboard('Paste map data');
-                if (text && text.trim())
-                    this.loadText(text.trim());
-            };
-            $('menu-settings').onclick = () => this.openSettings();
-            $('maps-left').onclick = () => {
-                this.mapIndex--;
-                this.renderMapList();
-            };
-            $('maps-right').onclick = () => {
-                this.mapIndex++;
-                this.renderMapList();
-            };
-            $('map-bar').addEventListener('wheel', e => {
-                e.preventDefault();
-                this.mapIndex += e.deltaY > 0 ? 1 : -1;
-                this.renderMapList();
-            }, { passive: false });
+        showMenu() {
+            this.showScreen('menu');
+        }
+
+        openCreate() {
+            this.showScreen('create');
+        }
+
+        openSettings() {
+            this.showScreen('settings');
+        }
+
+        openKeybinds() {
+            this.showScreen('keybinds');
+        }
+
+        async loadMapDialog() {
+            const files = await this.pickFile('.txt,.ini,.sspm,.osu,audio/*,.asset,.mp3,.ogg,.wav,.flac,.m4a,.opus', true);
+            if (files.length)
+                this.loadFiles(files);
+        }
+
+        async pasteMap() {
+            const text = await this.readClipboard('Paste map data');
+            if (text && text.trim())
+                this.loadText(text.trim());
+        }
+
+        // Settings.lastFile: the map opened most recently
+        lastMapEntry() {
+            let key = null;
+            try {
+                key = localStorage.getItem('ssqe-web-editor-last-map');
+            } catch { /* storage unavailable */ }
+            return key ? this.openMaps.find(e => e.key === key) || null : null;
+        }
+
+        openLastMap() {
+            const entry = this.lastMapEntry();
+            if (entry)
+                this.openEntry(entry);
+        }
+
+        openAutosaved() {
+            this.openLastMap();
+        }
+
+        entryName(entry) {
+            return entry.map ? entry.map.fileId : (entry.rec.fileName ? entry.rec.fileName.replace(/\.[^.]*$/, '') : entry.rec.soundId);
+        }
+
+        // stands in for the desktop colour picker dialog
+        pickColor(current) {
+            return new Promise(resolve => {
+                const input = el('input', { type: 'color', style: { position: 'fixed', left: '50%', top: '50%', opacity: '0', pointerEvents: 'none' } });
+                input.value = '#' + current.slice(0, 3).map(n => n.toString(16).padStart(2, '0')).join('');
+                let done = false;
+                const finish = value => {
+                    if (done)
+                        return;
+                    done = true;
+                    input.remove();
+                    resolve(value ? [1, 3, 5].map(i => parseInt(value.slice(i, i + 2), 16)) : null);
+                };
+                input.addEventListener('change', () => finish(input.value));
+                input.addEventListener('cancel', () => finish(null));
+                document.body.append(input);
+                input.click();
+            });
         }
 
         async loadChangelog() {
-            const target = document.getElementById('changelog');
             try {
                 const res = await fetch('../changelog');
                 if (!res.ok)
                     throw new Error(res.statusText);
-                target.textContent = await res.text();
+                this.changelog = (await res.text()).replace(/\r/g, '');
             } catch {
-                target.textContent = 'The changelog is available in the repository (changelog file next to this folder).';
+                this.changelog = 'The changelog is available in the repository (changelog file next to this folder).';
             }
         }
 
@@ -245,203 +295,6 @@
             if (entry.map)
                 return !!entry.map.savedText && entry.map.savedText === this.mapText(entry.map);
             return !!rec.savedText && rec.savedText === `${rec.txt}\n${rec.ini}`;
-        }
-
-        renderMapList() {
-            const bar = document.getElementById('map-list');
-            const count = 5;
-            this.mapIndex = Math.max(0, Math.min(this.mapIndex, Math.max(0, this.openMaps.length - count)));
-            document.getElementById('maps-left').style.visibility = this.mapIndex > 0 ? '' : 'hidden';
-            document.getElementById('maps-right').style.visibility = this.mapIndex < this.openMaps.length - count ? '' : 'hidden';
-
-            bar.innerHTML = '';
-            for (const entry of this.openMaps.slice(this.mapIndex, this.mapIndex + count)) {
-                const name = (this.isSaved(entry) ? '' : '[!] ') + (entry.map ? entry.map.fileId : (entry.rec.fileName ? entry.rec.fileName.replace(/\.[^.]*$/, '') : entry.rec.soundId));
-                const open = el('button', { class: 'ss-button map-open', type: 'button', title: name, onclick: () => this.openEntry(entry) },
-                    el('span', { class: 'map-name' }, name), el('span', { class: 'map-hover' }, 'Open Map'));
-                const close = el('button', { class: 'ss-button map-close', type: 'button', title: 'Close map', onclick: () => this.closeEntry(entry) }, 'X');
-                bar.append(el('div', { class: 'map-slot' }, open, close));
-            }
-        }
-
-        // ------------------------------------------------------------ create (GuiWindowCreate)
-
-        openCreate() {
-            this.showScreen('create');
-            const $ = id => document.getElementById(id);
-            const idBox = $('create-id');
-            const fileInput = $('create-audio');
-            const status = $('create-status');
-            idBox.value = '';
-            fileInput.value = '';
-            status.textContent = '';
-
-            $('create-back').onclick = () => this.showScreen('menu');
-            $('create-go').onclick = async () => {
-                const file = fileInput.files[0];
-                if (!file) {
-                    status.textContent = 'Choose an audio file first.';
-                    return;
-                }
-                const id = Formats.fixId(idBox.value.trim() || file.name.replace(/\.[^.]*$/, ''));
-                await this.storage.putAudio(id, file);
-
-                const map = new Map();
-                map.soundId = id;
-                await this.openNewMap(map, null);
-            };
-        }
-
-        // ------------------------------------------------------------ settings screen (GuiWindowSettings)
-
-        openSettings() {
-            this.showScreen('settings');
-            const s = this.settings;
-            const root = document.getElementById('settings-body');
-            root.innerHTML = '';
-            const save = () => {
-                SSQE.Settings.save(s);
-                this.music.updateVolume();
-                this.applyTheme();
-            };
-
-            const color = (label, key) => {
-                const input = el('input', { type: 'color' });
-                input.value = '#' + s[key].map(n => n.toString(16).padStart(2, '0')).join('');
-                input.addEventListener('input', () => {
-                    s[key] = [1, 3, 5].map(i => parseInt(input.value.slice(i, i + 2), 16));
-                    save();
-                });
-                return el('label', { class: 'set-row' }, el('span', {}, label), input);
-            };
-
-            const toggle = (label, key) => {
-                const input = el('input', { type: 'checkbox' });
-                input.checked = s[key];
-                input.addEventListener('change', () => {
-                    s[key] = input.checked;
-                    save();
-                });
-                return el('label', { class: 'set-row' }, el('span', {}, label), input);
-            };
-
-            const number = (label, key, min, max, step) => {
-                const input = el('input', { type: 'number', class: 'ss-input', min, max, step });
-                input.value = s[key];
-                input.addEventListener('change', () => {
-                    const v = parseFloat(input.value);
-                    if (Number.isFinite(v))
-                        s[key] = Math.min(max, Math.max(min, v));
-                    input.value = s[key];
-                    save();
-                });
-                return el('label', { class: 'set-row' }, el('span', {}, label), input);
-            };
-
-            const noteColors = el('div', { class: 'set-colors' });
-            const renderNoteColors = () => {
-                noteColors.innerHTML = '';
-                s.noteColors.forEach((c, i) => {
-                    const input = el('input', { type: 'color', title: 'Right-click to remove' });
-                    input.value = '#' + c.map(n => n.toString(16).padStart(2, '0')).join('');
-                    input.addEventListener('input', () => {
-                        s.noteColors[i] = [1, 3, 5].map(k => parseInt(input.value.slice(k, k + 2), 16));
-                        save();
-                    });
-                    input.addEventListener('contextmenu', e => {
-                        e.preventDefault();
-                        if (s.noteColors.length > 1) {
-                            s.noteColors.splice(i, 1);
-                            save();
-                            renderNoteColors();
-                        }
-                    });
-                    noteColors.append(input);
-                });
-                noteColors.append(el('button', { class: 'ss-button small', type: 'button', onclick: () => {
-                    s.noteColors.push([255, 255, 255]);
-                    save();
-                    renderNoteColors();
-                } }, '+'));
-            };
-            renderNoteColors();
-
-            // keybinds
-            const keybindRows = el('div', { class: 'set-keybinds' });
-            let listening = null;
-            const renderKeybinds = () => {
-                keybindRows.innerHTML = '';
-                for (const [name, label] of Object.entries(SSQE.Settings.KEYBIND_LABELS)) {
-                    const b = el('button', { class: 'ss-button small', type: 'button', onclick: () => {
-                        listening = name;
-                        b.textContent = 'Press a key…';
-                    } }, SSQE.Settings.keybindText(s.keybinds[name]));
-                    keybindRows.append(el('div', { class: 'set-row' }, el('span', {}, label), b));
-                }
-                s.gridKeys.forEach((code, i) => {
-                    const b = el('button', { class: 'ss-button small', type: 'button', onclick: () => {
-                        listening = `grid${i}`;
-                        b.textContent = 'Press a key…';
-                    } }, SSQE.Settings.keyName(code).toUpperCase());
-                    keybindRows.append(el('div', { class: 'set-row' }, el('span', {}, `Grid Key ${i % 3 + 1},${Math.trunc(i / 3) + 1}`), b));
-                });
-            };
-            renderKeybinds();
-
-            const onKey = e => {
-                if (!listening || document.body.dataset.screen !== 'settings')
-                    return;
-                if (['ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight', 'MetaLeft', 'MetaRight'].includes(e.code))
-                    return;
-                e.preventDefault();
-                if (listening.startsWith('grid'))
-                    s.gridKeys[+listening.slice(4)] = e.code;
-                else
-                    s.keybinds[listening] = { key: e.code, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey, shift: e.shiftKey };
-                listening = null;
-                save();
-                renderKeybinds();
-            };
-            window.removeEventListener('keydown', this._settingsKey, true);
-            this._settingsKey = onKey;
-            window.addEventListener('keydown', onKey, true);
-
-            root.append(
-                el('section', {}, el('h3', {}, 'Colours'),
-                    color('Color 1', 'color1'), color('Color 2', 'color2'), color('Color 3', 'color3'), color('Color 4', 'color4'), color('Color 5', 'color5'),
-                    el('div', { class: 'set-row' }, el('span', {}, 'Note Colours (right-click to remove)'), noteColors)),
-                el('section', {}, el('h3', {}, 'Editor'),
-                    toggle('Waveform', 'waveform'),
-                    toggle('Classic Waveform', 'classicWaveform'),
-                    toggle('Rounded Grid Notes', 'gridSquircles'),
-                    toggle('Reverse Scroll Direction', 'reverseScroll'),
-                    toggle('Correct Notes on Copy', 'correctOnCopy'),
-                    toggle('Enable Autosave', 'enableAutosave'),
-                    number('Autosave Interval (minutes)', 'autosaveInterval', 0.5, 120, 0.5),
-                    number('Editor Background Opacity', 'editorBGOpacity', 0, 255, 1),
-                    number('Grid Opacity', 'gridOpacity', 0, 255, 1),
-                    number('Track Opacity', 'trackOpacity', 0, 255, 1),
-                    number('Max Hit Sounds per Frame', 'maxPolyphony', 0, 32, 1),
-                    toggle('Mono Audio (applies when a map is opened)', 'monoAudio')),
-                el('section', {}, el('h3', {}, 'Keybinds'), keybindRows,
-                    el('div', { class: 'ss-label' }, 'Patterns use 0-9 (Shift to store, Ctrl to clear). Ctrl+T is reserved by browsers, so BPM Setup defaults to Alt+T.')),
-            );
-
-            const $ = id => document.getElementById(id);
-            $('settings-back').onclick = () => {
-                window.removeEventListener('keydown', this._settingsKey, true);
-                this.showScreen('menu');
-            };
-            $('settings-reset').onclick = async () => {
-                if (await this.dialogs.confirm('Reset all editor settings to their defaults?') !== 'yes')
-                    return;
-                const fresh = SSQE.Settings.clone(SSQE.Settings.DEFAULTS);
-                for (const k of Object.keys(s))
-                    delete s[k];
-                Object.assign(s, fresh);
-                save();
-                this.openSettings();
-            };
         }
 
         // ------------------------------------------------------------ loading (Mapping.Load / Parse)
@@ -511,7 +364,6 @@
             try {
                 Formats.readIni(map, await file.text());
                 map.sortAll();
-                this.editor && this.editor.panels.refresh();
                 this.editor && this.editor.toast('IMPORTED INI');
                 this.scheduleCacheSave();
             } catch (e) {
@@ -607,6 +459,9 @@
             map.currentTime = Math.min(map.currentTime, map.duration);
             map.sortAll();
 
+            try {
+                localStorage.setItem('ssqe-web-editor-last-map', entry.key);
+            } catch { /* storage unavailable */ }
             this.showScreen('editor');
             this.editor = new SSQE.Editor(this, map, this.music);
             this.editor.start();
@@ -620,8 +475,7 @@
                 this.music.stop();
             }
             this.dialogs.closeAll();
-            this.showScreen('menu');
-            this.renderMapList();
+            this.showMenu();
         }
 
         // Mapping.Close
@@ -638,7 +492,6 @@
             this.openMaps = this.openMaps.filter(e => e !== entry);
             await this.storage.deleteMap(entry.key);
             await this.storage.deleteHandle(entry.key).catch(() => { });
-            this.renderMapList();
         }
 
         // ------------------------------------------------------------ cache / autosave
