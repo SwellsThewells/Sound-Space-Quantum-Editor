@@ -203,12 +203,11 @@
                         this.win.paste(e.clipboardData.getData('text'));
                     }
                 },
-                resize: () => this.resize(),
                 contextmenu: e => e.target === this.canvas && e.preventDefault(),
             };
             for (const [k, h] of Object.entries(this.handlers))
                 window.addEventListener(k, h, k === 'wheel' ? { passive: false } : undefined);
-            this.resize();
+            this.fit = G.fitCanvas(this.canvas, (w, h) => this.win.resize(w, h));
             this.last = performance.now();
             const frame = now => {
                 if (!this.running)
@@ -221,7 +220,7 @@
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.fillStyle = '#000';
                 ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+                this.fit.setTransform(ctx);
                 this.win.render(ctx);
                 this.raf = requestAnimationFrame(frame);
             };
@@ -233,17 +232,7 @@
             cancelAnimationFrame(this.raf);
             for (const [k, h] of Object.entries(this.handlers || {}))
                 window.removeEventListener(k, h);
-        }
-
-        resize() {
-            const dpr = window.devicePixelRatio || 1;
-            const w = window.innerWidth, h = window.innerHeight;
-            this.canvas.width = Math.floor(w * dpr);
-            this.canvas.height = Math.floor(h * dpr);
-            this.canvas.style.width = w + 'px';
-            this.canvas.style.height = h + 'px';
-            this.dpr = dpr;
-            this.win.resize(w, h);
+            this.fit && this.fit.dispose();
         }
     }
 

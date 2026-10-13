@@ -89,7 +89,6 @@
             this.win = new G.Window(this.app, this.ui.controls);
             this.win.keys = this.keys;
             this.attachInput();
-            this.resize();
             this.music.setTempo(this.map.tempo);
             this.raf = requestAnimationFrame(t => this.frame(t));
         }
@@ -116,7 +115,6 @@
                 return;
             this.running = true;
             this.attachInput();
-            this.resize();
             this.lastFrame = performance.now();
             this.raf = requestAnimationFrame(t => this.frame(t));
         }
@@ -241,7 +239,6 @@
                 wheel: e => this.onWheel(e),
                 keydown: e => this.onKeyDown(e),
                 keyup: e => this.onKeyUp(e),
-                resize: () => this.resize(),
                 paste: e => this.onPaste(e),
                 contextmenu: e => {
                     if (e.target === this.canvas)
@@ -258,7 +255,7 @@
             window.addEventListener('wheel', this.handlers.wheel, { passive: false });
             window.addEventListener('keydown', this.handlers.keydown);
             window.addEventListener('keyup', this.handlers.keyup);
-            window.addEventListener('resize', this.handlers.resize);
+            this.fit = G.fitCanvas(this.canvas, () => this.resize());
             window.addEventListener('paste', this.handlers.paste);
             window.addEventListener('contextmenu', this.handlers.contextmenu);
             window.addEventListener('blur', this.handlers.blur);
@@ -272,21 +269,14 @@
             window.removeEventListener('wheel', h.wheel);
             window.removeEventListener('keydown', h.keydown);
             window.removeEventListener('keyup', h.keyup);
-            window.removeEventListener('resize', h.resize);
+            this.fit.dispose();
             window.removeEventListener('paste', h.paste);
             window.removeEventListener('contextmenu', h.contextmenu);
             window.removeEventListener('blur', h.blur);
         }
 
         resize() {
-            const dpr = window.devicePixelRatio || 1;
             const w = window.innerWidth, h = window.innerHeight;
-            this.canvas.width = Math.floor(w * dpr);
-            this.canvas.height = Math.floor(h * dpr);
-            this.canvas.style.width = w + 'px';
-            this.canvas.style.height = h + 'px';
-            this.dpr = dpr;
-
             this.win.resize(w, h);
             TRACK = this.ui.Track.rect;
             GRID = this.ui.Grid.rect;
@@ -1188,7 +1178,7 @@
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-            ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+            this.fit.setTransform(ctx);
 
             this.ui.update();
             this.win.process(frametime);
@@ -1236,9 +1226,12 @@
 
         line(x1, y1, x2, y2, color, width = 1) {
             const ctx = this.ctx;
-            // GL draws thin lines as whole pixels; snap straight 1px lines to pixel centres so they aren't blurred away
-            if (width === 1) {
-                const snap = v => Math.floor(v) + 0.5;
+            // GL draws thin lines as whole pixels; snap straight lines to whole device pixels so they aren't blurred away
+            if (x1 === x2 || y1 === y2) {
+                const r = G.pixelRatio;
+                const devices = Math.max(1, Math.round(width * r));
+                const snap = v => (Math.floor(v * r) + (devices % 2 ? 0.5 : 0)) / r;
+                width = devices / r;
                 if (x1 === x2)
                     x1 = x2 = snap(x1);
                 if (y1 === y2)

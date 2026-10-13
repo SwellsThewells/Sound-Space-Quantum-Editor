@@ -15,6 +15,71 @@
     };
 
     let settings = null; // editor settings (color1-5)
+
+    // ---------------------------------------------------------------- crisp canvas (web only)
+    // The canvas bitmap has to match the screen's device pixels exactly, and edges and glyphs have to start on whole
+    // device pixels, otherwise the browser resamples or antialiases everything and the UI looks blurry.
+
+    let pixelRatio = window.devicePixelRatio || 1;
+    const snap = v => Math.round(v * pixelRatio) / pixelRatio;
+
+    // sizes the canvas to the viewport; onResize(cssWidth, cssHeight) runs whenever the size or pixel ratio changes
+    function fitCanvas(canvas, onResize) {
+        let device = null;
+        const apply = () => {
+            const w = window.innerWidth, h = window.innerHeight;
+            pixelRatio = window.devicePixelRatio || 1;
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+            // the exact device-pixel size is only used when it agrees with the pixel ratio (emulators can report CSS pixels)
+            const exact = device && Math.abs(device[0] - w * pixelRatio) < 2 && Math.abs(device[1] - h * pixelRatio) < 2;
+            const pw = exact ? device[0] : Math.round(w * pixelRatio);
+            const ph = exact ? device[1] : Math.round(h * pixelRatio);
+            if (canvas.width !== pw)
+                canvas.width = pw;
+            if (canvas.height !== ph)
+                canvas.height = ph;
+            onResize(w, h);
+        };
+        let observer = null;
+        try {
+            observer = new ResizeObserver(entries => {
+                const box = entries[0].devicePixelContentBoxSize && entries[0].devicePixelContentBoxSize[0];
+                if (box) {
+                    device = [box.inlineSize, box.blockSize];
+                    apply();
+                }
+            });
+            observer.observe(canvas, { box: 'device-pixel-content-box' });
+        } catch {
+            observer = null; // older browsers: fall back to rounding
+        }
+        // devicePixelRatio changes (browser zoom, moving to another screen) without a resize on some browsers
+        let media = null;
+        const watchRatio = () => {
+            media && media.removeEventListener('change', onRatio);
+            media = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+            media.addEventListener('change', onRatio);
+        };
+        const onRatio = () => {
+            watchRatio();
+            apply();
+        };
+        watchRatio();
+        window.addEventListener('resize', apply);
+        apply();
+        return {
+            // transform that maps CSS pixels onto the canvas bitmap
+            setTransform(ctx) {
+                ctx.setTransform(canvas.width / window.innerWidth, 0, 0, canvas.height / window.innerHeight, 0, 0);
+            },
+            dispose() {
+                observer && observer.disconnect();
+                media && media.removeEventListener('change', onRatio);
+                window.removeEventListener('resize', apply);
+            },
+        };
+    }
     const styleColor = (style, i) => {
         const v = style[i];
         if (v !== undefined && v !== null)
@@ -134,8 +199,9 @@
                 if (cx > x)
                     cx += f.bearings[code] * k;
                 // glyph bitmap left edge sits at cx; the canvas origin is one bearing further left
+                // web only: glyphs start on whole device pixels so they aren't smeared across two
                 if (c !== ' ')
-                    ctx.fillText(code === 0 && c.charCodeAt(0) !== 0 ? c : String.fromCharCode(code), cx - f.bearings[code] * k, cy + f.baselineAscent * k);
+                    ctx.fillText(code === 0 && c.charCodeAt(0) !== 0 ? c : String.fromCharCode(code), snap(cx) - f.bearings[code] * k, snap(cy + f.baselineAscent * k));
                 cx += f.extents[code] * k;
                 cx -= (f.bearings[code] - f.originSize / 32) * k;
             }
@@ -277,7 +343,10 @@
                 h = height;
             }
 
-            this.rect = { x: x + this.offset.x * wd, y: y + this.offset.y * hd, w, h };
+            // web only: edges on whole device pixels so shapes and text stay sharp
+            x = snap(x + this.offset.x * wd);
+            y = snap(y + this.offset.y * hd);
+            this.rect = { x, y, w: snap(x + w) - x, h: snap(y + h) - y };
         }
 
         get textScale() {
@@ -1415,6 +1484,7 @@
 
     SSQE.GUI = {
         setSettings: s => settings = s,
+        fitCanvas, snap, get pixelRatio() { return pixelRatio; },
         Styles, CenterMode, Text, loadFonts, texture, drawTile, fillSquircle, strokeSquircle, squirclePath, rgb: C.rgb,
         AnimatedValue, Control, Interactive, Label, Square, Button, TexturedButton, Checkbox, Slider, Textbox, NumericTextbox,
         Container, NumberBox, Dropdown, ScrollList, ButtonList, Radio, Toast, Window,
