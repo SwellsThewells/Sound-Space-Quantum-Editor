@@ -1,0 +1,1401 @@
+'use strict';
+
+// Port of the Sound Space Map Player (Map Player/SSQE Player) to WebGL2.
+// Structure mirrors the C# sources: MainWindow (frame loop / input), GuiWindowMain (gameplay),
+// Camera, GLU (line geometry), ModelManager (instanced models) and MusicPlayer/SoundPlayer.
+window.SSQEGame = (function () {
+    const NOTE_SIZE = [0.875, 0.875, 0.875];
+    const CURSOR_SIZE = [0.2625, 0.2625, 0];
+
+    // assets/models/note.obj (cursor.obj is identical)
+    const OBJ_VERTICES = [
+        [-0.776877, 0.776877, -0.115129], [-0.776877, -0.776877, -0.115129], [0.776877, 0.776877, -0.115129], [0.776877, -0.776877, -0.115129],
+        [-0.776877, 0.776877, 0.115129], [-0.776877, -0.776877, 0.115129], [0.776877, 0.776877, 0.115129], [0.776877, -0.776877, 0.115129],
+        [-1, -1, 0.115129], [1, -1, 0.115129], [-1, 1, -0.115129], [-1, -1, -0.115129],
+        [1, 1, 0.115129], [1, 1, -0.115129], [1, -1, -0.115129], [-1, 1, 0.115129],
+    ];
+    const OBJ_FACES = [
+        [16, 14, 11], [14, 10, 15], [12, 10, 9], [16, 12, 9], [6, 10, 8], [2, 11, 1], [8, 13, 7], [3, 15, 4],
+        [5, 9, 6], [1, 14, 3], [7, 16, 5], [4, 12, 2], [8, 2, 6], [7, 4, 8], [3, 5, 1], [1, 6, 2],
+        [16, 13, 14], [14, 13, 10], [12, 15, 10], [16, 11, 12], [6, 9, 10], [2, 12, 11], [8, 10, 13], [3, 14, 15],
+        [5, 16, 9], [1, 11, 14], [7, 13, 16], [4, 15, 12], [8, 4, 2], [7, 3, 4], [3, 7, 5], [1, 5, 6],
+    ];
+
+    // ---------------------------------------------------------------- shaders (GUI/Shader.cs)
+
+    const VERTEX_SHADER = `#version 300 es
+layout (location = 0) in vec3 position;
+layout (location = 1) in vec4 color;
+out vec4 pass_color;
+
+uniform mat4 projectionMatrix;
+
+void main()
+{
+    gl_Position = projectionMatrix * vec4(position, 1.0);
+    pass_color = color;
+}`;
+
+    const FRAGMENT_SHADER = `#version 300 es
+precision mediump float;
+in vec4 pass_color;
+out vec4 out_Color;
+
+void main()
+{
+    out_Color = pass_color;
+}`;
+
+    const MODEL_VERT_SHADER = `#version 300 es
+layout (location = 0) in vec3 position;
+layout (location = 1) in vec3 mPosition;
+layout (location = 2) in vec4 mColor;
+out vec4 pass_color;
+
+uniform mat4 transformationMatrix;
+uniform mat4 projectionMatrix;
+uniform mat4 viewMatrix;
+
+void main()
+{
+    mat4 m = mat4(1.0);
+    m[3] = vec4(mPosition, 1.0);
+
+    vec4 worldPos = m * transformationMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+    pass_color = mColor;
+}`;
+
+    // ---------------------------------------------------------------- math (column-major mat4)
+
+    const mat4 = {
+        identity() {
+            const m = new Float32Array(16);
+            m[0] = m[5] = m[10] = m[15] = 1;
+            return m;
+        },
+        mul(a, b) {
+            const o = new Float32Array(16);
+            for (let c = 0; c < 4; c++)
+                for (let r = 0; r < 4; r++)
+                    o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+            return o;
+        },
+        perspective(fovy, aspect, near, far) {
+            const f = 1 / Math.tan(fovy / 2);
+            const m = new Float32Array(16);
+            m[0] = f / aspect;
+            m[5] = f;
+            m[10] = (far + near) / (near - far);
+            m[11] = -1;
+            m[14] = 2 * far * near / (near - far);
+            return m;
+        },
+        rotationX(a) {
+            const m = mat4.identity(), c = Math.cos(a), s = Math.sin(a);
+            m[5] = c; m[6] = s; m[9] = -s; m[10] = c;
+            return m;
+        },
+        rotationY(a) {
+            const m = mat4.identity(), c = Math.cos(a), s = Math.sin(a);
+            m[0] = c; m[2] = -s; m[8] = s; m[10] = c;
+            return m;
+        },
+        translation(x, y, z) {
+            const m = mat4.identity();
+            m[12] = x; m[13] = y; m[14] = z;
+            return m;
+        },
+        scale(s) {
+            const m = mat4.identity();
+            m[0] = m[5] = m[10] = s;
+            return m;
+        },
+    };
+
+    const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+    const lerp2 = (a, b, t) => [(b[0] - a[0]) * t + a[0], (b[1] - a[1]) * t + a[1]];
+
+    // ---------------------------------------------------------------- GLU.cs
+
+    const GLU = {
+        line(out, x1, y1, z1, x2, y2, z2, lw, c) {
+            if (x1 !== x2) { y1 -= lw / 2; y2 += lw / 2; }
+            else { x1 -= lw / 2; x2 += lw / 2; }
+
+            out.push(
+                x1, y1, z1, c[0], c[1], c[2], c[3],
+                x2, y1, z1, c[0], c[1], c[2], c[3],
+                x1, y2, z2, c[0], c[1], c[2], c[3],
+
+                x2, y2, z2, c[0], c[1], c[2], c[3],
+                x1, y2, z2, c[0], c[1], c[2], c[3],
+                x2, y1, z1, c[0], c[1], c[2], c[3],
+            );
+        },
+        fadingLine(out, x1, y1, z1, x2, y2, z2, lw, c) {
+            if (x1 !== x2) { y1 -= lw / 2; y2 += lw / 2; }
+            else { x1 -= lw / 2; x2 += lw / 2; }
+
+            out.push(
+                x1, y1, z1, c[0], c[1], c[2], c[3],
+                x2, y1, z1, c[0], c[1], c[2], c[3],
+                x1, y2, z2, 0, 0, 0, c[3],
+
+                x2, y2, z2, 0, 0, 0, c[3],
+                x1, y2, z2, 0, 0, 0, c[3],
+                x2, y1, z1, c[0], c[1], c[2], c[3],
+            );
+        },
+        outline(out, x, y, z, sx, sy, lw, c) {
+            x -= lw / 2;
+            y -= lw / 2;
+            const quad = (ax, ay, bx, by, cx, cy) => out.push(
+                ax, ay, z, c[0], c[1], c[2], c[3],
+                bx, by, z, c[0], c[1], c[2], c[3],
+                cx, cy, z, c[0], c[1], c[2], c[3],
+            );
+
+            quad(x, y, x + sx, y, x, y + lw);
+            quad(x + sx, y + lw, x, y + lw, x + sx, y);
+            quad(x + sx + lw, y, x + sx + lw, y + sy, x + sx, y);
+            quad(x + sx, y + sy, x + sx, y, x + sx + lw, y + sy);
+            quad(x + sx + lw, y + sy + lw, x + lw, y + sy + lw, x + sx + lw, y + sy);
+            quad(x + lw, y + sy, x + sx + lw, y + sy, x + lw, y + sy + lw);
+            quad(x, y + sy + lw, x, y + lw, x + lw, y + sy + lw);
+            quad(x + lw, y + lw, x + lw, y + sy + lw, x, y + lw);
+        },
+    };
+
+    // ---------------------------------------------------------------- map / replay parsing
+
+    // MainWindow.LoadMap: "id,x|y|ms,x|y|ms,..."
+    function parseMap(text, noteColors) {
+        const split = text.trim().split(',');
+        if (split.length < 1 || !split[0].trim())
+            throw new Error('Map is empty');
+
+        const id = split[0].trim();
+        const raw = [];
+
+        for (let i = 1; i < split.length; i++) {
+            const part = split[i].trim();
+            if (!part)
+                continue;
+            const sub = part.split('|');
+            const x = parseFloat(sub[0]);
+            const y = parseFloat(sub[1]);
+            const ms = Math.round(parseFloat(sub[2]));
+
+            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(ms))
+                throw new Error(`Invalid note #${i}: "${part}"`);
+            raw.push({ x, y, ms });
+        }
+
+        raw.sort((a, b) => a.ms - b.ms);
+
+        const colors = noteColors.map(c => [c[0] / 255, c[1] / 255, c[2] / 255]);
+        const notes = raw.map((n, i) => ({ X: n.x, Y: n.y, Ms: n.ms, Color: colors[i % colors.length] }));
+
+        return { id, notes };
+    }
+
+    // MainWindow.LoadReplay (.qer, little-endian BinaryWriter output)
+    function parseReplay(buffer) {
+        const view = new DataView(buffer);
+        let o = 0;
+        const f32 = () => { const v = view.getFloat32(o, true); o += 4; return v; };
+        const i32 = () => { const v = view.getInt32(o, true); o += 4; return v; };
+
+        const tempo = f32();
+
+        const cursorCount = i32();
+        const cursor = new Array(cursorCount);
+        for (let i = 0; i < cursorCount; i++)
+            cursor[i] = { X: f32(), Y: f32(), Ms: i32() };
+
+        const skipCount = i32();
+        const skips = new Array(skipCount);
+        for (let i = 0; i < skipCount; i++)
+            skips[i] = { X: 0, Y: 0, Ms: i32() };
+
+        return { tempo, cursor, skips };
+    }
+
+    // ---------------------------------------------------------------- audio (Audio/*.cs)
+
+    const VOLUME_MULT = 2;
+
+    class MusicPlayer {
+        constructor(game, audioCtx, element, fallbackDuration) {
+            this.game = game;
+            this.el = element;
+            this.state = 'stopped';
+            this.pos = 0;           // media position in seconds
+            this.basePos = 0;
+            this.basePerf = 0;
+            this.started = false;   // whether the media clock is actually running yet
+            this.tempo = 1;
+            this.duration = element && Number.isFinite(element.duration) ? element.duration : fallbackDuration;
+            this.ended = false;
+
+            if (element) {
+                element.preservesPitch = true;
+                element.mozPreservesPitch = true;
+                element.webkitPreservesPitch = true;
+
+                this.gain = audioCtx.createGain();
+                if (game.settings.monoAudio) {
+                    this.gain.channelCount = 1;
+                    this.gain.channelCountMode = 'explicit';
+                    this.gain.channelInterpretation = 'speakers';
+                }
+                this.source = audioCtx.createMediaElementSource(element);
+                this.source.connect(this.gain);
+                this.gain.connect(audioCtx.destination);
+
+                this.onPlaying = () => {
+                    if (this.state === 'playing') {
+                        this.basePos = element.currentTime;
+                        this.basePerf = performance.now();
+                        this.started = true;
+                    }
+                };
+                this.onEnded = () => { this.ended = true; };
+                element.addEventListener('playing', this.onPlaying);
+                element.addEventListener('ended', this.onEnded);
+            }
+        }
+
+        // MusicPlayer.MusicOffset
+        get offset() {
+            return (this.game.settings.musicOffset - 28) / 1000;
+        }
+
+        set volume(v) {
+            if (this.gain)
+                this.gain.gain.value = Math.max(v * VOLUME_MULT, 0);
+        }
+
+        get isPlaying() {
+            return this.state === 'playing';
+        }
+
+        setTempo(t) {
+            this.tempo = t;
+            if (this.el)
+                this.el.playbackRate = t;
+        }
+
+        seekMs(ms) {
+            const p = clamp(ms / 1000 - this.offset, 0, this.duration);
+            this.pos = p;
+            this.basePos = p;
+            this.basePerf = performance.now();
+            if (this.el)
+                this.el.currentTime = p;
+        }
+
+        mediaPos() {
+            if (this.state !== 'playing')
+                return this.pos;
+            if (this.el && !this.started)
+                return this.basePos;
+
+            let p = this.basePos + (performance.now() - this.basePerf) / 1000 * this.tempo;
+
+            if (this.el) {
+                // interpolate between the element's coarse currentTime updates, resyncing on drift
+                const real = this.el.currentTime;
+                if (!this.el.seeking && Math.abs(real - p) > 0.075) {
+                    this.basePos = real;
+                    this.basePerf = performance.now();
+                    p = real;
+                }
+            } else if (p >= this.duration) {
+                this.ended = true;
+                p = this.duration;
+            }
+
+            return p;
+        }
+
+        // MusicPlayer.CurrentTime (ms)
+        currentTimeMs() {
+            return (this.mediaPos() + this.offset) * 1000;
+        }
+
+        play() {
+            this.seekMs(this.game.currentTime);
+            this.state = 'playing';
+            this.started = false;
+            if (this.el) {
+                this.el.playbackRate = this.tempo;
+                const p = this.el.play();
+                if (p)
+                    p.catch(() => { });
+            }
+        }
+
+        pause() {
+            this.game.currentTime = this.currentTimeMs();
+            this.pos = this.mediaPos();
+            this.state = 'paused';
+            if (this.el)
+                this.el.pause();
+        }
+
+        stop() {
+            if (this.el)
+                this.el.pause();
+            this.state = 'stopped';
+            this.seekMs(0);
+        }
+
+        dispose() {
+            if (this.el) {
+                this.el.pause();
+                this.el.removeEventListener('playing', this.onPlaying);
+                this.el.removeEventListener('ended', this.onEnded);
+                try { this.source.disconnect(); this.gain.disconnect(); } catch { }
+            }
+        }
+    }
+
+    class SoundPlayer {
+        constructor(audioCtx, buffer, settings) {
+            this.ctx = audioCtx;
+            this.buffer = buffer;
+            this.settings = settings;
+        }
+
+        play() {
+            if (!this.buffer || this.settings.muteSfx)
+                return;
+            const src = this.ctx.createBufferSource();
+            src.buffer = this.buffer;
+            const gain = this.ctx.createGain();
+            gain.gain.value = Math.max(this.settings.sfxVolume * VOLUME_MULT, 0);
+            src.connect(gain);
+            gain.connect(this.ctx.destination);
+            src.start();
+        }
+    }
+
+    // ---------------------------------------------------------------- GL helpers
+
+    function compileShader(gl, vertSrc, fragSrc) {
+        const compile = (type, src) => {
+            const s = gl.createShader(type);
+            gl.shaderSource(s, src);
+            gl.compileShader(s);
+            if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+                throw new Error(gl.getShaderInfoLog(s));
+            return s;
+        };
+        const vs = compile(gl.VERTEX_SHADER, vertSrc);
+        const fs = compile(gl.FRAGMENT_SHADER, fragSrc);
+        const program = gl.createProgram();
+        gl.attachShader(program, vs);
+        gl.attachShader(program, fs);
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+            throw new Error(gl.getProgramInfoLog(program));
+        gl.deleteShader(vs);
+        gl.deleteShader(fs);
+        return program;
+    }
+
+    // Models/Model.cs + ModelManager.cs
+    function createModel(gl, scaleSetting) {
+        const verts = [];
+        for (const face of OBJ_FACES)
+            for (const idx of face)
+                verts.push(...OBJ_VERTICES[idx - 1]);
+
+        const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+        for (let i = 0; i < verts.length; i += 3)
+            for (let a = 0; a < 3; a++) {
+                min[a] = Math.min(min[a], verts[i + a]);
+                max[a] = Math.max(max[a], verts[i + a]);
+            }
+
+        const vao = gl.createVertexArray();
+        gl.bindVertexArray(vao);
+
+        const vbo = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
+        gl.enableVertexAttribArray(0);
+
+        const posVbo = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, posVbo);
+        gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 12, 0);
+        gl.enableVertexAttribArray(1);
+        gl.vertexAttribDivisor(1, 1);
+
+        const colVbo = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colVbo);
+        gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 16, 0);
+        gl.enableVertexAttribArray(2);
+        gl.vertexAttribDivisor(2, 1);
+
+        gl.bindVertexArray(null);
+
+        return {
+            vao, posVbo, colVbo,
+            vertexCount: verts.length / 3,
+            size: [0, 1, 2].map(a => (max[a] - min[a]) / scaleSetting),
+        };
+    }
+
+    // ---------------------------------------------------------------- Camera.cs
+
+    class Camera {
+        constructor(game) {
+            const s = game.settings;
+            this.game = game;
+            this.rotation = [0, Math.PI];
+            this.projection = mat4.identity();
+            this.view = mat4.identity();
+            this.lookVector = [0, 0, 1];
+            this.cameraPos = [0, 0, -3.5];
+            this.camOffset = [0, 0, 0];
+
+            this.rad88 = 88 * Math.PI / 180;
+            this.radFoV = s.fov * Math.PI / 180;
+            this.camMode = s.cameraMode;
+            this.lockCursor = s.lockCursor;
+            this.sensitivity = s.sensitivity;
+            this.parallax = s.parallax;
+
+            this.LockedPos = [0, 0];
+        }
+
+        update() {
+            const rot = mat4.mul(mat4.rotationX(this.rotation[0]), mat4.rotationY(this.rotation[1]));
+
+            // inverse rotation (transpose) applied to -Z
+            this.lookVector = [-rot[2], -rot[6], -rot[10]];
+            const lv = this.lookVector;
+            this.cameraPos = [lv[0] * 1.25 + this.camOffset[0], lv[1] * 1.25 + this.camOffset[1], -3.5 + this.camOffset[2]];
+
+            const cp = this.cameraPos;
+            this.view = mat4.mul(rot, mat4.translation(-cp[0], -cp[1], -cp[2]));
+
+            // update cursor
+            let pos;
+            if (this.camMode === 'spin') {
+                const d = Math.abs(Math.abs(cp[2] + 0.15) / lv[2]);
+                pos = [cp[0] + lv[0] * d, cp[1] + lv[1] * d];
+            } else
+                pos = this.LockedPos;
+
+            const xf = clamp(pos[0], -1.5 + CURSOR_SIZE[0] / 2, 1.5 - CURSOR_SIZE[0] / 2);
+            const yf = clamp(pos[1], -1.5 + CURSOR_SIZE[1] / 2, 1.5 - CURSOR_SIZE[1] / 2);
+
+            this.game.CursorPos = [xf, yf, 0];
+        }
+
+        applyLocked() {
+            const xf = clamp(this.LockedPos[0], -1.5 + CURSOR_SIZE[0] / 2, 1.5 - CURSOR_SIZE[0] / 2);
+            const yf = clamp(this.LockedPos[1], -1.5 + CURSOR_SIZE[1] / 2, 1.5 - CURSOR_SIZE[1] / 2);
+
+            if (this.lockCursor)
+                this.LockedPos = [xf, yf];
+
+            if (this.camMode === 'half lock')
+                this.camOffset = [xf * this.parallax / 5, yf * this.parallax / 5, 0];
+        }
+
+        setReplay(mouse) {
+            if (this.camMode === 'spin')
+                this.rotation = [clamp(-mouse[1] / 4.6, -this.rad88, this.rad88), Math.PI - mouse[0] / 4.6];
+            else {
+                this.LockedPos = [mouse[0], mouse[1]];
+                this.applyLocked();
+            }
+            this.update();
+        }
+
+        setMouse(dx, dy) {
+            if (this.camMode === 'spin')
+                this.rotation = [
+                    clamp(this.rotation[0] + dy / 1000 * this.sensitivity, -this.rad88, this.rad88),
+                    this.rotation[1] + dx / 1000 * this.sensitivity,
+                ];
+            else {
+                this.LockedPos = [this.LockedPos[0] - dx / 250 * this.sensitivity, this.LockedPos[1] - dy / 250 * this.sensitivity];
+                this.applyLocked();
+            }
+            this.update();
+        }
+
+        calculateProjection(width, height) {
+            this.projection = mat4.perspective(this.radFoV, width / height, 0.1, 1000);
+        }
+    }
+
+    // ---------------------------------------------------------------- MainWindow + GuiWindowMain
+
+    class Game {
+        // opts: { canvas, overlay, settings, mapText, audioElement, audioCtx, hitBuffer, replayBuffer, mode, startTime, fromStart, onExit }
+        constructor(opts) {
+            this.opts = opts;
+            this.settings = opts.settings;
+            const s = this.settings;
+
+            this.Replay = opts.mode === 'replay' && !!opts.replayBuffer;
+            this.Autoplay = opts.mode === 'autoplay' && !this.Replay;
+            this.AutoIndex = 0;
+
+            this.canvas = opts.canvas;
+            this.overlay = opts.overlay;
+            this.ctx2d = this.overlay.getContext('2d');
+
+            const gl = this.canvas.getContext('webgl2', { antialias: true, alpha: false, preserveDrawingBuffer: false });
+            if (!gl)
+                throw new Error('WebGL2 is not supported by this browser');
+            this.gl = gl;
+
+            const { id, notes } = parseMap(opts.mapText, s.noteColors);
+            this.mapId = id;
+            this.Notes = notes;
+            this.CursorNodes = [];
+            this.SkipNodes = [];
+
+            this.CursorPos = [0, 0, 0];
+            this.LastCursorPos = [0, 0, 0];
+
+            const lastMs = notes.length ? notes[notes.length - 1].Ms : 0;
+            const fallbackDuration = (lastMs + 2000) / 1000;
+
+            this.music = new MusicPlayer(this, opts.audioCtx, opts.audioElement, fallbackDuration);
+            this.sound = new SoundPlayer(opts.audioCtx, opts.hitBuffer, s);
+            this.timeMax = this.music.duration * 1000; // Settings.currentTime.Max
+
+            // startup (MainWindow constructor)
+            this.currentTime = opts.fromStart ? 0 : clamp(opts.startTime || 0, 0, this.timeMax);
+            this.StartTime = this.currentTime;
+
+            let startIndex = 0;
+            for (const n of notes)
+                if (n.Ms < this.currentTime)
+                    startIndex++;
+
+            this.initGL();
+
+            this.music.volume = s.masterVolume;
+            this.setTempo(s.tempo);
+            if (this.Replay)
+                this.loadReplay(opts.replayBuffer);
+
+            this.Camera = new Camera(this);
+            this.initWindow(startIndex);
+
+            this.time = -65;
+            this.ReplayCursorIndex = 0;
+            this.ReplaySkipIndex = 0;
+
+            this.mouseDX = 0;
+            this.mouseDY = 0;
+            this.running = false;
+            this.closed = false;
+        }
+
+        // ------------------------------------------------ setup
+
+        initGL() {
+            const gl = this.gl;
+            const s = this.settings;
+
+            this.program = compileShader(gl, VERTEX_SHADER, FRAGMENT_SHADER);
+            this.modelProgram = compileShader(gl, MODEL_VERT_SHADER, FRAGMENT_SHADER);
+
+            this.uniforms = {
+                vertexProjection: gl.getUniformLocation(this.program, 'projectionMatrix'),
+                modelTransformation: gl.getUniformLocation(this.modelProgram, 'transformationMatrix'),
+                modelProjection: gl.getUniformLocation(this.modelProgram, 'projectionMatrix'),
+                modelView: gl.getUniformLocation(this.modelProgram, 'viewMatrix'),
+            };
+
+            // RegisterModels
+            this.noteModel = createModel(gl, s.noteScale);
+            this.cursorModel = createModel(gl, s.cursorScale);
+
+            // dynamic line geometry (GuiWindowMain.Init)
+            this.lineVao = gl.createVertexArray();
+            this.lineVbo = gl.createBuffer();
+            gl.bindVertexArray(this.lineVao);
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.lineVbo);
+            gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 28, 0);
+            gl.enableVertexAttribArray(0);
+            gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 28, 12);
+            gl.enableVertexAttribArray(1);
+            gl.bindVertexArray(null);
+
+            // OnLoad
+            gl.clearColor(0, 0, 0, 1);
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.DEPTH_TEST);
+            gl.enable(gl.CULL_FACE);
+            gl.cullFace(gl.BACK);
+        }
+
+        initWindow(startIndex) {
+            const s = this.settings;
+
+            this.misses = 0;
+            this.hits = 0;
+            this.combo = 0;
+            this.maxCombo = 0;
+
+            this.health = 10;
+            this.maxHealth = this.health;
+            this.healthRegen = 1;
+            this.healthPenalty = 2;
+            this.healthColor = [0, 1, 0, 1];
+
+            this.waitTimer = 2000 * this.Tempo;
+            this.started = false;
+
+            this.Resetting = false;
+            this.resetTimer = 0;
+
+            this.Paused = false;
+            this.Unpausing = false;
+            this.Pauses = 0;
+            this.PauseTime = -Number.MAX_VALUE;
+
+            this.frames = 0;
+            this.fpsTime = 0;
+            this.fpsText = '';
+            this.startIndex = startIndex;
+            this.Offset = 0;
+            this.frameHit = 0;
+
+            this.noteSet = new Uint8Array(this.Notes.length + 1);
+            for (let i = startIndex; i < this.noteSet.length; i++)
+                this.noteSet[i] = 1;
+
+            this.hitWindow = Math.trunc(s.hitWindow);
+            const tempo = Math.round(this.Tempo * 10000) / 100;
+
+            let hwText = '';
+            if (this.hitWindow !== 55)
+                hwText = `HW: ${this.hitWindow}ms`;
+            if (tempo !== 100)
+                hwText += (this.hitWindow !== 55 ? ' | ' : '') + `Tempo: ${+tempo.toFixed(2)}%`;
+            this.hitWindowTempoText = hwText;
+
+            const minScale = (size, model, extra = 0) => Math.min(1, size[0] / model.size[0], size[1] / model.size[1], (size[2] + extra) / model.size[2]);
+            this.noteScaleMatrix = mat4.scale(minScale(NOTE_SIZE, this.noteModel));
+            this.cursorScaleValue = minScale(CURSOR_SIZE, this.cursorModel, 0.05);
+
+            this.positions = new Float32Array(32 * 3);
+            this.colors = new Float32Array(32 * 4);
+        }
+
+        setTempo(value) {
+            this.confirmTempo(SSQESettings.tempoFromSlider(value));
+        }
+
+        confirmTempo(t) {
+            this.Tempo = t;
+            this.music.setTempo(t);
+        }
+
+        loadReplay(buffer) {
+            const r = parseReplay(buffer);
+            this.confirmTempo(r.tempo);
+            this.CursorNodes = r.cursor;
+            this.SkipNodes = r.skips;
+        }
+
+        get SpawnZ() {
+            return this.settings.approachDistance * 25;
+        }
+
+        get NoteSpeed() {
+            return (this.settings.playerApproachRate + 1) * 2.5 / this.Tempo;
+        }
+
+        // ------------------------------------------------ lifecycle
+
+        start() {
+            this.running = true;
+            this.attachInput();
+            this.resize();
+            this.Camera.update();
+            this.lastFrame = performance.now();
+            this.raf = requestAnimationFrame(t => this.frame(t));
+        }
+
+        close() {
+            if (this.closed)
+                return;
+            this.closed = true;
+            this.running = false;
+            cancelAnimationFrame(this.raf);
+            this.detachInput();
+            this.music.dispose();
+
+            const gl = this.gl;
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            this.ctx2d.clearRect(0, 0, this.overlay.width, this.overlay.height);
+
+            if (document.pointerLockElement)
+                document.exitPointerLock();
+
+            this.opts.onExit && this.opts.onExit({
+                accuracy: this.calculateAccuracy(),
+                hits: this.hits,
+                misses: this.misses,
+                maxCombo: this.maxCombo,
+                pauses: this.Pauses,
+                mode: this.Replay ? 'replay' : this.Autoplay ? 'autoplay' : 'play',
+            });
+        }
+
+        // ------------------------------------------------ input (MainWindow On* handlers)
+
+        attachInput() {
+            this.handlers = {
+                mousemove: e => { this.mouseDX += e.movementX; this.mouseDY += e.movementY; },
+                mousedown: e => {
+                    if (e.button === 0 && !this.Replay && !this.Autoplay && document.pointerLockElement !== this.canvas)
+                        this.lockPointer();
+                },
+                keydown: e => this.onKeyDown(e),
+                keyup: e => this.onKeyUp(e),
+                wheel: e => {
+                    e.preventDefault();
+                    if (e.deltaY !== 0)
+                        this.Offset += e.deltaY < 0 ? 1 : -1;
+                },
+                resize: () => this.resize(),
+                contextmenu: e => e.preventDefault(),
+            };
+
+            document.addEventListener('mousemove', this.handlers.mousemove);
+            this.canvas.addEventListener('mousedown', this.handlers.mousedown);
+            this.canvas.addEventListener('contextmenu', this.handlers.contextmenu);
+            window.addEventListener('keydown', this.handlers.keydown);
+            window.addEventListener('keyup', this.handlers.keyup);
+            window.addEventListener('wheel', this.handlers.wheel, { passive: false });
+            window.addEventListener('resize', this.handlers.resize);
+        }
+
+        detachInput() {
+            const h = this.handlers;
+            if (!h)
+                return;
+            document.removeEventListener('mousemove', h.mousemove);
+            this.canvas.removeEventListener('mousedown', h.mousedown);
+            this.canvas.removeEventListener('contextmenu', h.contextmenu);
+            window.removeEventListener('keydown', h.keydown);
+            window.removeEventListener('keyup', h.keyup);
+            window.removeEventListener('wheel', h.wheel);
+            window.removeEventListener('resize', h.resize);
+        }
+
+        lockPointer() {
+            try {
+                const p = this.canvas.requestPointerLock({ unadjustedMovement: true });
+                if (p && p.catch)
+                    p.catch(() => {
+                        try { this.canvas.requestPointerLock(); } catch { }
+                    });
+            } catch {
+                try { this.canvas.requestPointerLock(); } catch { }
+            }
+        }
+
+        onKeyDown(e) {
+            if (['Tab', 'Space', 'F11'].includes(e.code) || (e.ctrlKey && e.code === 'KeyU'))
+                e.preventDefault();
+            if (e.repeat)
+                return;
+
+            switch (e.code) {
+                case 'Escape':
+                    this.close();
+                    break;
+
+                case 'F11':
+                    if (document.fullscreenElement)
+                        document.exitFullscreen().catch(() => { });
+                    else
+                        document.documentElement.requestFullscreen().catch(() => { });
+                    break;
+
+                case 'KeyR':
+                    if (!e.ctrlKey)
+                        this.Resetting = true;
+                    break;
+
+                case 'Tab':
+                    this.reset();
+                    break;
+
+                case 'Space':
+                    if (this.Paused && !this.Unpausing) {
+                        this.currentTime = this.PauseTime - 750;
+                        this.music.play();
+                        this.Unpausing = true;
+                    } else if (!this.Unpausing && this.music.isPlaying && this.PauseTime + 1500 <= this.currentTime) {
+                        this.music.pause();
+
+                        this.PauseTime = this.currentTime;
+                        this.Pauses++;
+                        this.Paused = true;
+                    }
+                    break;
+
+                case 'KeyU':
+                    if (e.ctrlKey && document.pointerLockElement)
+                        document.exitPointerLock();
+                    break;
+            }
+        }
+
+        onKeyUp(e) {
+            switch (e.code) {
+                case 'KeyR':
+                    this.Resetting = false;
+                    break;
+
+                case 'Space':
+                    if (this.Paused) {
+                        this.music.pause();
+                        this.currentTime = this.PauseTime;
+                    }
+                    this.Unpausing = false;
+                    break;
+            }
+        }
+
+        resize() {
+            const dpr = window.devicePixelRatio || 1;
+            const w = Math.max(1, Math.floor(window.innerWidth * dpr));
+            const h = Math.max(1, Math.floor(window.innerHeight * dpr));
+
+            for (const c of [this.canvas, this.overlay]) {
+                c.width = w;
+                c.height = h;
+            }
+
+            this.gl.viewport(0, 0, w, h);
+            this.Camera.calculateProjection(w, h);
+        }
+
+        // ------------------------------------------------ frame (MainWindow.OnRenderFrame)
+
+        frame(now) {
+            if (!this.running)
+                return;
+
+            const frametime = Math.max(0, (now - this.lastFrame) / 1000);
+            this.lastFrame = now;
+
+            const dx = this.mouseDX, dy = this.mouseDY;
+            this.mouseDX = this.mouseDY = 0;
+
+            const gl = this.gl;
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            this.time += frametime * 1000;
+
+            if (this.music.isPlaying)
+                this.currentTime = this.music.currentTimeMs();
+            if (this.music.ended) {
+                this.music.pause();
+                this.close();
+                return;
+            }
+            const currentTime = this.currentTime;
+
+            if (this.Replay) {
+                if (this.ReplayCursorIndex < this.CursorNodes.length) {
+                    let a = this.CursorNodes[Math.max(this.ReplayCursorIndex - 1, 0)];
+                    let b = this.CursorNodes[this.ReplayCursorIndex];
+
+                    while (b.Ms <= this.time && ++this.ReplayCursorIndex < this.CursorNodes.length) {
+                        a = b;
+                        b = this.CursorNodes[this.ReplayCursorIndex];
+                    }
+
+                    const t = b.Ms === a.Ms ? 1 : (this.time - a.Ms) / (b.Ms - a.Ms);
+                    const result = lerp2([a.X, a.Y], [b.X, b.Y], t);
+
+                    this.Camera.setReplay(result);
+                    this.LastCursorPos = [result[0], result[1], 0];
+                } else {
+                    this.close();
+                    return;
+                }
+
+                while (this.ReplaySkipIndex < this.SkipNodes.length && this.SkipNodes[this.ReplaySkipIndex].Ms <= this.time) {
+                    this.skip();
+                    this.ReplaySkipIndex++;
+                }
+            } else if (this.Autoplay) {
+                const Notes = this.Notes;
+                if (this.AutoIndex < Notes.length) {
+                    const index = Math.max(0, this.AutoIndex - 1);
+                    const defaultNote = { X: 1, Y: 1, Ms: 0 };
+
+                    let lastFar = index > 0 && index < Notes.length ? Notes[index - 1] : defaultNote;
+                    let last = index < Notes.length ? Notes[index] : defaultNote;
+                    let next = index + 1 < Notes.length ? Notes[index + 1] : last;
+                    let nextFar = index + 2 < Notes.length ? Notes[index + 2] : next;
+
+                    if (currentTime > next.Ms) {
+                        lastFar = last;
+                        last = next;
+                    }
+
+                    if (currentTime < last.Ms) {
+                        nextFar = next;
+                        next = last;
+                    }
+
+                    let result;
+
+                    const diff = next.Ms - last.Ms;
+                    const t = diff === 0 ? 1 : (currentTime - last.Ms - this.Offset) / diff;
+
+                    if (this.settings.smoothAutoplay) {
+                        const p0 = [lastFar.X, lastFar.Y], p1 = [last.X, last.Y], p2 = [next.X, next.Y], p3 = [nextFar.X, nextFar.Y];
+                        const t2 = t * t, t3 = t2 * t;
+                        result = [0, 1].map(i => 0.5 * (
+                            2 * p1[i] +
+                            (-p0[i] + p2[i]) * t +
+                            (2 * p0[i] - 5 * p1[i] + 4 * p2[i] - p3[i]) * t2 +
+                            (-p0[i] + 3 * p1[i] - 3 * p2[i] + p3[i]) * t3
+                        ) - 1);
+                    } else
+                        result = lerp2([last.X - 1, last.Y - 1], [next.X - 1, next.Y - 1], Math.sin(clamp(t, 0, 1) * Math.PI / 2));
+
+                    this.Camera.setReplay(result);
+                    this.LastCursorPos = [result[0], result[1], 0];
+                }
+            } else {
+                this.LastCursorPos = this.CursorPos;
+                this.Camera.setMouse(dx, dy);
+            }
+
+            this.render(frametime);
+
+            if (this.running)
+                this.raf = requestAnimationFrame(t => this.frame(t));
+        }
+
+        skip() {
+            if (this.AutoIndex < this.Notes.length) {
+                this.music.pause();
+                this.currentTime = this.Notes[this.AutoIndex].Ms - 1000 * (0.875 + this.Tempo);
+                this.music.play();
+            }
+        }
+
+        // ------------------------------------------------ GuiWindowMain.Render
+
+        render(frametime) {
+            const gl = this.gl;
+            this.frameHit = 0;
+
+            if (this.Resetting)
+                this.resetTimer += frametime;
+            else
+                this.resetTimer = 0;
+
+            if (this.resetTimer >= 0.75) {
+                this.close();
+                return;
+            }
+
+            if (this.Paused && this.Unpausing && this.currentTime >= this.PauseTime)
+                this.Paused = false;
+
+            // lines
+            const projView = mat4.mul(this.Camera.projection, this.Camera.view);
+            gl.useProgram(this.program);
+            gl.uniformMatrix4fv(this.uniforms.vertexProjection, false, projView);
+            gl.bindVertexArray(this.lineVao);
+
+            gl.disable(gl.CULL_FACE);
+            const vertices = this.updateLines();
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.lineVbo);
+            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+            gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 7);
+            gl.enable(gl.CULL_FACE);
+
+            // models
+            gl.useProgram(this.modelProgram);
+            gl.uniformMatrix4fv(this.uniforms.modelProjection, false, this.Camera.projection);
+            gl.uniformMatrix4fv(this.uniforms.modelView, false, this.Camera.view);
+            this.renderCursor();
+            if (!this.renderNotes(frametime))
+                return;
+
+            this.frames++;
+            this.fpsTime += frametime;
+
+            if (this.fpsTime >= 0.25) {
+                this.fpsText = `FPS: ${Math.round(this.frames / this.fpsTime)}`;
+                this.frames = 0;
+                this.fpsTime = 0;
+            }
+
+            for (let i = 0; i < Math.min(this.frameHit, this.settings.maxPolyphony); i++)
+                this.sound.play();
+
+            this.renderLabels();
+        }
+
+        renderModel(model, positions, colors, count) {
+            const gl = this.gl;
+            gl.bindVertexArray(model.vao);
+            gl.bindBuffer(gl.ARRAY_BUFFER, model.posVbo);
+            gl.bufferData(gl.ARRAY_BUFFER, positions.subarray(0, count * 3), gl.DYNAMIC_DRAW);
+            gl.bindBuffer(gl.ARRAY_BUFFER, model.colVbo);
+            gl.bufferData(gl.ARRAY_BUFFER, colors.subarray(0, count * 4), gl.DYNAMIC_DRAW);
+            gl.drawArraysInstanced(gl.TRIANGLES, 0, model.vertexCount, count);
+        }
+
+        binarySearchFirst(key) {
+            let first = 0, count = this.Notes.length - 1;
+            while (count > 0) {
+                const step = Math.trunc(count / 2);
+                const iter = first + step;
+                if (this.Notes[iter].Ms < key) {
+                    first = iter + 1;
+                    count -= step + 1;
+                } else
+                    count = step;
+            }
+            return first;
+        }
+
+        binarySearchLast(key) {
+            let first = 0, count = this.Notes.length - 1;
+            while (count > 0) {
+                const step = Math.trunc(count / 2);
+                const iter = first + step;
+                if (this.Notes[iter].Ms <= key) {
+                    first = iter + 1;
+                    count -= step + 1;
+                } else
+                    count = step;
+            }
+            return first;
+        }
+
+        renderNotes(frametime) {
+            const s = this.settings;
+            const Notes = this.Notes;
+            const currentTime = this.currentTime - this.waitTimer - this.Offset;
+
+            this.waitTimer = Math.max(0, this.waitTimer - frametime * 1000 * this.Tempo);
+            if (this.waitTimer <= 0 && !this.started) {
+                this.started = true;
+                this.music.play();
+            }
+
+            const NoteSpeed = this.NoteSpeed;
+            const SpawnZ = this.SpawnZ;
+            const trackLength = SpawnZ / NoteSpeed * 1000;
+            const zHitbox = this.hitWindow * NoteSpeed / 1000 * this.Tempo;
+
+            const minMs = Math.trunc(currentTime - 2 * zHitbox / NoteSpeed * 1000 - frametime);
+            const maxMs = Math.trunc(currentTime + trackLength);
+
+            let low = this.binarySearchFirst(minMs);
+            let high = this.binarySearchLast(maxMs);
+            while (low > 0 && this.noteSet[low - 1])
+                low--;
+            if (Notes.length > 0 && Notes[high].Ms <= maxMs && Notes[low].Ms >= minMs)
+                high++;
+            const range = Math.max(0, high - low);
+
+            if (range * 3 > this.positions.length) {
+                const size = range + Math.trunc(range / 2);
+                this.positions = new Float32Array(size * 3);
+                this.colors = new Float32Array(size * 4);
+            }
+
+            const fade = s.approachFade;
+            const positions = this.positions, colors = this.colors;
+
+            for (let i = low; i < high; i++) {
+                const index = i - low;
+                const note = Notes[i];
+
+                const x = note.X - 1;
+                const y = note.Y - 1;
+                const timeDiff = note.Ms - currentTime;
+                const prevZ = NoteSpeed * (timeDiff - frametime) / 1000;
+                const z = NoteSpeed * timeDiff / 1000;
+
+                if (this.noteSet[i] && z <= 0) {
+                    const hovering = !this.Paused && this.isOverNote([x, y, z], zHitbox, prevZ);
+                    const passed = hovering || z < -zHitbox;
+
+                    if (hovering)
+                        this.hitNote(i);
+                    else if (passed)
+                        this.missNote(i);
+                }
+
+                positions[index * 3] = x;
+                positions[index * 3 + 1] = y;
+                positions[index * 3 + 2] = (this.noteSet[i] && (s.notePushback || z >= 0)) ? z : -10;
+
+                colors[index * 4] = note.Color[0];
+                colors[index * 4 + 1] = note.Color[1];
+                colors[index * 4 + 2] = note.Color[2];
+                colors[index * 4 + 3] = fade ? Math.min(1, (1 - z / SpawnZ) * 2) : 1;
+            }
+
+            this.gl.uniformMatrix4fv(this.uniforms.modelTransformation, false, this.noteScaleMatrix);
+            if (range > 0)
+                this.renderModel(this.noteModel, positions, colors, range);
+
+            while (!this.noteSet[this.AutoIndex])
+                this.AutoIndex++;
+
+            return this.running;
+        }
+
+        renderCursor() {
+            const gl = this.gl;
+            const c2 = this.settings.color2;
+            const scale = this.cursorScaleValue;
+
+            gl.uniformMatrix4fv(this.uniforms.modelTransformation, false, mat4.scale(scale));
+            this.renderModel(this.cursorModel,
+                new Float32Array([this.CursorPos[0], this.CursorPos[1], this.CursorPos[2] - 0.01]),
+                new Float32Array([c2[0] / 255, c2[1] / 255, c2[2] / 255, 1]), 1);
+
+            if (!this.settings.lockCursor && this.settings.cameraMode !== 'spin') {
+                const p = this.Camera.LockedPos;
+                gl.uniformMatrix4fv(this.uniforms.modelTransformation, false, mat4.scale(scale * 0.95));
+                this.renderModel(this.cursorModel, new Float32Array([p[0], p[1], 0]), new Float32Array([0.5, 0.5, 0.5, 0.5]), 1);
+            }
+        }
+
+        // GuiWindowMain.Update
+        updateLines() {
+            const v = [];
+            const s = this.settings;
+            const c1 = [s.color1[0] / 255, s.color1[1] / 255, s.color1[2] / 255, 1];
+
+            const ratio = this.health / this.maxHealth * 2.5;
+
+            const progress = this.timeMax > 0 ? this.currentTime / this.timeMax : 0;
+            const final = progress * 2.8;
+            const first = this.timeMax > 0 ? this.StartTime / this.timeMax : 0;
+            const firstFinal = first * 2.8;
+
+            // grid
+            GLU.outline(v, -1.5, -1.5, 0, 3, 3, 0.02, c1);
+
+            // grid guides
+            if (s.gridGuides) {
+                const g = [0.5, 0.5, 0.5, 0.5];
+                GLU.line(v, -0.5, -1.5, 0, -0.5, 1.5, 0, 0.01, g);
+                GLU.line(v, 0.5, -1.5, 0, 0.5, 1.5, 0, 0.01, g);
+                GLU.line(v, -1.5, -0.5, 0, 1.5, -0.5, 0, 0.01, g);
+                GLU.line(v, -1.5, 0.5, 0, 1.5, 0.5, 0, 0.01, g);
+            }
+
+            // lines
+            GLU.fadingLine(v, -2.5, -1.5, -10, -2.5, -1.5, 75, 0.06, c1);
+            GLU.fadingLine(v, 2.5, -1.5, -10, 2.5, -1.5, 75, 0.06, c1);
+            // health
+            GLU.line(v, 1.25, -1.7, 0, 1.25 - ratio, -1.7, 0, 0.03, this.healthColor);
+            GLU.line(v, 1.25 - ratio, -1.7, 0, -1.25, -1.7, 0, 0.03, [1, 0, 0, 1]);
+            // progress
+            GLU.line(v, 1.4, 1.75, -0.1, 1.4 - final, 1.75, -0.1, 0.03, [1, 1, 1, 1]);
+            GLU.line(v, 1.4 - final, 1.8, -0.101, 1.4 - final, 1.7, -0.101, 0.03, [1, 1, 1, 1]);
+            GLU.line(v, 1.4 - firstFinal, 1.8, -0.099, 1.4 - firstFinal, 1.7, -0.099, 0.03, [1, 0.4, 0, 1]);
+            GLU.line(v, 1.4 - final, 1.75, -0.1, -1.4, 1.75, -0.1, 0.03, [0.5, 0.5, 0.5, 1]);
+            // quit
+            GLU.line(v, 2, -2, 0, 2 - this.resetTimer / 0.75 * 4, -2, 0, 0.06, [1, 0, 0, 1]);
+            // unpause
+            if (this.Paused && this.Unpausing)
+                GLU.line(v, 2, -2, 0.001, 2 - (750 - this.PauseTime + this.currentTime) / 750 * 4, -2, 0.001, 0.06, [0, 0.5, 1, 1]);
+
+            return new Float32Array(v);
+        }
+
+        // ------------------------------------------------ labels (GuiLabel / GuiWindow.OnResize)
+
+        renderLabels() {
+            const ctx = this.ctx2d;
+            const W = this.overlay.width, H = this.overlay.height;
+            const wd = W / 1920, hd = H / 1080;
+            const s = this.settings;
+            const css = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+            ctx.clearRect(0, 0, W, H);
+            ctx.textBaseline = 'top';
+
+            const label = (x, y, w, h, text, size, centered, color) => {
+                if (!text)
+                    return;
+                const px = Math.max(1, Math.trunc(size * hd));
+                ctx.font = `${px}px SSQEMain, "Source Sans Pro", "Segoe UI", Arial, sans-serif`;
+                ctx.fillStyle = color;
+
+                let tx = x * wd, ty = y * hd;
+                const lines = text.split('\n');
+
+                if (centered) {
+                    const width = Math.max(...lines.map(l => ctx.measureText(l).width));
+                    const height = px * 0.72;
+                    tx += w * wd / 2 - width / 2;
+                    ty += h * hd / 2 - height / 2;
+                }
+
+                lines.forEach((l, i) => ctx.fillText(l, tx, ty + i * px));
+            };
+
+            const currentTime = this.currentTime;
+            const mins = Math.trunc(currentTime / 60000);
+            const secs = Math.trunc(currentTime % 60000 / 1000);
+
+            label(930, 10, 60, 24, this.calculateAccuracy(), 28, true, css(s.color1));
+            label(930, 35, 60, 24, String(this.combo), 28, true, css(s.color1));
+            label(930, 60, 60, 24, `${this.misses} | ${this.Pauses}`, 28, true, css(s.color2));
+            label(10, 10, 100, 50, 'QUIT: Escape or R\nRESTART: Tab\nPAUSE: Space\n\nOFFSET: Scroll\nUNFOCUS: CTRL+U\nFOCUS: LMB', 20, false, css(s.color2));
+            if (this.Paused && !this.Unpausing)
+                label(930, 980, 60, 60, 'PAUSED', 72, true, 'rgb(0,127,255)');
+            label(10, 1050, 60, 40, this.hitWindowTempoText, 28, false, css(s.color2));
+            label(0, 1010, 1920, 40, this.Offset !== 0 ? `Offset: ${this.Offset}ms` : '', 28, true, css(s.color2));
+            label(1800, 1050, 60, 40, this.fpsText, 28, false, css(s.color2));
+            label(0, 1045, 1920, 40, `${mins}:${secs >= 0 && secs < 10 ? '0' : ''}${secs}`, 28, true, css(s.color2));
+        }
+
+        calculateAccuracy() {
+            if (this.hits + this.misses === 0)
+                return '--.--%';
+            return `${(this.hits / (this.hits + this.misses) * 100).toFixed(2)}%`;
+        }
+
+        // ------------------------------------------------ hit logic
+
+        hitNote(index) {
+            this.health = clamp(this.health + this.healthRegen, 0, this.maxHealth);
+
+            this.frameHit++;
+
+            this.hits++;
+            this.combo++;
+            this.maxCombo = Math.max(this.maxCombo, this.combo);
+
+            this.noteSet[index] = 0;
+        }
+
+        missNote(index) {
+            this.health = clamp(this.health - this.healthPenalty, 0, this.maxHealth);
+
+            if (this.health <= 0)
+                this.healthColor = [1, 100 / 255, 0, 1];
+
+            this.misses++;
+            this.combo = 0;
+
+            this.noteSet[index] = 0;
+        }
+
+        isOverNote(notePos, zHitbox, prevZ) {
+            if (prevZ + zHitbox < 0 || notePos[2] > 0)
+                return false;
+
+            const halfMax = [0, 1, 2].map(a => (NOTE_SIZE[a] + CURSOR_SIZE[a]) / 2);
+            const halfMin = [halfMax[0], halfMax[1], 0];
+
+            const max = [0, 1, 2].map(a => notePos[a] + halfMax[a]);
+            const min = [0, 1, 2].map(a => notePos[a] - halfMin[a]);
+
+            const prevVec = this.LastCursorPos;
+            const vec = this.CursorPos;
+
+            let start = prevZ / (notePos[2] - prevZ);
+            let end = zHitbox / (notePos[2] - prevZ);
+
+            start = clamp(start, 0, 1);
+            end = clamp(end, 0, 1);
+
+            const v1 = [0, 1, 2].map(a => prevVec[a] + (vec[a] - prevVec[a]) * start);
+            const v2 = [0, 1, 2].map(a => prevVec[a] + (vec[a] - prevVec[a]) * end);
+
+            const m1 = [Math.min(v1[0], v2[0]), Math.min(v1[1], v2[1])];
+            const m2 = [Math.max(v1[0], v2[0]), Math.max(v1[1], v2[1])];
+
+            if (m2[0] < min[0] || max[0] < m1[0])
+                return false;
+            if (m2[1] < min[1] || max[1] < m1[1])
+                return false;
+
+            if (Math.hypot(v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]) <= 0)
+                return true;
+
+            const sv = [-(v2[1] - v1[1]), v2[0] - v1[0]];
+            const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+            const signedDist = p => {
+                const d = dot(p, sv);
+                const proj = [d * sv[0], d * sv[1]];
+                return Math.hypot(proj[0], proj[1]) * (dot(proj, sv) < 0 ? -1 : 1);
+            };
+
+            const dist1 = signedDist([v1[0], v1[1]]);
+            const dist2 = signedDist([v2[0], v2[1]]);
+            const distBox = [
+                signedDist([min[0], min[1]]),
+                signedDist([min[0], max[1]]),
+                signedDist([max[0], min[1]]),
+                signedDist([max[0], max[1]]),
+            ];
+
+            return Math.max(dist1, dist2) >= Math.min(...distBox) && Math.max(...distBox) >= Math.min(dist1, dist2);
+        }
+
+        // GuiWindowMain.Reset
+        reset() {
+            this.noteSet = new Uint8Array(this.Notes.length + 1);
+            for (let i = this.startIndex; i < this.noteSet.length; i++)
+                this.noteSet[i] = 1;
+
+            this.hits = 0;
+            this.misses = 0;
+            this.combo = 0;
+            this.maxCombo = 0;
+            this.AutoIndex = 0;
+
+            this.health = this.maxHealth;
+            this.healthColor = [0, 1, 0, 1];
+
+            this.waitTimer = 2000 * this.Tempo;
+            this.started = false;
+
+            this.Paused = false;
+            this.Unpausing = false;
+            this.PauseTime = -Number.MAX_VALUE;
+            this.Pauses = 0;
+
+            this.resetTimer = 0;
+            this.ReplayCursorIndex = 0;
+            this.ReplaySkipIndex = 0;
+            this.time = -65;
+
+            this.music.stop();
+            this.currentTime = this.StartTime;
+        }
+    }
+
+    return { Game, parseMap, parseReplay };
+})();
