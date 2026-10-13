@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sound Space Quantum Editor</title>
+<style>
+    @font-face {
+        font-family: SSQEMain;
+        src: url('../Web%20Player/assets/main.ttf') format('truetype');
+        font-display: swap;
+    }
+
+    :root {
+        --c1: rgb(0, 255, 200);
+        --c2: rgb(255, 0, 255);
+        --c3: rgb(255, 0, 100);
+        --c4: rgb(90, 90, 90);
+        --c5: rgb(255, 204, 0);
+        --button: rgb(26, 26, 26);
+        --border: rgb(52, 52, 52);
+        --panel: rgb(20, 20, 20);
+        --text: #fff;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        color: var(--text);
+        font-family: SSQEMain, "Source Sans Pro", "Segoe UI", Arial, sans-serif;
+        overflow: hidden;
+    }
+
+    button, input, select, textarea { font-family: inherit; }
+
+    /* ------------------------------------------------ shared controls */
+
+    .ss-button {
+        background: linear-gradient(to bottom, rgba(255,255,255,0.04), rgba(255,255,255,0)) var(--button);
+        color: #fff;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        font-size: 20px;
+        padding: 6px 12px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .ss-button:hover { background-color: rgb(46, 46, 46); }
+    .ss-button:active { background-color: rgb(60, 60, 60); }
+    .ss-button.active { border-color: var(--c1); color: var(--c1); }
+    .ss-button.primary { border-color: var(--c1); }
+    .ss-button.small { font-size: 16px; padding: 3px 10px; }
+    .ss-button.wide { width: 220px; }
+
+    .ss-input {
+        background: rgb(26, 26, 26);
+        color: #fff;
+        border: 1px solid rgb(128, 128, 128);
+        border-radius: 4px;
+        font-size: 18px;
+        padding: 4px 8px;
+        min-width: 0;
+        width: 100%;
+    }
+    select.ss-input { cursor: pointer; }
+
+    .ss-check {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--c1);
+        font-size: 22px;
+        cursor: pointer;
+        user-select: none;
+    }
+    .ss-check input {
+        appearance: none;
+        width: 26px;
+        height: 26px;
+        margin: 0;
+        background: rgb(13, 13, 13);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        cursor: pointer;
+        position: relative;
+        flex: none;
+    }
+    .ss-check input:checked::after {
+        content: '';
+        position: absolute;
+        inset: 5px;
+        background: var(--c2);
+        border-radius: 2px;
+    }
+
+    .ss-label { color: var(--c1); font-size: 20px; }
+
+    .ss-range {
+        width: 100%;
+        accent-color: #fff;
+    }
+
+    /* ------------------------------------------------ menu / create / settings */
+
+    .screen {
+        position: fixed;
+        inset: 0;
+        overflow: auto;
+        background: rgb(30, 30, 30);
+    }
+
+    .menu {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 560px);
+        gap: 40px;
+        padding: 0 40px 70px;
+        min-height: 100%;
+        align-items: start;
+    }
+    .menu-title { font-size: 84px; font-weight: 700; color: var(--c1); margin: 10px 0 0; line-height: 1; }
+    .menu-sub { font-size: 30px; color: var(--c2); margin: 6px 0 22px; text-align: right; max-width: 560px; }
+    .changelog-box {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 16px 20px;
+        height: calc(100vh - 230px);
+        min-height: 200px;
+        display: flex;
+        flex-direction: column;
+    }
+    .changelog-box h2 { margin: 0 0 10px; font-size: 26px; color: var(--c1); }
+    #changelog {
+        flex: 1;
+        overflow: auto;
+        margin: 0;
+        white-space: pre-wrap;
+        font-family: inherit;
+        font-size: 17px;
+        color: #ddd;
+    }
+    .menu-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        margin-top: 170px;
+    }
+    .menu-buttons .ss-button { height: 90px; font-size: 34px; }
+    .menu-hint { color: #aaa; font-size: 17px; line-height: 1.4; }
+
+    #map-bar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 44px;
+        display: flex;
+        background: rgb(20, 20, 20);
+        border-top: 1px solid var(--border);
+    }
+    #map-bar > .ss-button { width: 44px; flex: none; border-radius: 0; padding: 0; }
+    #map-list { flex: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .map-slot { position: relative; min-width: 0; }
+    .map-open { width: 100%; height: 100%; border-radius: 0; font-size: 18px; }
+    .map-open .map-hover { display: none; }
+    .map-slot:hover .map-open .map-name { display: none; }
+    .map-slot:hover .map-open .map-hover { display: inline; }
+    .map-close {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 44px;
+        height: 100%;
+        border-radius: 0;
+        padding: 0;
+        color: red;
+        background: rgb(76, 74, 72);
+        display: none;
+    }
+    .map-slot:hover .map-close { display: block; }
+
+    .form-page {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 40px 20px 60px;
+    }
+    .form-page h1 { color: var(--c1); font-size: 48px; margin: 0 0 24px; }
+    .form-page h3 { color: var(--c2); font-size: 26px; margin: 28px 0 10px; }
+    .form-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+    .form-row > span { color: var(--c1); font-size: 22px; }
+    .form-actions { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+    .form-actions .ss-button { font-size: 24px; padding: 10px 26px; }
+    #create-status { color: var(--c2); min-height: 24px; }
+
+    .set-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding: 6px 0;
+        border-bottom: 1px solid rgb(40, 40, 40);
+        font-size: 19px;
+    }
+    .set-row > span { color: var(--c1); }
+    .set-row .ss-input { width: 120px; }
+    .set-row input[type=color] { width: 48px; height: 30px; padding: 0; border: 1px solid var(--border); background: none; }
+    .set-row input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--c1); }
+    .set-colors { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+    /* ------------------------------------------------ editor stage */
+
+    #editor-canvas { position: fixed; inset: 0; display: block; }
+    #editor-stage {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 1920px;
+        height: 1080px;
+        transform-origin: 0 0;
+        pointer-events: none;
+    }
+    #editor-panels * { pointer-events: auto; }
+    #editor-panels .ss-container, #editor-panels .ss-host, #editor-panels .ss-special-body { pointer-events: none; }
+    #editor-panels .ss-container > *, #editor-panels .ss-special-body > * { pointer-events: auto; }
+
+    .ss-navbar { position: absolute; top: 172px; display: flex; gap: 10px; }
+    .ss-navbar.ss-left { left: 10px; }
+    .ss-navbar.ss-right { left: 1365px; }
+    .ss-navbar .ss-button { width: 175px; height: 50px; font-size: 26px; }
+    .ss-bottom-left { position: absolute; left: 10px; top: 946px; width: 545px; height: 50px; font-size: 26px; }
+
+    .ss-host { position: absolute; top: 232px; width: 545px; }
+    .ss-host-left { left: 10px; height: 704px; }
+    .ss-host-right { left: 1365px; height: 480px; }
+
+    .ss-container {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        max-height: 100%;
+        overflow: auto;
+        padding: 4px 4px 4px 0;
+    }
+    .ss-container .ss-button { font-size: 20px; }
+    .ss-row { display: flex; gap: 10px; align-items: center; }
+    .ss-row .ss-button { min-width: 140px; }
+    .ss-grid3 { display: grid; grid-template-columns: repeat(3, 160px); gap: 14px; }
+    .ss-gap { height: 14px; }
+    .ss-slider { width: 400px; }
+
+    .ss-copy, .ss-back { position: absolute; left: 810px; width: 300px; height: 42px; font-size: 24px; }
+    .ss-copy { top: 273px; }
+    .ss-back { top: 774px; }
+
+    .ss-close-special { position: absolute; left: 10px; top: 172px; width: 545px; height: 50px; font-size: 26px; }
+    .ss-special-body { position: absolute; left: 10px; top: 232px; width: 545px; height: 700px; }
+    .ss-objlist { position: absolute; left: 0; top: 0; width: 150px; height: 698px; display: flex; flex-direction: column; gap: 10px; }
+    .ss-objlist .ss-button { height: 30px; padding: 0 8px; font-size: 18px; }
+    .ss-spacer { flex: 1; }
+    .ss-subnav { position: absolute; left: 165px; top: 0; width: 370px; display: flex; flex-direction: column; gap: 10px; }
+    .ss-subnav .ss-button.wide { width: 100%; }
+    .ss-info { color: var(--c1); font-family: inherit; font-size: 18px; white-space: pre-wrap; margin: 0; }
+
+    /* ------------------------------------------------ dialogs */
+
+    #dialog-layer { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
+    #dialog-layer > * { pointer-events: auto; }
+    .dlg-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+    }
+    .dlg-box, .dlg-window {
+        background: rgb(28, 28, 28);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+        width: min(480px, 100%);
+        max-height: calc(100vh - 32px);
+        display: flex;
+        flex-direction: column;
+    }
+    .dlg-box.wide { width: min(620px, 100%); }
+    .dlg-window { position: fixed; right: 30px; top: 26vh; width: min(460px, calc(100vw - 32px)); }
+    .dlg-title {
+        padding: 10px 14px;
+        font-size: 22px;
+        color: var(--c1);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        user-select: none;
+    }
+    .dlg-window .dlg-title { cursor: move; }
+    .dlg-x { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+    .dlg-body { padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+    .dlg-body label { display: flex; flex-direction: column; gap: 4px; color: var(--c1); font-size: 17px; }
+    .dlg-body label.ss-check { flex-direction: row; font-size: 18px; }
+    .dlg-buttons { display: flex; gap: 10px; justify-content: flex-end; padding: 0 14px 14px; flex-wrap: wrap; }
+    .dlg-text { white-space: pre-wrap; font-family: inherit; font-size: 18px; margin: 0; }
+    .dlg-textarea { min-height: 120px; font-family: ui-monospace, Consolas, monospace; font-size: 14px; resize: vertical; }
+    .dlg-list { width: 100%; background: rgb(18, 18, 18); color: #fff; border: 1px solid var(--border); font-size: 16px; font-family: inherit; }
+    .dlg-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .dlg-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .dlg-row .ss-button { font-size: 16px; padding: 5px 10px; }
+    .dlg-bottom { display: flex; align-items: flex-end; }
+    .tapper { outline: none; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+    .tap-bpm { font-size: 64px; color: var(--c1); min-height: 70px; }
+    .tap-dec { font-size: 22px; color: var(--c2); min-height: 26px; }
+    .tap-button { width: 100%; height: 90px; font-size: 36px; }
+
+    /* ------------------------------------------------ playtest (web player) */
+
+    #game, #overlay { position: fixed; inset: 0; width: 100vw; height: 100vh; display: none; z-index: 30; }
+    #overlay { pointer-events: none; }
+    body.playtesting #game, body.playtesting #overlay { display: block; }
+    body.playtesting { cursor: none; }
+
+    @media (max-width: 900px) {
+        .menu { grid-template-columns: minmax(0, 1fr); padding: 0 16px 70px; }
+        .menu-title { font-size: 52px; }
+        .menu-buttons { margin-top: 0; }
+        .changelog-box { height: 50vh; }
+    }
+</style>
+</head>
+<body>
+
+<!-- menu (GuiWindowMenu) -->
+<div class="screen" id="screen-menu">
+    <div class="menu">
+        <div>
+            <h1 class="menu-title">SOUND SPACE</h1>
+            <div class="menu-sub">QUANTUM EDITOR · WEB</div>
+            <div class="changelog-box">
+                <h2>CHANGELOG</h2>
+                <pre id="changelog">Loading…</pre>
+            </div>
+        </div>
+        <div class="menu-buttons">
+            <button class="ss-button" id="menu-create" type="button">CREATE NEW MAP</button>
+            <button class="ss-button" id="menu-load" type="button">LOAD MAP</button>
+            <button class="ss-button" id="menu-paste" type="button">PASTE MAP</button>
+            <button class="ss-button" id="menu-settings" type="button">SETTINGS</button>
+            <div class="menu-hint">
+                LOAD MAP accepts .txt maps (select the matching .ini and the song together with it), .sspm files and .osu beatmaps.
+                You can also drop files onto this page. Open maps and their audio are kept in your browser between visits.
+            </div>
+        </div>
+    </div>
+    <div id="map-bar">
+        <button class="ss-button" id="maps-left" type="button">&lt;</button>
+        <div id="map-list"></div>
+        <button class="ss-button" id="maps-right" type="button">&gt;</button>
+    </div>
+</div>
+
+<!-- create (GuiWindowCreate) -->
+<div class="screen" id="screen-create" style="display:none">
+    <div class="form-page">
+        <h1>CREATE NEW MAP</h1>
+        <label class="form-row">
+            <span>Audio ID (optional — defaults to the file name)</span>
+            <input class="ss-input" id="create-id" type="text" placeholder="e.g. a Roblox audio ID">
+        </label>
+        <label class="form-row">
+            <span>Import Audio</span>
+            <input class="ss-input" id="create-audio" type="file" accept="audio/*,.asset,.mp3,.ogg,.wav,.flac,.m4a,.opus">
+        </label>
+        <div id="create-status"></div>
+        <div class="form-actions">
+            <button class="ss-button primary" id="create-go" type="button">CREATE</button>
+            <button class="ss-button" id="create-back" type="button">BACK</button>
+        </div>
+    </div>
+</div>
+
+<!-- settings (GuiWindowSettings) -->
+<div class="screen" id="screen-settings" style="display:none">
+    <div class="form-page">
+        <h1>SETTINGS</h1>
+        <div id="settings-body"></div>
+        <div class="form-actions">
+            <button class="ss-button primary" id="settings-back" type="button">BACK</button>
+            <button class="ss-button" id="settings-reset" type="button">RESET TO DEFAULTS</button>
+        </div>
+    </div>
+</div>
+
+<!-- editor (GuiWindowEditor) -->
+<div id="screen-editor" style="display:none">
+    <canvas id="editor-canvas"></canvas>
+    <div id="editor-stage"><div id="editor-panels"></div></div>
+</div>
+
+<div id="dialog-layer"></div>
+
+<!-- web player used for playtesting -->
+<canvas id="game"></canvas>
+<canvas id="overlay"></canvas>
+
+<script src="js/sounds.js"></script>
+<script src="../Web%20Player/js/settings.js"></script>
+<script src="../Web%20Player/js/game.js"></script>
+<script src="js/model.js"></script>
+<script src="js/formats.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/panels.js"></script>
+<script src="js/dialogs.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

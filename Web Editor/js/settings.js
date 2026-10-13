@@ -1,0 +1,175 @@
+'use strict';
+
+// Port of the editor-relevant parts of Preferences/AllSettings.cs and SettingsManager.cs
+(function () {
+    const STORAGE_KEY = 'ssqe-web-editor-settings';
+
+    // KeyboardEvent.code based keybinds
+    const KEYBINDS = {
+        selectAll: { key: 'KeyA', ctrl: true, alt: false, shift: false },
+        save: { key: 'KeyS', ctrl: true, alt: false, shift: false },
+        saveAs: { key: 'KeyS', ctrl: true, alt: false, shift: true },
+        undo: { key: 'KeyZ', ctrl: true, alt: false, shift: false },
+        redo: { key: 'KeyY', ctrl: true, alt: false, shift: false },
+        copy: { key: 'KeyC', ctrl: true, alt: false, shift: false },
+        paste: { key: 'KeyV', ctrl: true, alt: false, shift: false },
+        cut: { key: 'KeyX', ctrl: true, alt: false, shift: false },
+        delete: { key: 'Delete', ctrl: false, alt: false, shift: false },
+        hFlip: { key: 'KeyH', ctrl: false, alt: false, shift: true },
+        vFlip: { key: 'KeyV', ctrl: false, alt: false, shift: true },
+        switchClickTool: { key: 'Tab', ctrl: false, alt: false, shift: false },
+        quantum: { key: 'KeyQ', ctrl: true, alt: false, shift: false },
+        // Ctrl+T is reserved by browsers, so the web version uses Alt+T
+        openTimings: { key: 'KeyT', ctrl: false, alt: true, shift: false },
+        openBookmarks: { key: 'KeyB', ctrl: true, alt: false, shift: false },
+        storeNodes: { key: 'KeyS', ctrl: false, alt: false, shift: true },
+        drawBezier: { key: 'KeyD', ctrl: false, alt: false, shift: true },
+        anchorNode: { key: 'KeyA', ctrl: false, alt: false, shift: true },
+        exportSSPM: { key: 'KeyE', ctrl: true, alt: true, shift: false },
+        createBPM: { key: 'KeyB', ctrl: true, alt: false, shift: true },
+    };
+
+    const KEYBIND_LABELS = {
+        selectAll: 'Select All', save: 'Save', saveAs: 'Save As', undo: 'Undo', redo: 'Redo', copy: 'Copy', paste: 'Paste',
+        cut: 'Cut', delete: 'Delete', hFlip: 'Horizontal Flip', vFlip: 'Vertical Flip', switchClickTool: 'Switch Click Tool',
+        quantum: 'Toggle Quantum', openTimings: 'Open BPM Setup', openBookmarks: 'Open Bookmarks', storeNodes: 'Store Bezier Nodes',
+        drawBezier: 'Draw Bezier', anchorNode: 'Anchor Node', exportSSPM: 'Export SSPM', createBPM: 'Create BPM From Selection',
+    };
+
+    const GRID_KEYS = ['KeyQ', 'KeyW', 'KeyE', 'KeyA', 'KeyS', 'KeyD', 'KeyZ', 'KeyX', 'KeyC'];
+    const NUMPAD_KEYS = ['Numpad7', 'Numpad8', 'Numpad9', 'Numpad4', 'Numpad5', 'Numpad6', 'Numpad1', 'Numpad2', 'Numpad3'];
+    const PATTERN_KEYS = ['Digit0', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
+
+    const DEFAULTS = {
+        waveform: true,
+        classicWaveform: false,
+        enableAutosave: true,
+        autosaveInterval: 5,
+        correctOnCopy: true,
+        gridNumbers: false,
+        approachSquares: false,
+        autoplay: true,
+        numpad: false,
+        quantumGridLines: true,
+        quantumGridSnap: true,
+        metronome: false,
+        separateClickTools: false,
+        enableQuantum: false,
+        autoAdvance: false,
+        selectTool: false,
+        curveBezier: true,
+        gridLetters: true,
+        reverseScroll: false,
+        applyOnPaste: false,
+        jumpPaste: false,
+        pauseScroll: true,
+        clampSR: true,
+        pasteReversed: false,
+        adjustNotes: false,
+        monoAudio: false,
+        muteSfx: false,
+        muteMusic: false,
+        smoothAutoplay: true,
+        gridSquircles: true,
+        oldQuantumSnap: false,
+        scaleMetronome: false,
+        moveOnGridKey: false,
+
+        editorBGOpacity: 255,
+        gridOpacity: 255,
+        trackOpacity: 255,
+        sfxOffset: 0,
+        musicOffset: 0,
+        bezierDivisor: 4,
+        maxPolyphony: 1,
+        rotateBy: 90,
+        scaleBy: 150,
+
+        cursorPos: 40,
+        approachRate: 14,
+        masterVolume: 0.05,
+        sfxVolume: 0.1,
+        quantumSnapping: 0,
+        quantumXOffset: 1,
+        quantumYOffset: 1,
+
+        color1: [0, 255, 200],
+        color2: [255, 0, 255],
+        color3: [255, 0, 100],
+        color4: [90, 90, 90],
+        color5: [255, 204, 0],
+        noteColors: [[255, 0, 255], [0, 255, 200]],
+
+        keybinds: KEYBINDS,
+        gridKeys: GRID_KEYS,
+        patterns: ['', '', '', '', '', '', '', '', '', ''],
+
+        lastLeftNav: '',
+        lastRightNav: '',
+        modchartGame: 'Novastra',
+        modchartStyle: 0,
+        modchartDirection: 0,
+    };
+
+    const clone = v => JSON.parse(JSON.stringify(v));
+
+    function load() {
+        const s = clone(DEFAULTS);
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw) {
+                const saved = JSON.parse(raw);
+                for (const key of Object.keys(DEFAULTS)) {
+                    if (!(key in saved))
+                        continue;
+                    if (key === 'keybinds')
+                        Object.assign(s.keybinds, saved.keybinds);
+                    else if (typeof saved[key] === typeof DEFAULTS[key])
+                        s[key] = saved[key];
+                }
+            }
+        } catch { /* storage unavailable */ }
+        return s;
+    }
+
+    function save(s) {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+        } catch { /* storage unavailable */ }
+    }
+
+    // Settings.CompareKeybind + RefreshKeyMapping
+    function compareKeybind(s, code, ctrl, alt, shift) {
+        const result = [];
+        if (code === 'Backspace')
+            code = 'Delete';
+
+        for (const [name, bind] of Object.entries(s.keybinds))
+            if (bind.key === code && bind.ctrl === ctrl && bind.alt === alt && bind.shift === shift)
+                result.push(name);
+
+        const pattern = PATTERN_KEYS.indexOf(code);
+        if (pattern >= 0)
+            result.push(`pattern${pattern}`);
+
+        if (ctrl || alt || shift)
+            return result;
+
+        const keys = s.numpad ? NUMPAD_KEYS : s.gridKeys;
+        const i = keys.indexOf(code);
+        if (i >= 0)
+            result.push(`gridKey${i % 3}|${Math.trunc(i / 3)}`);
+
+        return result;
+    }
+
+    function keyName(code) {
+        return code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, '').replace(/^Arrow/, '');
+    }
+
+    function keybindText(bind) {
+        return [bind.ctrl && 'CTRL', bind.alt && 'ALT', bind.shift && 'SHIFT', keyName(bind.key).toUpperCase()].filter(Boolean).join('+');
+    }
+
+    SSQE.Settings = { DEFAULTS, KEYBINDS, KEYBIND_LABELS, GRID_KEYS, NUMPAD_KEYS, PATTERN_KEYS, load, save, clone, compareKeybind, keyName, keybindText };
+})();
