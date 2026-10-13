@@ -29,6 +29,8 @@
     button, input, select, textarea { font-family: inherit; }
 
     #editor-canvas { position: fixed; inset: 0; display: block; touch-action: none; }
+    html, body { touch-action: none; }
+    .av-grid-body, .av-panel textarea { touch-action: pan-y; }
     body { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; user-select: none; overscroll-behavior: none; }
 
     /* ------------------------------------------------ touch screens */
@@ -285,27 +287,29 @@
 <canvas id="game"></canvas>
 <canvas id="overlay"></canvas>
 
-<script src="js/sounds.js?v=4"></script>
-<script src="../Web%20Player/js/settings.js?v=4"></script>
-<script src="../Web%20Player/js/game.js?v=4"></script>
-<script src="js/fontmetrics.js?v=4"></script>
-<script src="js/model.js?v=4"></script>
-<script src="js/formats.js?v=4"></script>
-<script src="js/audio.js?v=4"></script>
-<script src="js/settings.js?v=4"></script>
-<script src="js/gui.js?v=4"></script>
-<script src="js/touch.js?v=4"></script>
-<script src="js/editor.js?v=4"></script>
-<script src="js/editorwindow.js?v=4"></script>
-<script src="js/screens.js?v=4"></script>
-<script src="js/dialogs.js?v=4"></script>
-<script src="js/app.js?v=4"></script>
+<script src="js/sounds.js?v=5"></script>
+<script src="../Web%20Player/js/settings.js?v=5"></script>
+<script src="../Web%20Player/js/game.js?v=5"></script>
+<script src="js/fontmetrics.js?v=5"></script>
+<script src="js/model.js?v=5"></script>
+<script src="js/formats.js?v=5"></script>
+<script src="js/audio.js?v=5"></script>
+<script src="js/settings.js?v=5"></script>
+<script src="js/gui.js?v=5"></script>
+<script src="js/touch.js?v=5"></script>
+<script src="js/editor.js?v=5"></script>
+<script src="js/editorwindow.js?v=5"></script>
+<script src="js/screens.js?v=5"></script>
+<script src="js/dialogs.js?v=5"></script>
+<script src="js/app.js?v=5"></script>
 <script>
     document.getElementById('rotate-fullscreen').onclick = () => {
         const el = document.documentElement;
         if (el.requestFullscreen)
             el.requestFullscreen().then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape')).catch(() => { });
     };
+    // Safari ignores user-scalable=no; a zoomed page would magnify (and blur) the editor
+    document.addEventListener('gesturestart', e => e.preventDefault());
     document.getElementById('rotate-skip').onclick = () => document.body.classList.add('portrait-ok');
 </script>
 </body>

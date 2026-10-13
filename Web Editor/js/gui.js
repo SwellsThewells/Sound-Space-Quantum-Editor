@@ -28,7 +28,10 @@
         let device = null;
         const apply = () => {
             const w = window.innerWidth, h = window.innerHeight;
-            pixelRatio = window.devicePixelRatio || 1;
+            // a pinch-zoomed page (or a browser's forced zoom on phones) magnifies the canvas, so draw it at the
+            // magnified resolution too, capped to stay inside mobile canvas size limits
+            const zoom = window.visualViewport && window.visualViewport.scale > 1 ? window.visualViewport.scale : 1;
+            pixelRatio = Math.min((window.devicePixelRatio || 1) * zoom, Math.sqrt(16e6 / (w * h)));
             canvas.style.width = w + 'px';
             canvas.style.height = h + 'px';
             // the exact device-pixel size is only used when it agrees with the pixel ratio (emulators can report CSS pixels)
@@ -67,6 +70,7 @@
         };
         watchRatio();
         window.addEventListener('resize', apply);
+        window.visualViewport && window.visualViewport.addEventListener('resize', apply);
         apply();
         return {
             // transform that maps CSS pixels onto the canvas bitmap
@@ -77,6 +81,7 @@
                 observer && observer.disconnect();
                 media && media.removeEventListener('change', onRatio);
                 window.removeEventListener('resize', apply);
+                window.visualViewport && window.visualViewport.removeEventListener('resize', apply);
             },
         };
     }
