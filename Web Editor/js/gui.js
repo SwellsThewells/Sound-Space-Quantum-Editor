@@ -1340,6 +1340,7 @@
         }
 
         process(dt) {
+            SSQE.GUI.activeWindow = this;
             this.root.process(dt);
         }
 

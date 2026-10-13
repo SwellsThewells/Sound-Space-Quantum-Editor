@@ -70,10 +70,17 @@
         mouseDownLeft(x, y, window) {
             super.mouseDownLeft(x, y, window);
             this.draggingBar = x >= this.rect.x + this.rect.w - this.barWidth / 2;
+            this.lastY = y;
             this.mouseMove(x, y);
         }
 
         mouseMove(x, y) {
+            // on touch screens the text itself can be dragged
+            if (this.dragging && !this.draggingBar && SSQE.Touch && SSQE.Touch.active) {
+                this.scroll -= y - this.lastY;
+                this.lastY = y;
+                this.layout();
+            }
             if (this.dragging && this.draggingBar) {
                 const top = this.rect.y + 6, h = this.rect.h - 12;
                 this.scroll = Math.min(1, Math.max(0, (y - top) / h)) * this.maxScroll;

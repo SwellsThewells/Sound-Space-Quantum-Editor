@@ -2,9 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
 <title>Sound Space Quantum Editor</title>
 <style>
+    @font-face {
+        font-family: SSQEMain;
+        src: url('assets/fonts/main.ttf') format('truetype');
+    }
     @font-face {
         font-family: SSQESemibold;
         src: url('assets/fonts/semibold.ttf') format('truetype');
@@ -21,7 +28,59 @@
 
     button, input, select, textarea { font-family: inherit; }
 
-    #editor-canvas { position: fixed; inset: 0; display: block; }
+    #editor-canvas { position: fixed; inset: 0; display: block; touch-action: none; }
+    body { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; user-select: none; overscroll-behavior: none; }
+
+    /* ------------------------------------------------ touch screens */
+
+    #touch-input {
+        position: fixed;
+        z-index: 15;
+        margin: 0;
+        padding: 0 6px;
+        background: rgb(26, 26, 26);
+        color: #fff;
+        border: 2px solid #fff;
+        border-radius: 6px;
+        outline: none;
+        font-family: SSQEMain, sans-serif;
+        user-select: text;
+    }
+    #rotate-hint {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        background: rgb(30, 30, 30);
+        color: #fff;
+        font: 22px SSQESemibold, sans-serif;
+        text-align: center;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+        padding: 24px;
+    }
+    #rotate-hint .phone {
+        width: 54px;
+        height: 90px;
+        border: 4px solid #fff;
+        border-radius: 10px;
+        animation: rotate-phone 2s ease-in-out infinite;
+    }
+    @keyframes rotate-phone { 0%, 20% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+    #rotate-hint button {
+        font: 22px SSQESemibold, sans-serif;
+        color: #fff;
+        background: rgb(26, 26, 26);
+        border: 2px solid rgb(52, 52, 52);
+        border-radius: 8px;
+        padding: 12px 22px;
+    }
+    #rotate-hint .skip { background: none; border: none; color: #aaa; font-size: 16px; text-decoration: underline; }
+    @media (orientation: portrait) and (pointer: coarse) {
+        body:not(.portrait-ok) #rotate-hint { display: flex; }
+    }
     #dialog-layer { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     #dialog-layer > * { pointer-events: auto; }
 
@@ -40,7 +99,7 @@
         user-select: none;
     }
     .msg-box.tall { height: 344px; }
-    .msg-drag { position: absolute; left: 1px; top: 1px; width: 405px; height: 32px; background: rgb(76, 74, 72); }
+    .msg-drag { touch-action: none; position: absolute; left: 1px; top: 1px; width: 405px; height: 32px; background: rgb(76, 74, 72); }
     .msg-close {
         position: absolute;
         left: 406px;
@@ -102,6 +161,7 @@
 
     .av-window {
         position: fixed;
+        transform-origin: 0 0;
         border: 1px solid #8c8c8c;
         background: #f1f1f1;
         box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
@@ -109,6 +169,7 @@
         color: #000;
     }
     .av-title {
+        touch-action: none;
         height: 30px;
         display: flex;
         align-items: center;
@@ -172,6 +233,7 @@
         resize: none;
     }
     textarea.av-textbox { padding: 2px; }
+    .av-textbox, .av-combo { user-select: text; }
     .av-textbox:focus { border-color: #000; box-shadow: inset 0 -2px 0 #0078d4; }
     .av-textbox.readonly { background: #d3d3d3; }
     .av-textbox.dark { background: #dfdfdf; }
@@ -211,23 +273,40 @@
 
 <div id="dialog-layer"></div>
 
+<!-- phones in portrait: the editor's 16:9 layout needs landscape -->
+<div id="rotate-hint">
+    <div class="phone"></div>
+    <div>Turn your device sideways to use the editor.</div>
+    <button type="button" id="rotate-fullscreen">GO FULLSCREEN</button>
+    <button type="button" class="skip" id="rotate-skip">Use it in portrait anyway</button>
+</div>
+
 <!-- web player used for playtesting -->
 <canvas id="game"></canvas>
 <canvas id="overlay"></canvas>
 
-<script src="js/sounds.js?v=2"></script>
-<script src="../Web%20Player/js/settings.js?v=2"></script>
-<script src="../Web%20Player/js/game.js?v=2"></script>
-<script src="js/fontmetrics.js?v=2"></script>
-<script src="js/model.js?v=2"></script>
-<script src="js/formats.js?v=2"></script>
-<script src="js/audio.js?v=2"></script>
-<script src="js/settings.js?v=2"></script>
-<script src="js/gui.js?v=2"></script>
-<script src="js/editor.js?v=2"></script>
-<script src="js/editorwindow.js?v=2"></script>
-<script src="js/screens.js?v=2"></script>
-<script src="js/dialogs.js?v=2"></script>
-<script src="js/app.js?v=2"></script>
+<script src="js/sounds.js?v=3"></script>
+<script src="../Web%20Player/js/settings.js?v=3"></script>
+<script src="../Web%20Player/js/game.js?v=3"></script>
+<script src="js/fontmetrics.js?v=3"></script>
+<script src="js/model.js?v=3"></script>
+<script src="js/formats.js?v=3"></script>
+<script src="js/audio.js?v=3"></script>
+<script src="js/settings.js?v=3"></script>
+<script src="js/gui.js?v=3"></script>
+<script src="js/touch.js?v=3"></script>
+<script src="js/editor.js?v=3"></script>
+<script src="js/editorwindow.js?v=3"></script>
+<script src="js/screens.js?v=3"></script>
+<script src="js/dialogs.js?v=3"></script>
+<script src="js/app.js?v=3"></script>
+<script>
+    document.getElementById('rotate-fullscreen').onclick = () => {
+        const el = document.documentElement;
+        if (el.requestFullscreen)
+            el.requestFullscreen().then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape')).catch(() => { });
+    };
+    document.getElementById('rotate-skip').onclick = () => document.body.classList.add('portrait-ok');
+</script>
 </body>
 </html>

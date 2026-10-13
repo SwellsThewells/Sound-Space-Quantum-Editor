@@ -139,7 +139,7 @@
 
                 // drag strip
                 let dx = 0, dy = 0;
-                box.firstChild.addEventListener('mousedown', e => {
+                box.firstChild.addEventListener('pointerdown', e => {
                     const sx = e.clientX - dx, sy = e.clientY - dy;
                     const move = ev => {
                         dx = ev.clientX - sx;
@@ -147,23 +147,31 @@
                         place();
                     };
                     const up = () => {
-                        window.removeEventListener('mousemove', move);
-                        window.removeEventListener('mouseup', up);
+                        window.removeEventListener('pointermove', move);
+                        window.removeEventListener('pointerup', up);
                     };
-                    window.addEventListener('mousemove', move);
-                    window.addEventListener('mouseup', up);
+                    window.addEventListener('pointermove', move);
+                    window.addEventListener('pointerup', up);
                 });
 
                 // stretched with the window like every other GUI control (1920x1080 origin)
                 const place = () => {
-                    const sx = window.innerWidth / 1920, sy = window.innerHeight / 1080;
-                    box.style.transform = `translate(${734 * sx + dx}px, ${427 * sy + dy}px) scale(${sx}, ${sy})`;
+                    const W = window.innerWidth, H = window.innerHeight;
+                    let sx = W / 1920, sy = H / 1080, x = 734 * sx, y = 427 * sy;
+                    // web only: on small screens the stretched box would be unreadable, so fit it instead
+                    if (Math.min(sx, sy) < 0.6) {
+                        const bh = box.offsetHeight || 194;
+                        sx = sy = Math.min(1, (W - 16) / 452, (H - 16) / bh);
+                        x = (W - 452 * sx) / 2;
+                        y = (H - bh * sy) / 2;
+                    }
+                    box.style.transform = `translate(${x + dx}px, ${y + dy}px) scale(${sx}, ${sy})`;
                 };
-                place();
                 window.addEventListener('resize', place);
 
                 overlay.append(box);
                 this.layer.append(overlay);
+                place();
                 this.modals++;
                 document.addEventListener('keydown', onKey, true);
 
@@ -203,12 +211,15 @@
                 onClose && onClose();
             };
 
-            // WindowStartupLocation="CenterScreen"
-            win.style.left = Math.max(0, (window.innerWidth - width - 2) / 2) + 'px';
-            win.style.top = Math.max(0, (window.innerHeight - height - 32) / 2) + 'px';
+            // WindowStartupLocation="CenterScreen"; web only: shrunk to fit on screens smaller than the window
+            const scale = Math.min(1, (window.innerWidth - 8) / (width + 2), (window.innerHeight - 8) / (height + 32));
+            if (scale < 1)
+                win.style.transform = `scale(${scale})`;
+            win.style.left = Math.max(0, (window.innerWidth - (width + 2) * scale) / 2) + 'px';
+            win.style.top = Math.max(0, (window.innerHeight - (height + 32) * scale) / 2) + 'px';
 
             const titleBar = win.firstChild;
-            titleBar.addEventListener('mousedown', e => {
+            titleBar.addEventListener('pointerdown', e => {
                 if (e.target.tagName === 'BUTTON')
                     return;
                 const rect = win.getBoundingClientRect();
@@ -218,13 +229,13 @@
                     win.style.top = Math.max(0, ev.clientY - dy) + 'px';
                 };
                 const up = () => {
-                    window.removeEventListener('mousemove', move);
-                    window.removeEventListener('mouseup', up);
+                    window.removeEventListener('pointermove', move);
+                    window.removeEventListener('pointerup', up);
                 };
-                window.addEventListener('mousemove', move);
-                window.addEventListener('mouseup', up);
+                window.addEventListener('pointermove', move);
+                window.addEventListener('pointerup', up);
             });
-            win.addEventListener('mousedown', () => this.layer.lastChild !== win && this.layer.append(win));
+            win.addEventListener('pointerdown', () => this.layer.lastChild !== win && this.layer.append(win));
             // these are separate windows in the desktop editor, so their keys never reach the editor
             win.addEventListener('keydown', e => e.stopPropagation());
 

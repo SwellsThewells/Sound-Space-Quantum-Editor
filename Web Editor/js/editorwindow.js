@@ -328,10 +328,25 @@
         const Track = new SSQE.TrackControl(0, 0, 1920, 86, { editor });
         const Background = new G.Square(0, 0, 1920, 1080, { image: 'background_editor', color: () => [30, 30, 30, s.editorBGOpacity] });
 
+        // web only: touch screens have no keyboard shortcuts, so the common ones get buttons under the grid
+        const toggleFullscreen = () => {
+            if (document.fullscreenElement)
+                document.exitFullscreen().catch(() => { });
+            else if (document.documentElement.requestFullscreen)
+                document.documentElement.requestFullscreen().then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape')).catch(() => { });
+        };
+        const touchActions = [['UNDO', 'undo'], ['REDO', 'redo'], ['SELECT ALL', 'selectAll'], ['COPY', 'copy'], ['CUT', 'cut'],
+            ['PASTE', 'paste'], ['DELETE', 'delete'], ['SAVE', 'save'], ['FULLSCREEN', toggleFullscreen]];
+        const touchWidth = (790 - 6 * (touchActions.length - 1)) / touchActions.length;
+        const TouchBar = new G.Container(565, 946, 790, 50, touchActions.map(([text, action], i) =>
+            button(i * (touchWidth + 6), 0, touchWidth, 50, text, 20, () => typeof action === 'function' ? action() : editor.runKeybind(action))),
+        { visible: !!(SSQE.Touch && SSQE.Touch.active) });
+        SSQE.Touch && SSQE.Touch.onChange(on => TouchBar.visible = on);
+
         const controls = [Background, StandardNav, SpecialMapNavs, ConstantNav, CopyButton, BackButton, Tempo,
             Timeline, MusicVolume, SfxVolume, PlayPause, Toast, ZoomLabel, ZoomValueLabel, ClickModeLabel, TempoLabel,
             MusicVolumeLabel, MusicVolumeValueLabel, SfxVolumeLabel, SfxVolumeValueLabel, CurrentTimeLabel, CurrentMsLabel,
-            MusicMute, SfxMute, TotalTimeLabel, NotesLabel, Grid, Track];
+            MusicMute, SfxMute, TotalTimeLabel, NotesLabel, TouchBar, Grid, Track];
 
         if (map.renderMode === RenderMode.Special) {
             StandardNav.visible = false;
