@@ -1,0 +1,44 @@
+name: Deploy web player and editor
+
+# Publishes only the browser versions to GitHub Pages. Publishing the whole repository would also
+# serve the .zip downloads (which contain .exe files), which gets the site flagged by browsers.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build site
+        run: |
+          mkdir _site
+          cp pages/index.html _site/index.html
+          cp -r "Web Player" "Web Editor" _site/
+          cp changelog _site/changelog
+          touch _site/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
