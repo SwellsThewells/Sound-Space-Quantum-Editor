@@ -226,6 +226,52 @@ void main()
 
     const VOLUME_MULT = 2;
 
+    // iOS only lets a media element start playing from a tap or click, but the music starts after the map and audio
+    // have loaded. One element is unlocked on the first tap, click or key press and reused for every game.
+    const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+    let sharedAudio = null;
+    function sharedAudioElement() {
+        if (!sharedAudio) {
+            sharedAudio = new Audio();
+            sharedAudio.preload = 'auto';
+            sharedAudio.setAttribute('playsinline', '');
+        }
+        return sharedAudio;
+    }
+    function unlockAudio() {
+        const a = sharedAudioElement();
+        if (a.dataset.unlocked || (a.src && !a.src.startsWith('data:')))
+            return;
+        a.src = SILENT_WAV;
+        const p = a.play();
+        if (p && p.then)
+            p.then(() => {
+                a.pause();
+                a.dataset.unlocked = '1';
+            }).catch(() => { });
+    }
+    for (const type of ['touchend', 'click', 'keydown'])
+        window.addEventListener(type, unlockAudio, true);
+
+    // loads a song file into the shared element; resolves once its length is known
+    function loadAudio(file) {
+        return new Promise((resolve, reject) => {
+            const a = sharedAudioElement();
+            if (a.src && a.src.startsWith('blob:'))
+                URL.revokeObjectURL(a.src);
+            a.onloadedmetadata = () => {
+                a.onloadedmetadata = a.onerror = null;
+                resolve(a);
+            };
+            a.onerror = () => {
+                a.onloadedmetadata = a.onerror = null;
+                reject(new Error(`${file.name || 'The audio'} could not be decoded by this browser`));
+            };
+            a.src = URL.createObjectURL(file);
+            a.load();
+        });
+    }
+
     class MusicPlayer {
         constructor(game, audioCtx, element, fallbackDuration) {
             this.game = game;
@@ -250,7 +296,13 @@ void main()
                     this.gain.channelCountMode = 'explicit';
                     this.gain.channelInterpretation = 'speakers';
                 }
-                this.source = audioCtx.createMediaElementSource(element);
+                // an element can only be wired into an audio context once, so the source node is kept on it
+                if (!element._ssqeSource || element._ssqeCtx !== audioCtx) {
+                    element._ssqeSource = audioCtx.createMediaElementSource(element);
+                    element._ssqeCtx = audioCtx;
+                }
+                this.source = element._ssqeSource;
+                try { this.source.disconnect(); } catch { }
                 this.source.connect(this.gain);
                 this.gain.connect(audioCtx.destination);
 
@@ -779,6 +831,63 @@ void main()
                 contextmenu: e => e.preventDefault(),
             };
 
+            // touch screens: drag anywhere to move the cursor (like a trackpad), with buttons for the keyboard keys
+            let lastTouch = null;
+            const key = code => ({ code, repeat: false, ctrlKey: false, preventDefault() { } });
+            this.handlers.touchstart = e => {
+                e.preventDefault();
+                const t = e.changedTouches[0];
+                lastTouch = { id: t.identifier, x: t.clientX, y: t.clientY };
+            };
+            this.handlers.touchmove = e => {
+                e.preventDefault();
+                const t = lastTouch && [...e.touches].find(t => t.identifier === lastTouch.id);
+                if (!t)
+                    return;
+                // half the short side of the screen moves the cursor across the grid at sensitivity 1
+                const k = 1500 / Math.min(window.innerWidth, window.innerHeight);
+                this.mouseDX += (t.clientX - lastTouch.x) * k;
+                this.mouseDY += (t.clientY - lastTouch.y) * k;
+                lastTouch.x = t.clientX;
+                lastTouch.y = t.clientY;
+            };
+            this.handlers.touchend = e => {
+                e.preventDefault();
+                if (lastTouch && [...e.changedTouches].some(t => t.identifier === lastTouch.id))
+                    lastTouch = null;
+            };
+            for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel'])
+                this.canvas.addEventListener(type, this.handlers[type === 'touchcancel' ? 'touchend' : type], { passive: false });
+            this.canvas.style.touchAction = 'none';
+
+            if (window.matchMedia && matchMedia('(pointer: coarse)').matches) {
+                const button = (text, title, down, up) => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.textContent = text;
+                    b.title = title;
+                    Object.assign(b.style, {
+                        width: '56px', height: '56px', border: '2px solid rgba(255,255,255,0.35)', borderRadius: '12px',
+                        background: 'rgba(0,0,0,0.35)', color: '#fff', font: '24px sans-serif', touchAction: 'none', padding: '0',
+                    });
+                    b.addEventListener('touchstart', e => { e.preventDefault(); down(); }, { passive: false });
+                    b.addEventListener('touchend', e => { e.preventDefault(); up && up(); }, { passive: false });
+                    return b;
+                };
+                this.touchButtons = document.createElement('div');
+                Object.assign(this.touchButtons.style, {
+                    position: 'fixed', top: 'max(10px, env(safe-area-inset-top))', right: 'max(10px, env(safe-area-inset-right))',
+                    display: 'flex', gap: '10px', zIndex: '50',
+                });
+                this.touchButtons.append(
+                    button('↻', 'Restart', () => this.onKeyDown(key('Tab'))),
+                    // like Space: tap to pause, then hold to unpause
+                    button('❚❚', 'Pause (hold to unpause)', () => this.onKeyDown(key('Space')), () => this.onKeyUp(key('Space'))),
+                    button('✕', 'Quit', () => this.onKeyDown(key('Escape'))),
+                );
+                document.body.append(this.touchButtons);
+            }
+
             document.addEventListener('mousemove', this.handlers.mousemove);
             this.canvas.addEventListener('mousedown', this.handlers.mousedown);
             this.canvas.addEventListener('contextmenu', this.handlers.contextmenu);
@@ -792,6 +901,12 @@ void main()
             const h = this.handlers;
             if (!h)
                 return;
+            for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel'])
+                this.canvas.removeEventListener(type, h[type === 'touchcancel' ? 'touchend' : type]);
+            if (this.touchButtons) {
+                this.touchButtons.remove();
+                this.touchButtons = null;
+            }
             document.removeEventListener('mousemove', h.mousemove);
             this.canvas.removeEventListener('mousedown', h.mousedown);
             this.canvas.removeEventListener('contextmenu', h.contextmenu);
@@ -1397,5 +1512,5 @@ void main()
         }
     }
 
-    return { Game, parseMap, parseReplay };
+    return { Game, parseMap, parseReplay, loadAudio };
 })();

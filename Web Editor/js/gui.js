@@ -16,6 +16,9 @@
 
     let settings = null; // editor settings (color1-5)
 
+    // fonts and textures live in the Web Editor folder, also when the map player page uses this file
+    const ASSETS = new URL('../assets/', document.currentScript ? document.currentScript.src : location.href).href;
+
     // ---------------------------------------------------------------- crisp canvas (web only)
     // The canvas bitmap has to match the screen's device pixels exactly, and edges and glyphs have to start on whole
     // device pixels, otherwise the browser resamples or antialiases everything and the UI looks blurry.
@@ -42,6 +45,18 @@
                 canvas.width = pw;
             if (canvas.height !== ph)
                 canvas.height = ph;
+            // open the page with #debug to see what the canvas is sized to
+            if (location.hash.includes('debug')) {
+                let info = document.getElementById('canvas-debug');
+                if (!info) {
+                    info = document.createElement('div');
+                    info.id = 'canvas-debug';
+                    Object.assign(info.style, { position: 'fixed', left: '4px', bottom: '4px', zIndex: '99', background: '#000c', color: '#0f0', font: '12px monospace', padding: '4px', pointerEvents: 'none' });
+                    document.body.append(info);
+                }
+                const vv = window.visualViewport;
+                info.textContent = `css ${w}x${h} dpr ${window.devicePixelRatio} zoom ${vv ? vv.scale.toFixed(2) : '-'} canvas ${pw}x${ph}${device ? ` device ${device[0]}x${device[1]}` : ''} ratio ${pixelRatio.toFixed(2)}`;
+            }
             onResize(w, h);
         };
         let observer = null;
@@ -215,7 +230,7 @@
 
     function loadFonts() {
         const loads = Object.entries(FONT_FAMILIES).map(([name, family]) => {
-            const face = new FontFace(family, `url("assets/fonts/${name}.ttf")`);
+            const face = new FontFace(family, `url("${ASSETS}fonts/${name}.ttf")`);
             document.fonts.add(face);
             return face.load().catch(e => console.warn('Font failed to load', name, e));
         });
@@ -228,7 +243,7 @@
     function texture(name) {
         if (!textures[name]) {
             const img = new Image();
-            img.src = `assets/${name}.png`;
+            img.src = `${ASSETS}${name}.png`;
             textures[name] = img;
         }
         return textures[name];

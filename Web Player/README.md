@@ -5,22 +5,26 @@ It runs entirely in the browser, with no install and no server-side code.
 
 ## Running
 
-Open `index.html` in a modern browser (Chrome, Edge or Firefox), or serve the folder from any
-static host:
+The menu and settings use the web editor's GUI (fonts, textures and controls), so the
+`Web Editor` folder has to sit next to this one. Serve the repository root and open
+`Web Player/index.html`:
 
 ```
-cd "Web Player"
-python3 -m http.server 8000   # then open http://localhost:8000
+python3 -m http.server 8000   # from the repository root
+# then open http://localhost:8000/Web%20Player/
 ```
 
-1. Load a map: choose a `.txt` file, or paste map data in the `id,x|y|ms,x|y|ms,...` format
-   (the same format the editor writes to `assets/temp/tempmap.txt`).
-2. Optionally load the song (any format your browser can decode: mp3, ogg, wav and so on).
+1. Load a map: **LOAD MAP** for a `.txt` file, or **PASTE MAP** for map data in the
+   `id,x|y|ms,x|y|ms,...` format (the same format the editor writes to `assets/temp/tempmap.txt`).
+2. Optionally **LOAD AUDIO** (any format your browser can decode: mp3, ogg, wav and so on).
    Without audio the map plays silently.
-3. Optionally load a `.qer` replay.
-4. Click **Play**, **Autoplay** or **Watch replay**.
+3. Optionally **LOAD REPLAY** for a `.qer` replay.
+4. Click **PLAY**, **AUTOPLAY** or **WATCH REPLAY**.
 
-You can also drag files onto the page. **Generate demo map** creates a random map for testing.
+You can also drag files onto the page. **DEMO MAP** creates a random map for testing.
+
+On phones and tablets, drag anywhere to move the cursor. Buttons in the top right corner restart,
+pause (hold to unpause) and quit.
 
 ## Controls
 

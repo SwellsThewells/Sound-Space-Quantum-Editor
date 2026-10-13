@@ -175,11 +175,24 @@
 
         pickFile(accept, multiple = false) {
             return new Promise(resolve => {
-                const input = el('input', { type: 'file', accept });
+                // iOS only opens the picker for an input that's in the page, and greys out files whose type it can't
+                // map from the accept list (.mp3 next to .asset, .sspm, ...), so touch devices get no filter
+                if (SSQE.Touch && SSQE.Touch.active)
+                    accept = '';
+                const input = el('input', { type: 'file', accept, style: { position: 'fixed', left: '-1000px', top: '0', opacity: '0' } });
                 if (multiple)
                     input.multiple = true;
-                input.addEventListener('change', () => resolve(multiple ? [...input.files] : input.files[0] || null));
-                input.addEventListener('cancel', () => resolve(multiple ? [] : null));
+                let done = false;
+                const finish = value => {
+                    if (done)
+                        return;
+                    done = true;
+                    input.remove();
+                    resolve(value);
+                };
+                input.addEventListener('change', () => finish(multiple ? [...input.files] : input.files[0] || null));
+                input.addEventListener('cancel', () => finish(multiple ? [] : null));
+                document.body.append(input);
                 input.click();
             });
         }
@@ -700,13 +713,7 @@
             });
 
             const blob = await this.storage.getAudio(map.soundId);
-            const audioElement = await new Promise((resolve, reject) => {
-                const a = new Audio();
-                a.preload = 'auto';
-                a.onloadedmetadata = () => resolve(a);
-                a.onerror = () => reject(new Error('audio failed to load'));
-                a.src = URL.createObjectURL(blob);
-            }).catch(() => null);
+            const audioElement = blob ? await SSQEGame.loadAudio(blob).catch(() => null) : null;
 
             if (ps.fullscreenPlayer && !document.fullscreenElement)
                 document.documentElement.requestFullscreen().catch(() => { });
@@ -716,8 +723,6 @@
 
             const finish = () => {
                 document.body.classList.remove('playtesting');
-                if (audioElement)
-                    URL.revokeObjectURL(audioElement.src);
                 if (document.fullscreenElement)
                     document.exitFullscreen().catch(() => { });
                 editor.resume();
