@@ -19,7 +19,8 @@ window.SSQESettings = (function () {
         cameraMode: 'half lock',
 
         lockCursor: true,
-        fullscreenPlayer: true,
+        fullscreenPlayer: false,
+        settingsVersion: 2,
         approachFade: false,
         gridGuides: false,
         notePushback: false,
@@ -90,8 +91,15 @@ window.SSQESettings = (function () {
         const s = clone(DEFAULTS);
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
-            if (raw)
-                applyObject(s, JSON.parse(raw), false);
+            if (raw) {
+                const saved = JSON.parse(raw);
+                applyObject(s, saved, false);
+                // version 2 turned fullscreen off by default; older saves only had it on because it was the default
+                if (!(saved.settingsVersion >= 2)) {
+                    s.fullscreenPlayer = false;
+                    s.settingsVersion = 2;
+                }
+            }
         } catch { /* storage unavailable */ }
         return s;
     }

@@ -125,6 +125,8 @@
         fpsLimit: 60,
         createGame: 'Sound Space',
         mode3D: false,
+        mode3DHitEffect: false,
+        grid3DOpacity: 80,
         playtestGame: 'SSQE Player',
     };
 

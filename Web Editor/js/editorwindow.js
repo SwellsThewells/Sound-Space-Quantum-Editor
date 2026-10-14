@@ -158,6 +158,7 @@
 
         // ------------------------------------------------ Graphics
         const ApproachRateLabel = label(245, 260, 250, 32, '', 28);
+        const Grid3DLabel = label(0, 100, 230, 32, '', 26);
         const CursorPosLabel = label(245, 340, 250, 32, '', 28);
         const GraphicsNav = new G.Container(1365, 222, 545, 756, [
             checkbox(245, 10, 'Autoplay', 26, 'autoplay'),
@@ -170,7 +171,10 @@
             ApproachRateLabel, CursorPosLabel,
             checkbox(245, 50, 'Smooth Autoplay Cursor', 26, 'smoothAutoplay'),
             // web only: notes fly out from the middle of the grid, like in game
-            checkbox(245, 430, '3D Mode', 26, 'mode3D'),
+            checkbox(0, 10, '3D Mode', 26, 'mode3D'),
+            checkbox(0, 50, '3D Hit Effect', 26, 'mode3DHitEffect'),
+            Grid3DLabel,
+            slider(0, 130, 230, 32, () => s.grid3DOpacity, v => { s.grid3DOpacity = Math.round(v); saveS(); }, 255, 1, 80),
         ]);
 
         // ------------------------------------------------ Export
@@ -374,6 +378,7 @@
             ApproachRateLabel.text = `Approach Rate: ${Math.round(s.approachRate + 1)}`;
             PlayerApproachRateLabel.text = `Player Approach Rate: ${Math.round(ps.playerApproachRate + 1)}`;
             CursorPosLabel.text = `Cursor Position: ${Math.abs(Math.round(s.cursorPos))}%`;
+            Grid3DLabel.text = `3D Grid Opacity: ${Math.round(s.grid3DOpacity / 255 * 100)}%`;
             TempoLabel.text = `PLAYBACK SPEED - ${Math.round(map.tempo * 100)}%`;
             MusicVolumeValueLabel.text = String(Math.abs(Math.round(s.masterVolume * 100)));
             SfxVolumeValueLabel.text = String(Math.abs(Math.round(s.sfxVolume * 100)));

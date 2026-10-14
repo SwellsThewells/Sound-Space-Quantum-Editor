@@ -1256,6 +1256,11 @@
             const maxMs = t + 1000 / ar;
             const mx = this.mouse.x, my = this.mouse.y;
 
+            // web only: 3D mode has its own, lower opacity for the grid itself so the notes stand out
+            ctx.save();
+            if (s.mode3D)
+                ctx.globalAlpha = clamp(s.grid3DOpacity, 0, 255) / 255;
+
             // background, outline and divisor lines (GuiGrid.Draw)
             ctx.fillStyle = `rgba(39,39,39,${s.gridOpacity / 255})`;
             ctx.fillRect(GRID.x, GRID.y, GRID.w, GRID.h);
@@ -1305,6 +1310,7 @@
                     this.text(SSQE.Settings.keyName(code), GRID.x + gx * cell + cell / 2, GRID.y + gy * cell + cell / 2, 38 * this.gridTextScale, 'rgb(52,52,52)', 'center', 'middle');
                 });
             }
+            ctx.restore();
 
             // notes
             const notes = map.notes;
@@ -1327,7 +1333,7 @@
             };
 
             const drawn = [];
-            if (mode3D) {
+            if (mode3D && s.mode3DHitEffect) {
                 const [passedLow] = notes.searchRange(t - PASSED_MS, t);
                 for (let i = passedLow; i < low; i++) {
                     const note = notes.items[i];

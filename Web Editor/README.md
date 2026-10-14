@@ -61,7 +61,8 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
 - **Saving:** in Chromium-based browsers, Save As can write to a folder you pick, and later saves
   and autosaves go to the same files. In other browsers the `.txt` and `.ini` are downloaded.
 - **3D Mode** (Graphics tab, web only): notes fly out from the middle of the grid towards their cell,
-  like in game, instead of fading in on it.
+  like in game, instead of fading in on it. **3D Hit Effect** makes notes keep growing as they fade
+  after being hit, and **3D Grid Opacity** sets how see-through the grid is while 3D Mode is on.
 - **Playtest:** Play From Start and Play Here open the web player on top of the editor. Hold Alt
   while clicking to watch autoplay. Esc returns to the editor.
 
