@@ -712,7 +712,11 @@
                 maxPolyphony: s.maxPolyphony,
             });
 
-            const blob = await this.storage.getAudio(map.soundId);
+            // the decoded song plays exactly and needs no <audio> element (which iOS won't load or start without a
+            // tap); the element is only needed to keep the pitch at other tempos
+            const audioBuffer = editor.music.buffer;
+            const needElement = !audioBuffer || Math.abs(SSQESettings.tempoFromSlider(map.tempoSlider) - 1) > 1e-6;
+            const blob = needElement ? await this.storage.getAudio(map.soundId) : null;
             const audioElement = blob ? await SSQEGame.loadAudio(blob).catch(() => null) : null;
 
             if (ps.fullscreenPlayer && !document.fullscreenElement)
@@ -735,6 +739,7 @@
                     settings: ps,
                     mapText: Formats.writeTxt(map),
                     audioElement,
+                    audioBuffer,
                     audioCtx: SSQE.Audio.audioContext(),
                     hitBuffer: null,
                     replayBuffer: null,

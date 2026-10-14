@@ -70,6 +70,9 @@
             this.duration = 0; // seconds
             this.ended = false;
             this.waveform = null;
+            this.buffer = null; // decoded audio: played directly at 100% tempo for exact seeking
+            this.node = null;
+            this.baseCtx = 0;
             this.onEnded = null;
         }
 
@@ -112,7 +115,7 @@
             this.updateVolume();
 
             el.addEventListener('playing', () => {
-                if (this.state === 'playing') {
+                if (this.state === 'playing' && !this.node) {
                     this.basePos = el.currentTime;
                     this.basePerf = performance.now();
                     this.started = true;
@@ -127,11 +130,46 @@
             // decode in the background for the waveform
             blob.arrayBuffer()
                 .then(buf => ac.decodeAudioData(buf))
-                .then(audio => this.waveform = new Waveform(audio))
+                .then(audio => {
+                    if (this.el !== el)
+                        return;
+                    this.buffer = audio;
+                    this.waveform = new Waveform(audio);
+                })
                 .catch(e => console.warn('Waveform decode failed', e));
         }
 
+        // web only: <audio> seeking is inexact for many mp3s (especially in Safari), so at 100% tempo the decoded
+        // audio is played instead, which lands exactly where the timeline says
+        get useBuffer() {
+            return !!this.buffer && Math.abs(this.tempo - 1) < 1e-6;
+        }
+
+        startBuffer() {
+            this.stopBuffer();
+            const ac = audioContext();
+            const node = ac.createBufferSource();
+            node.buffer = this.buffer;
+            node.connect(this.gain);
+            node.start(0, Math.min(Math.max(this.pos, 0), this.duration));
+            this.node = node;
+            this.basePos = this.pos;
+            this.basePerf = performance.now();
+            this.baseCtx = ac.currentTime;
+            this.started = true;
+        }
+
+        stopBuffer() {
+            if (!this.node)
+                return;
+            try { this.node.stop(); } catch { }
+            try { this.node.disconnect(); } catch { }
+            this.node = null;
+        }
+
         dispose() {
+            this.stopBuffer();
+            this.buffer = null;
             if (this.el) {
                 this.el.pause();
                 try { this.source.disconnect(); this.gain.disconnect(); } catch { }
@@ -148,13 +186,19 @@
         }
 
         setTempo(t) {
+            if (this.state === 'playing') {
+                // switch between the decoded audio and the element when crossing 100%
+                const ms = this.currentTimeMs();
+                this.pause();
+                this.tempo = t;
+                if (this.el)
+                    this.el.playbackRate = t;
+                this.play(ms);
+                return;
+            }
             this.tempo = t;
             if (this.el)
                 this.el.playbackRate = t;
-            if (this.state === 'playing') {
-                this.basePos = this.mediaPos();
-                this.basePerf = performance.now();
-            }
         }
 
         get isPlaying() {
@@ -164,8 +208,23 @@
         mediaPos() {
             if (this.state !== 'playing' || !this.el)
                 return this.pos;
-            if (!this.started)
+            if (this.node) {
+                const ac = audioContext();
+                const elapsed = ac.state === 'running' ? ac.currentTime - this.baseCtx : (performance.now() - this.basePerf) / 1000;
+                const p = this.basePos + elapsed * this.tempo;
+                if (p >= this.duration)
+                    this.ended = true;
+                return Math.min(p, this.duration);
+            }
+            if (!this.started) {
+                // some browsers don't fire 'playing' after a seek; treat the clock moving as started
+                if (!this.el.paused && this.el.currentTime > this.basePos + 0.02) {
+                    this.basePos = this.el.currentTime;
+                    this.basePerf = performance.now();
+                    this.started = true;
+                }
                 return this.basePos;
+            }
 
             let p = this.basePos + (performance.now() - this.basePerf) / 1000 * this.tempo;
             const real = this.el.currentTime;
@@ -188,7 +247,9 @@
             this.pos = p;
             this.basePos = p;
             this.basePerf = performance.now();
-            if (this.el)
+            if (this.node)
+                this.startBuffer();
+            else if (this.el)
                 this.el.currentTime = p;
         }
 
@@ -200,6 +261,11 @@
             this.state = 'playing';
             this.seek(fromMs);
             this.started = false;
+            if (this.useBuffer) {
+                this.el.pause();
+                this.startBuffer();
+                return;
+            }
             this.el.playbackRate = this.tempo;
             const p = this.el.play();
             if (p)
@@ -211,12 +277,14 @@
             const t = this.currentTimeMs();
             this.pos = this.mediaPos();
             this.state = 'paused';
+            this.stopBuffer();
             if (this.el)
                 this.el.pause();
             return t;
         }
 
         stop() {
+            this.stopBuffer();
             if (this.el)
                 this.el.pause();
             this.state = 'stopped';

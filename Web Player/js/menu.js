@@ -113,9 +113,22 @@
             toast(mapError || 'INVALID MAP', true);
     }
 
+    let audioBuffer = null;
+
     function loadAudioFile(file) {
         audioFile = file;
+        audioBuffer = null;
         toast('LOADED AUDIO');
+        // decoded up front: plays with exact timing and doesn't need an <audio> element (which iOS restricts)
+        if (!audioCtx)
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        file.arrayBuffer()
+            .then(buf => audioCtx.decodeAudioData(buf))
+            .then(decoded => {
+                if (audioFile === file)
+                    audioBuffer = decoded;
+            })
+            .catch(() => { });
     }
 
     async function loadReplayFile(file) {
@@ -216,7 +229,8 @@
         await ensureAudio();
 
         let audioElement = null;
-        if (audioFile) {
+        const tempo = SSQESettings.tempoFromSlider(settings.tempo);
+        if (audioFile && (!audioBuffer || Math.abs(tempo - 1) > 1e-6 || mode === 'replay')) {
             try {
                 audioElement = await SSQEGame.loadAudio(audioFile);
             } catch (err) {
@@ -237,6 +251,7 @@
                 settings: SSQESettings.clone(settings),
                 mapText,
                 audioElement,
+                audioBuffer,
                 audioCtx,
                 hitBuffer,
                 replayBuffer: mode === 'replay' ? replayBuffer : null,

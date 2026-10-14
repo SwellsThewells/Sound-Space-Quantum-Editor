@@ -269,33 +269,51 @@ void main()
             };
             a.src = URL.createObjectURL(file);
             a.load();
+            // iOS may not load anything until the element is played; carry on and let the game find the length later
+            setTimeout(() => {
+                if (a.onloadedmetadata) {
+                    a.onloadedmetadata = a.onerror = null;
+                    resolve(a);
+                }
+            }, 4000);
         });
     }
 
+    // Plays the song either from the decoded audio (exact seeking, no media element restrictions on iOS) or, when the
+    // tempo isn't 100% and an element is available, from the <audio> element so the pitch stays the same.
     class MusicPlayer {
-        constructor(game, audioCtx, element, fallbackDuration) {
+        constructor(game, audioCtx, element, fallbackDuration, buffer = null) {
             this.game = game;
+            this.ctx = audioCtx;
             this.el = element;
+            this.buffer = buffer;
+            this.node = null;       // AudioBufferSourceNode while the decoded audio plays
             this.state = 'stopped';
             this.pos = 0;           // media position in seconds
             this.basePos = 0;
             this.basePerf = 0;
+            this.baseCtx = 0;
             this.started = false;   // whether the media clock is actually running yet
+            this.elFailed = false;  // the element refused to play (no user gesture): keep time with the clock
             this.tempo = 1;
-            this.duration = element && Number.isFinite(element.duration) ? element.duration : fallbackDuration;
+            this.duration = buffer ? buffer.duration : element && Number.isFinite(element.duration) ? element.duration : fallbackDuration;
             this.ended = false;
 
-            if (element) {
-                element.preservesPitch = true;
-                element.mozPreservesPitch = true;
-                element.webkitPreservesPitch = true;
-
+            if (element || buffer) {
                 this.gain = audioCtx.createGain();
                 if (game.settings.monoAudio) {
                     this.gain.channelCount = 1;
                     this.gain.channelCountMode = 'explicit';
                     this.gain.channelInterpretation = 'speakers';
                 }
+                this.gain.connect(audioCtx.destination);
+            }
+
+            if (element) {
+                element.preservesPitch = true;
+                element.mozPreservesPitch = true;
+                element.webkitPreservesPitch = true;
+
                 // an element can only be wired into an audio context once, so the source node is kept on it
                 if (!element._ssqeSource || element._ssqeCtx !== audioCtx) {
                     element._ssqeSource = audioCtx.createMediaElementSource(element);
@@ -304,10 +322,9 @@ void main()
                 this.source = element._ssqeSource;
                 try { this.source.disconnect(); } catch { }
                 this.source.connect(this.gain);
-                this.gain.connect(audioCtx.destination);
 
                 this.onPlaying = () => {
-                    if (this.state === 'playing') {
+                    if (this.state === 'playing' && !this.node) {
                         this.basePos = element.currentTime;
                         this.basePerf = performance.now();
                         this.started = true;
@@ -333,7 +350,38 @@ void main()
             return this.state === 'playing';
         }
 
+        get useBuffer() {
+            return !!this.buffer && (!this.el || Math.abs(this.tempo - 1) < 1e-6);
+        }
+
+        startBuffer() {
+            this.stopBuffer();
+            const node = this.ctx.createBufferSource();
+            node.buffer = this.buffer;
+            node.playbackRate.value = this.tempo;
+            node.connect(this.gain);
+            node.start(0, clamp(this.pos, 0, this.duration));
+            this.node = node;
+            this.basePos = this.pos;
+            this.basePerf = performance.now();
+            this.baseCtx = this.ctx.currentTime;
+            this.started = true;
+        }
+
+        stopBuffer() {
+            if (!this.node)
+                return;
+            try { this.node.stop(); } catch { }
+            try { this.node.disconnect(); } catch { }
+            this.node = null;
+        }
+
         setTempo(t) {
+            if (this.node) {
+                this.pos = this.mediaPos();
+                this.tempo = t;
+                this.startBuffer();
+            }
             this.tempo = t;
             if (this.el)
                 this.el.playbackRate = t;
@@ -344,19 +392,40 @@ void main()
             this.pos = p;
             this.basePos = p;
             this.basePerf = performance.now();
-            if (this.el)
+            if (this.node)
+                this.startBuffer();
+            else if (this.el && !this.elFailed)
                 this.el.currentTime = p;
         }
 
         mediaPos() {
             if (this.state !== 'playing')
                 return this.pos;
-            if (this.el && !this.started)
+
+            if (this.node) {
+                // the audio clock while it runs, the system clock if the context is suspended (iOS interruptions)
+                const elapsed = this.ctx.state === 'running' ? this.ctx.currentTime - this.baseCtx : (performance.now() - this.basePerf) / 1000;
+                let p = this.basePos + elapsed * this.tempo;
+                if (p >= this.duration) {
+                    this.ended = true;
+                    p = this.duration;
+                }
+                return p;
+            }
+
+            if (this.el && !this.started && !this.elFailed) {
+                // some browsers don't fire 'playing' after a seek; treat the clock moving as started
+                if (!this.el.paused && this.el.currentTime > this.basePos + 0.02) {
+                    this.basePos = this.el.currentTime;
+                    this.basePerf = performance.now();
+                    this.started = true;
+                }
                 return this.basePos;
+            }
 
             let p = this.basePos + (performance.now() - this.basePerf) / 1000 * this.tempo;
 
-            if (this.el) {
+            if (this.el && !this.elFailed) {
                 // interpolate between the element's coarse currentTime updates, resyncing on drift
                 const real = this.el.currentTime;
                 if (!this.el.seeking && Math.abs(real - p) > 0.075) {
@@ -381,11 +450,27 @@ void main()
             this.seekMs(this.game.currentTime);
             this.state = 'playing';
             this.started = false;
-            if (this.el) {
+            if (this.ctx.state === 'suspended')
+                this.ctx.resume().catch(() => { });
+
+            if (this.useBuffer) {
+                this.startBuffer();
+                return;
+            }
+            if (this.el && !this.elFailed) {
                 this.el.playbackRate = this.tempo;
                 const p = this.el.play();
                 if (p)
-                    p.catch(() => { });
+                    p.catch(() => {
+                        // not allowed to play (iOS without a tap): the map still runs, just silently
+                        this.elFailed = true;
+                        this.basePos = this.pos;
+                        this.basePerf = performance.now();
+                        this.started = true;
+                    });
+            } else {
+                this.basePerf = performance.now();
+                this.started = true;
             }
         }
 
@@ -393,11 +478,13 @@ void main()
             this.game.currentTime = this.currentTimeMs();
             this.pos = this.mediaPos();
             this.state = 'paused';
+            this.stopBuffer();
             if (this.el)
                 this.el.pause();
         }
 
         stop() {
+            this.stopBuffer();
             if (this.el)
                 this.el.pause();
             this.state = 'stopped';
@@ -405,12 +492,14 @@ void main()
         }
 
         dispose() {
+            this.stopBuffer();
             if (this.el) {
                 this.el.pause();
                 this.el.removeEventListener('playing', this.onPlaying);
                 this.el.removeEventListener('ended', this.onEnded);
-                try { this.source.disconnect(); this.gain.disconnect(); } catch { }
+                try { this.source.disconnect(); } catch { }
             }
+            try { this.gain && this.gain.disconnect(); } catch { }
         }
     }
 
@@ -623,7 +712,7 @@ void main()
             const lastMs = notes.length ? notes[notes.length - 1].Ms : 0;
             const fallbackDuration = (lastMs + 2000) / 1000;
 
-            this.music = new MusicPlayer(this, opts.audioCtx, opts.audioElement, fallbackDuration);
+            this.music = new MusicPlayer(this, opts.audioCtx, opts.audioElement, fallbackDuration, opts.audioBuffer || null);
             this.sound = new SoundPlayer(opts.audioCtx, opts.hitBuffer, s);
             this.timeMax = this.music.duration * 1000; // Settings.currentTime.Max
 
