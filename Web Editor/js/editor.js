@@ -1258,8 +1258,13 @@
 
             // web only: 3D mode has its own, lower opacity for the grid itself so the notes stand out
             ctx.save();
-            if (s.mode3D)
+            if (s.mode3D) {
+                // solid backing first, so the background picture (it has a square right behind the grid) can't show
+                // through and only the grid itself fades
+                ctx.fillStyle = '#000';
+                ctx.fillRect(GRID.x, GRID.y, GRID.w, GRID.h);
                 ctx.globalAlpha = clamp(s.grid3DOpacity, 0, 255) / 255;
+            }
 
             // background, outline and divisor lines (GuiGrid.Draw)
             ctx.fillStyle = `rgba(39,39,39,${s.gridOpacity / 255})`;
