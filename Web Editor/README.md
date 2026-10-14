@@ -58,12 +58,16 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
   - Opens `.txt` maps (legacy and `ssmapv2`) with their `.ini`, `.sspm` (v1 and v2), Rhythia `.rhm` (with
     their song and cover) and `.osu`.
   - Saves `.txt` and `.ini` in the same format as the desktop editor.
-  - Exports SSPM v2.
+  - Exports SSPM v2 and Rhythia `.rhm` (pick **Rhythia (RHM)** in the Export tab's dropdown).
 - **Saving:** in Chromium-based browsers, Save As can write to a folder you pick, and later saves
   and autosaves go to the same files. In other browsers the `.txt` and `.ini` are downloaded.
 - **3D Mode** (Graphics tab, web only): notes fly out from the middle of the grid towards their cell,
   like in game, instead of fading in on it. **3D Hit Effect** makes notes keep growing as they fade
   after being hit, and **3D Grid Opacity** sets how see-through the grid is while 3D Mode is on.
+- **Editor background** (Settings > Colors, web only): pick the default background, your own image
+  (**LOAD IMAGE**) or one of the map player's worlds.
+- **Playtest background and note mesh** (Settings > Player, web only): the same 3D worlds and custom
+  `.obj` note mesh as the map player's Visuals settings, shared with it.
 - **Playtest:** Play From Start and Play Here open the web player on top of the editor. Hold Alt
   while clicking to watch autoplay. Esc returns to the editor.
 

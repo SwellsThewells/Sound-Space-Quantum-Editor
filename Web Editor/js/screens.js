@@ -414,6 +414,44 @@
         const chk = (x, y, text, key, onChange) => new G.Checkbox(x, y, 45, 45, {
             text, textSize: 34, style: unc, get: () => s[key], set: v => { s[key] = v; save(); onChange && onChange(v); },
         });
+        const dynamicLbl = (x, y, w, h, fn, textSize = 26) => {
+            const l = lbl(x, y, w, h, '', textSize);
+            l.process = function (dt) {
+                G.Label.prototype.process.call(this, dt);
+                this.text = fn();
+            };
+            return l;
+        };
+
+        // web only: custom background image and note mesh, shared with the map player
+        const loadBackgroundImage = async () => {
+            const file = await app.pickFile('image/*');
+            if (!file)
+                return;
+            try {
+                await SSQECustom.setImage(file);
+                s.editorBackground = 'Custom Image';
+                save();
+            } catch (err) {
+                app.dialogs.message(`The image couldn't be saved: ${err.message}`, 'Error');
+            }
+        };
+        const loadNoteMesh = async () => {
+            const file = await app.pickFile('.obj');
+            if (!file)
+                return;
+            try {
+                await SSQECustom.setNoteMesh(file);
+            } catch (err) {
+                app.dialogs.message(`This note mesh can't be used: ${err.message}`, 'Error');
+            }
+        };
+        const playerSetting = (key, value) => {
+            const ps = SSQESettings.load();
+            ps[key] = value;
+            SSQESettings.save(ps);
+        };
+
         const num = (x, y, w, h, key, props) => new G.NumberBox(x, y, w, h, {
             textSize: 34, get: () => s[key], set: v => { s[key] = v; save(); }, ...props,
         });
@@ -506,6 +544,14 @@
             ...opacityRow(0, 'editorBGOpacity', 'Editor Background Opacity:'),
             ...opacityRow(100, 'gridOpacity', 'Grid Opacity:'),
             ...opacityRow(200, 'trackOpacity', 'Track Opacity:'),
+            // web only: background picture, from the map player's worlds or the user's own image
+            lbl(650, 300, 400, 26, 'Editor Background:'),
+            btn(1060, 330, 160, 50, 'LOAD IMAGE', 30, loadBackgroundImage),
+            dynamicLbl(650, 390, 570, 26, () => `Custom Image: ${(window.SSQECustom && SSQECustom.state.imageName) || 'None'}`),
+            new G.Dropdown(650, 330, 400, 50, {
+                options: Object.keys(SSQE.Settings.EDITOR_BACKGROUNDS), textSize: 30, toShow: 8,
+                get: () => s.editorBackground || 'Default', set: i => { s.editorBackground = Object.keys(SSQE.Settings.EDITOR_BACKGROUNDS)[i]; save(); },
+            }),
         ]);
 
         const fpsLimit = { value: s.fpsLimit ?? 60 };
@@ -554,6 +600,15 @@
             new G.Checkbox(0, 180, 45, 45, {
                 text: 'Open SSQE Player in Fullscreen', textSize: 34, style: unc,
                 get: () => SSQESettings.load().fullscreenPlayer, set: v => { const ps = SSQESettings.load(); ps.fullscreenPlayer = v; SSQESettings.save(ps); },
+            }),
+            // web only: the SSQE Player's 3D background and note mesh
+            dynamicLbl(0, 280, 700, 26, () => `Custom Note Mesh: ${(window.SSQECustom && SSQECustom.state.noteMeshName) || 'Default'}`, 30),
+            btn(0, 310, 200, 50, 'LOAD MESH', 30, loadNoteMesh),
+            btn(210, 310, 150, 50, 'RESET', 30, () => SSQECustom.setNoteMesh(null).catch(() => { })),
+            lbl(0, 400, 400, 26, 'Playtest Background:'),
+            new G.Dropdown(0, 430, 400, 50, {
+                options: SSQESettings.BACKGROUNDS, textSize: 30, toShow: 8,
+                get: () => SSQESettings.load().background || 'None', set: i => playerSetting('background', SSQESettings.BACKGROUNDS[i]),
             }),
         ]);
 

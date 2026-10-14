@@ -540,6 +540,51 @@
                             textSize: 30, options: item.options,
                             get: () => Math.max(0, item.options.indexOf(get())), set: i => set(item.options[i]),
                         }));
+                else if (item.type === 'dropdown')
+                    controls.push(
+                        label(x, y, 400, 26, `${title}:`, 30),
+                        new G.Dropdown(x, y + 30, 400, 50, {
+                            textSize: 30, options: item.options, toShow: 8,
+                            get: () => get(), set: i => set(item.options[i]),
+                        }));
+                else if (item.type === 'customImage')
+                    controls.push(
+                        dynamic(x, y, 600, 26, 30, () => `${title}: ${SSQECustom.state.imageName || 'None'}`),
+                        button(x, y + 30, 200, 50, 'LOAD IMAGE', 30, async () => {
+                            const file = await pickFile('image/*');
+                            if (!file)
+                                return;
+                            try {
+                                await SSQECustom.setImage(file);
+                                settings.background = 'Custom Image';
+                                save();
+                                toast.show('BACKGROUND IMAGE LOADED', settings.color1);
+                            } catch (err) {
+                                toast.show(`COULDN'T SAVE THE IMAGE: ${err.message}`.toUpperCase(), [255, 50, 50]);
+                            }
+                        }),
+                        button(x + 210, y + 30, 150, 50, 'CLEAR', 30, async () => {
+                            await SSQECustom.setImage(null).catch(() => { });
+                            if (settings.background === 'Custom Image') {
+                                settings.background = 'None';
+                                save();
+                            }
+                        }));
+                else if (item.type === 'customMesh')
+                    controls.push(
+                        dynamic(x, y, 600, 26, 30, () => `${title}: ${SSQECustom.state.noteMeshName || 'Default'}`),
+                        button(x, y + 30, 200, 50, 'LOAD MESH', 30, async () => {
+                            const file = await pickFile('.obj');
+                            if (!file)
+                                return;
+                            try {
+                                await SSQECustom.setNoteMesh(file);
+                                toast.show('NOTE MESH LOADED', settings.color1);
+                            } catch (err) {
+                                toast.show(`INVALID MESH: ${err.message}`.toUpperCase(), [255, 50, 50]);
+                            }
+                        }),
+                        button(x + 210, y + 30, 150, 50, 'RESET', 30, () => SSQECustom.setNoteMesh(null).catch(() => { })));
                 else if (item.type === 'color')
                     controls.push(
                         label(x, y, 600, 26, `${title}:`, 30),

@@ -567,7 +567,8 @@
 
         // ------------------------------------------------------------ ExportSSPM.axaml (344x358)
 
-        exportSspm(editor) {
+        // format: 'sspm' (Nightly) or 'rhm' (Rhythia), both take the same metadata
+        exportSspm(editor, format = 'sspm') {
             const map = editor.map;
             const p = map.props;
             const X = 12, Y = 12;
@@ -625,17 +626,34 @@
 
                 const id = SSQE.Formats.fixId(map.soundId);
                 const mappers = mapperBox.value.split('\n').map(m => m.trim()).filter(Boolean);
-                const bytes = SSQE.Formats.writeSspm(map, {
+                const meta = {
                     songId: id,
                     mapName: nameBox.value,
                     mappers: (mappers.length ? mappers : ['None']).join('\n'),
                     difficulty: diffBox.value,
                     customDifficulty: customBox.value,
-                }, new Uint8Array(await audio.arrayBuffer()), cover);
+                };
 
-                this.app.download(new Blob([bytes], { type: 'application/octet-stream' }), `${id}.sspm`);
+                let bytes;
+                if (format === 'rhm') {
+                    meta.duration = (editor.music && editor.music.duration || 0) * 1000;
+                    meta.mapName = meta.mapName || p.songTitle || map.soundId;
+                    // Rhythia always looks for a cover in the .rhm
+                    if (!cover)
+                        cover = await fetch('assets/Cover.png').then(r => r.ok ? r.arrayBuffer() : null).then(b => b && new Uint8Array(b)).catch(() => null);
+                    const entries = [
+                        { name: 'map', blob: new Blob([SSQE.Formats.writeRhmMap(map, meta)]) },
+                        { name: 'audio', blob: audio },
+                    ];
+                    if (cover)
+                        entries.push({ name: 'cover', blob: new Blob([cover]) });
+                    bytes = await SSQE.zipFiles(entries);
+                } else
+                    bytes = SSQE.Formats.writeSspm(map, meta, new Uint8Array(await audio.arrayBuffer()), cover);
+
+                this.app.download(new Blob([bytes], { type: 'application/octet-stream' }), `${id}.${format}`);
                 win.close();
-                editor.toast('EXPORTED SSPM');
+                editor.toast(`EXPORTED ${format.toUpperCase()}`);
             };
 
             const controls = [
@@ -650,7 +668,7 @@
                 aButton('Finish', finish, X, Y + 298, 320, 36),
             ];
 
-            const win = this.floating('exportSspm', 'Export SSPM', 344, 358, controls);
+            const win = this.floating(`export_${format}`, `Export ${format.toUpperCase()}`, 344, 358, controls);
             return win;
         }
 

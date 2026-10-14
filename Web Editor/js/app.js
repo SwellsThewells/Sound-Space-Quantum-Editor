@@ -875,6 +875,7 @@
     }
 
     SSQE.App = App;
+    SSQE.zipFiles = zipFiles;
 
     window.addEventListener('DOMContentLoaded', () => {
         const app = new App();

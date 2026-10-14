@@ -38,7 +38,12 @@ window.SSQESettings = (function () {
         color2: [255, 0, 255],
 
         noteColors: [[255, 0, 255], [0, 255, 200]],
+
+        // web only: 3D world behind the grid (worlds.js)
+        background: 'None',
     };
+
+    const BACKGROUNDS = ['None', 'Grid', 'Vaporwave', 'Neon Tunnel', 'Space Tunnel', 'Deep Space', 'Cubic', 'Custom Image'];
 
     const SCHEMA = [
         ['Gameplay', [
@@ -68,6 +73,11 @@ window.SSQESettings = (function () {
             { key: 'musicOffset', label: 'Music offset (ms)', type: 'number', step: 1 },
             { key: 'monoAudio', label: 'Mono audio', type: 'bool' },
             { key: 'muteSfx', label: 'Mute hit sounds', type: 'bool' },
+        ]],
+        ['Visuals', [
+            { key: 'background', label: 'Background', type: 'dropdown', options: BACKGROUNDS },
+            { key: 'backgroundImage', label: 'Custom background image', type: 'customImage' },
+            { key: 'noteMesh', label: 'Custom note mesh (.obj)', type: 'customMesh' },
         ]],
         ['Colours', [
             { key: 'color1', label: 'Primary (grid, accuracy, combo)', type: 'color' },
@@ -158,5 +168,5 @@ window.SSQESettings = (function () {
         return applied;
     }
 
-    return { DEFAULTS, SCHEMA, load, save, applyObject, tempoFromSlider, clone };
+    return { DEFAULTS, SCHEMA, BACKGROUNDS, load, save, applyObject, tempoFromSlider, clone };
 })();

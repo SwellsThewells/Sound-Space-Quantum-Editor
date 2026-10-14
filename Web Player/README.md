@@ -22,6 +22,10 @@ python3 -m http.server 8000   # from the repository root
    starts part way into the song is lined up with the map's notes automatically.
 4. Click **PLAY**, **AUTOPLAY** or **WATCH REPLAY**.
 
+**Settings > Visuals** picks a 3D background (Grid, Vaporwave, Neon Tunnel, Space Tunnel, Deep Space,
+Cubic, rebuilt from Rhythia's worlds, or your own image) and loads a custom `.obj` note mesh. These
+are stored in the browser and shared with the editor's playtests.
+
 You can also drag files onto the page. **DEMO MAP** creates a random map for testing.
 
 On phones and tablets, drag anywhere to move the cursor. Buttons in the top right corner restart,

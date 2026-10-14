@@ -50,11 +50,13 @@ void main()
 layout (location = 0) in vec3 position;
 layout (location = 1) in vec3 mPosition;
 layout (location = 2) in vec4 mColor;
+layout (location = 3) in vec3 normal;
 out vec4 pass_color;
 
 uniform mat4 transformationMatrix;
 uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
+uniform float shade; // web only: light custom note meshes so their shape shows
 
 void main()
 {
@@ -63,7 +65,8 @@ void main()
 
     vec4 worldPos = m * transformationMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * viewMatrix * worldPos;
-    pass_color = mColor;
+    float light = 0.5 + 0.5 * abs(normalize(normal).z) + 0.25 * max(normalize(normal).y, 0.0);
+    pass_color = vec4(mColor.rgb * mix(1.0, min(light, 1.0), shade), mColor.a);
 }`;
 
     // ---------------------------------------------------------------- math (column-major mat4)
@@ -801,11 +804,25 @@ void main()
     }
 
     // Models/Model.cs + ModelManager.cs
-    function createModel(gl, scaleSetting) {
-        const verts = [];
-        for (const face of OBJ_FACES)
-            for (const idx of face)
-                verts.push(...OBJ_VERTICES[idx - 1]);
+    // custom: flat triangle positions from a user's .obj (web only)
+    function createModel(gl, scaleSetting, custom = null) {
+        let verts = [];
+        if (custom)
+            verts = custom;
+        else
+            for (const face of OBJ_FACES)
+                for (const idx of face)
+                    verts.push(...OBJ_VERTICES[idx - 1]);
+
+        const normals = new Float32Array(verts.length);
+        for (let i = 0; i + 8 < verts.length; i += 9) {
+            const a = [verts[i + 3] - verts[i], verts[i + 4] - verts[i + 1], verts[i + 5] - verts[i + 2]];
+            const b = [verts[i + 6] - verts[i], verts[i + 7] - verts[i + 1], verts[i + 8] - verts[i + 2]];
+            const n = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+            const l = Math.hypot(...n) || 1;
+            for (let k = 0; k < 9; k++)
+                normals[i + k] = n[k % 3] / l;
+        }
 
         const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
         for (let i = 0; i < verts.length; i += 3)
@@ -823,6 +840,12 @@ void main()
         gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
         gl.enableVertexAttribArray(0);
 
+        const normalVbo = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, normalVbo);
+        gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
+        gl.vertexAttribPointer(3, 3, gl.FLOAT, false, 12, 0);
+        gl.enableVertexAttribArray(3);
+
         const posVbo = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, posVbo);
         gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 12, 0);
@@ -838,7 +861,7 @@ void main()
         gl.bindVertexArray(null);
 
         return {
-            vao, posVbo, colVbo,
+            vao, posVbo, colVbo, custom: !!custom,
             vertexCount: verts.length / 3,
             size: [0, 1, 2].map(a => (max[a] - min[a]) / scaleSetting),
         };
@@ -1012,10 +1035,12 @@ void main()
                 modelTransformation: gl.getUniformLocation(this.modelProgram, 'transformationMatrix'),
                 modelProjection: gl.getUniformLocation(this.modelProgram, 'projectionMatrix'),
                 modelView: gl.getUniformLocation(this.modelProgram, 'viewMatrix'),
+                modelShade: gl.getUniformLocation(this.modelProgram, 'shade'),
             };
 
             // RegisterModels
-            this.noteModel = createModel(gl, s.noteScale);
+            const custom = window.SSQECustom && SSQECustom.state.noteMesh;
+            this.noteModel = createModel(gl, s.noteScale, custom || null);
             this.cursorModel = createModel(gl, s.cursorScale);
 
             // dynamic line geometry (GuiWindowMain.Init)
@@ -1029,8 +1054,22 @@ void main()
             gl.enableVertexAttribArray(1);
             gl.bindVertexArray(null);
 
+            // web only: a 3D background world behind the grid
+            this.world = null;
+            if (window.SSQEWorlds && s.background && s.background !== 'None')
+                try {
+                    this.world = SSQEWorlds.create(gl, {
+                        name: s.background,
+                        color: this.Notes.length ? this.Notes[0].Color : [1, 1, 1],
+                        speed: () => this.NoteSpeed * 0.17,
+                    });
+                } catch (e) {
+                    console.warn('The background could not be created', e);
+                }
+
             // OnLoad
-            gl.clearColor(0, 0, 0, 1);
+            const clear = this.world ? this.world.clearColor : [0, 0, 0];
+            gl.clearColor(clear[0], clear[1], clear[2], 1);
             gl.enable(gl.BLEND);
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
             gl.enable(gl.DEPTH_TEST);
@@ -1138,6 +1177,8 @@ void main()
             cancelAnimationFrame(this.raf);
             this.detachInput();
             this.music.dispose();
+            if (this.world)
+                this.world.dispose();
 
             const gl = this.gl;
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -1487,6 +1528,9 @@ void main()
             if (this.Paused && this.Unpausing && this.currentTime >= this.PauseTime)
                 this.Paused = false;
 
+            if (this.world)
+                this.world.render(this.Camera.projection, this.Camera.view, frametime);
+
             // lines
             const projView = mat4.mul(this.Camera.projection, this.Camera.view);
             gl.useProgram(this.program);
@@ -1525,12 +1569,18 @@ void main()
 
         renderModel(model, positions, colors, count) {
             const gl = this.gl;
+            gl.uniform1f(this.uniforms.modelShade, model.custom ? 1 : 0);
+            // a user's mesh can be wound either way
+            if (model.custom)
+                gl.disable(gl.CULL_FACE);
             gl.bindVertexArray(model.vao);
             gl.bindBuffer(gl.ARRAY_BUFFER, model.posVbo);
             gl.bufferData(gl.ARRAY_BUFFER, positions.subarray(0, count * 3), gl.DYNAMIC_DRAW);
             gl.bindBuffer(gl.ARRAY_BUFFER, model.colVbo);
             gl.bufferData(gl.ARRAY_BUFFER, colors.subarray(0, count * 4), gl.DYNAMIC_DRAW);
             gl.drawArraysInstanced(gl.TRIANGLES, 0, model.vertexCount, count);
+            if (model.custom)
+                gl.enable(gl.CULL_FACE);
         }
 
         binarySearchFirst(key) {
@@ -1771,6 +1821,8 @@ void main()
 
             this.hits++;
             this.combo++;
+            if (this.world && this.Notes[index])
+                this.world.hit(this.Notes[index].Color);
             this.maxCombo = Math.max(this.maxCombo, this.combo);
 
             this.noteSet[index] = 0;

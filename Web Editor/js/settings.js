@@ -76,6 +76,7 @@
         moveOnGridKey: false,
 
         editorBGOpacity: 255,
+        editorBackground: 'Default', // web only, see EDITOR_BACKGROUNDS
         gridOpacity: 255,
         trackOpacity: 255,
         sfxOffset: 0,
@@ -190,5 +191,24 @@
         return [bind.ctrl && 'CTRL', bind.alt && 'ALT', bind.shift && 'SHIFT', keyName(bind.key).toUpperCase()].filter(Boolean).join('+');
     }
 
-    SSQE.Settings = { DEFAULTS, KEYBINDS, KEYBIND_LABELS, GRID_KEYS, NUMPAD_KEYS, PATTERN_KEYS, load, save, clone, compareKeybind, keyName, keybindText };
+    // web only: pictures the editor can use as its background (the map player's worlds plus the user's own image)
+    const EDITOR_BACKGROUNDS = {
+        'Default': 'background_editor',
+        'Custom Image': null,
+        'Grid': 'worlds/grid',
+        'Vaporwave': 'worlds/vaporwave',
+        'Neon Tunnel': 'worlds/neon_tunnel',
+        'Space Tunnel': 'worlds/space_tunnel',
+        'Deep Space': 'worlds/deep_space',
+        'Cubic': 'worlds/cubic',
+    };
+
+    function editorBackgroundImage(s) {
+        const name = s.editorBackground || 'Default';
+        if (name === 'Custom Image')
+            return (window.SSQECustom && SSQECustom.state.imageUrl) || EDITOR_BACKGROUNDS.Default;
+        return EDITOR_BACKGROUNDS[name] || EDITOR_BACKGROUNDS.Default;
+    }
+
+    SSQE.Settings = { EDITOR_BACKGROUNDS, editorBackgroundImage, DEFAULTS, KEYBINDS, KEYBIND_LABELS, GRID_KEYS, NUMPAD_KEYS, PATTERN_KEYS, load, save, clone, compareKeybind, keyName, keybindText };
 })();

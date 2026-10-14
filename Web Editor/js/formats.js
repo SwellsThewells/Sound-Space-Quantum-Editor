@@ -738,5 +738,33 @@
         return { audio: files.audio || null, cover: files.cover || null };
     }
 
-    SSQE.Formats = { VFX_LOOKUP, fixId, readObjects, readTxt, writeTxt, readIni, writeIni, readSspm, writeSspm, readOsu, setExportOffset, readZip, readRhm };
+    // Rhythia .rhm: the "map" JSON as Rhythia writes it. Coordinates are mirrored like in SSPM.
+    // meta: { songId, mapName, mappers (one per line), difficulty, customDifficulty, duration (ms) }
+    function writeRhmMap(map, meta) {
+        map.notes.sort();
+        const exportOffset = Math.trunc(map.props.exportOffset) || 0;
+        const r = v => Math.round(v * 1e6) / 1e6;
+        const mappers = meta.mappers.split('\n').map(m => m.trim()).filter(Boolean);
+        const notes = map.notes.items.map(n => ({ Time: n.ms + exportOffset, X: r(2 - n.x) || 0, Y: r(2 - n.y) || 0 }));
+        const data = {
+            OnlineId: null,
+            OnlineStatus: null,
+            LegacyId: null,
+            SongName: meta.mapName,
+            Mappers: mappers.length ? mappers : ['None'],
+            Title: meta.mapName,
+            Duration: Math.round(meta.duration || (notes.length ? notes[notes.length - 1].Time : 0)),
+            Difficulty: Math.max(0, DIFFICULTIES.indexOf(meta.difficulty)),
+            CustomDifficultyName: meta.customDifficulty.trim() || null,
+            StarRating: 0,
+            Notes: notes,
+            AudioFileName: `${meta.songId}.mp3`,
+            ImagePath: 'cover',
+            AudioTimingMode: 'Native',
+            TimingPoints: map.timingPoints.map(t => ({ OffsetMs: t.ms + exportOffset, Bpm: t.bpm })),
+        };
+        return new TextEncoder().encode(JSON.stringify(data));
+    }
+
+    SSQE.Formats = { VFX_LOOKUP, fixId, readObjects, readTxt, writeTxt, readIni, writeIni, readSspm, writeSspm, readOsu, setExportOffset, readZip, readRhm, writeRhmMap };
 })();

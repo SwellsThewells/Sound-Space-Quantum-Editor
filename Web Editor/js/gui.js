@@ -258,7 +258,8 @@
     function texture(name) {
         if (!textures[name]) {
             const img = new Image();
-            img.src = `${ASSETS}${name}.png`;
+            // web only: blob:/data: URLs (the user's own images) are used as they are
+            img.src = /^(blob|data):/.test(name) ? name : `${ASSETS}${name}.png`;
             textures[name] = img;
         }
         return textures[name];
@@ -534,11 +535,20 @@
                 strokeSquircle(ctx, this.rect, this.cornerRadius, this.lineThickness, color);
             else
                 fillSquircle(ctx, this.rect, this.cornerRadius, color);
-            if (this.image) {
-                const img = texture(this.image);
+            const image = typeof this.image === 'function' ? this.image() : this.image;
+            if (image) {
+                const img = texture(image);
                 if (img.complete && img.naturalWidth) {
                     ctx.globalAlpha = (color[3] ?? 255) / 255;
-                    ctx.drawImage(img, this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+                    const r = this.rect;
+                    const cover = typeof this.cover === 'function' ? this.cover() : this.cover;
+                    if (cover) {
+                        // web only: fill the square without stretching the picture
+                        const scale = Math.max(r.w / img.naturalWidth, r.h / img.naturalHeight);
+                        const sw = r.w / scale, sh = r.h / scale;
+                        ctx.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, r.x, r.y, r.w, r.h);
+                    } else
+                        ctx.drawImage(img, r.x, r.y, r.w, r.h);
                     ctx.globalAlpha = 1;
                 }
             }
@@ -1519,7 +1529,7 @@
 
     SSQE.GUI = {
         setSettings: s => settings = s,
-        fitCanvas, snap, get pixelRatio() { return pixelRatio; },
+        ASSETS, fitCanvas, snap, get pixelRatio() { return pixelRatio; },
         Styles, CenterMode, Text, loadFonts, texture, drawTile, fillSquircle, strokeSquircle, squirclePath, rgb: C.rgb,
         AnimatedValue, Control, Interactive, Label, Square, Button, TexturedButton, Checkbox, Slider, Textbox, NumericTextbox,
         Container, NumberBox, Dropdown, ScrollList, ButtonList, Radio, Toast, Window,

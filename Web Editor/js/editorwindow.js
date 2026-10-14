@@ -8,7 +8,7 @@
     const None = G.CenterMode.None;
 
     const CAMERA_MODES = ['half lock', 'full lock', 'spin'];
-    const EXPORT_TYPES = ['Nightly (SSPM)', 'Rewrite (PHXM)', 'Novastra (NPK)'];
+    const EXPORT_TYPES = ['Nightly (SSPM)', 'Rhythia (RHM)', 'Rewrite (PHXM)', 'Novastra (NPK)'];
     const GAMES = ['Rhythia', 'Novastra'];
 
     function build(editor) {
@@ -187,10 +187,13 @@
                 get: () => s.exportType || EXPORT_TYPES[0], set: i => { s.exportType = EXPORT_TYPES[i]; saveS(); },
             }),
             button(275, 140, 210, 40, 'EXPORT MAP', 27, () => {
-                if ((s.exportType || EXPORT_TYPES[0]) === EXPORT_TYPES[0])
+                const type = s.exportType || EXPORT_TYPES[0];
+                if (type === EXPORT_TYPES[0])
                     app.dialogs.exportSspm(editor);
+                else if (type === EXPORT_TYPES[1])
+                    app.dialogs.exportSspm(editor, 'rhm');
                 else
-                    app.dialogs.message(`Exporting to ${s.exportType} isn't available in the web editor yet. Use Nightly (SSPM).`);
+                    app.dialogs.message(`Exporting to ${s.exportType} isn't available in the web editor yet. Use Nightly (SSPM) or Rhythia (RHM).`);
             }),
             ReplaceIDBox,
             button(275, 280, 210, 40, 'REPLACE', 27, () => app.replaceAudioId(map, ReplaceIDBox.text)),
@@ -332,7 +335,10 @@
 
         const Grid = new SSQE.GridControl(810, 390, 300, 300, { stretch: 'None', editor });
         const Track = new SSQE.TrackControl(0, 0, 1920, 86, { editor });
-        const Background = new G.Square(0, 0, 1920, 1080, { image: 'background_editor', color: () => [30, 30, 30, s.editorBGOpacity] });
+        const Background = new G.Square(0, 0, 1920, 1080, {
+            image: () => SSQE.Settings.editorBackgroundImage(s), cover: () => (s.editorBackground || 'Default') !== 'Default',
+            color: () => [30, 30, 30, s.editorBGOpacity],
+        });
 
         // web only: touch screens have no keyboard shortcuts, so the common ones get buttons under the grid
         const toggleFullscreen = () => {
