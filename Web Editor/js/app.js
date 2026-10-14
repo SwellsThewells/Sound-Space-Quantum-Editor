@@ -75,6 +75,66 @@
         return 'audio/mpeg';
     }
 
+    // a minimal (stored, uncompressed) zip writer for handing over several files at once
+    const CRC_TABLE = (() => {
+        const t = new Uint32Array(256);
+        for (let n = 0; n < 256; n++) {
+            let c = n;
+            for (let k = 0; k < 8; k++)
+                c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+            t[n] = c >>> 0;
+        }
+        return t;
+    })();
+
+    function crc32(bytes) {
+        let c = 0xFFFFFFFF;
+        for (let i = 0; i < bytes.length; i++)
+            c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+        return (c ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    async function zipFiles(files) {
+        const enc = new TextEncoder();
+        const parts = [], central = [];
+        let offset = 0;
+        for (const { name, blob } of files) {
+            const data = new Uint8Array(await blob.arrayBuffer());
+            const nameBytes = enc.encode(name);
+            const crc = crc32(data);
+            const local = new DataView(new ArrayBuffer(30));
+            local.setUint32(0, 0x04034b50, true);
+            local.setUint16(4, 20, true);
+            local.setUint16(6, 0x0800, true); // utf-8 names
+            local.setUint32(14, crc, true);
+            local.setUint32(18, data.length, true);
+            local.setUint32(22, data.length, true);
+            local.setUint16(26, nameBytes.length, true);
+            parts.push(local.buffer, nameBytes, data);
+
+            const entry = new DataView(new ArrayBuffer(46));
+            entry.setUint32(0, 0x02014b50, true);
+            entry.setUint16(4, 20, true);
+            entry.setUint16(6, 20, true);
+            entry.setUint16(8, 0x0800, true);
+            entry.setUint32(16, crc, true);
+            entry.setUint32(20, data.length, true);
+            entry.setUint32(24, data.length, true);
+            entry.setUint16(28, nameBytes.length, true);
+            entry.setUint32(42, offset, true);
+            central.push(entry.buffer, nameBytes);
+            offset += 30 + nameBytes.length + data.length;
+        }
+        const centralSize = central.reduce((n, p) => n + p.byteLength, 0);
+        const end = new DataView(new ArrayBuffer(22));
+        end.setUint32(0, 0x06054b50, true);
+        end.setUint16(8, files.length, true);
+        end.setUint16(10, files.length, true);
+        end.setUint32(12, centralSize, true);
+        end.setUint32(16, offset, true);
+        return new Blob([...parts, ...central, end.buffer], { type: 'application/zip' });
+    }
+
     const newKey = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
     // ---------------------------------------------------------------- app
@@ -166,11 +226,39 @@
         // ------------------------------------------------------------ helpers
 
         download(blob, name) {
-            const a = el('a', { href: URL.createObjectURL(blob), download: name });
-            document.body.append(a);
-            a.click();
-            a.remove();
-            setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+            return this.downloadFiles([{ name, blob }]);
+        }
+
+        // Saves files for the user. Inside a Claude artifact the frame can't download directly, so the artifact's
+        // downloads capability is used; it only accepts some file types, so .ini/.sspm files (and several files at
+        // once) are handed over as one .zip there.
+        async downloadFiles(files, zipName) {
+            const downloads = window.claude && window.claude.use ? await window.claude.use('downloads').catch(() => null) : null;
+            if (downloads) {
+                const ok = /\.(txt|json|zip|png|md|csv)$/i;
+                let name = files[0].name, data = files[0].blob;
+                if (files.length > 1 || !ok.test(name)) {
+                    name = `${zipName || files[0].name.replace(/\.[^.]*$/, '')}.zip`;
+                    data = await zipFiles(files);
+                }
+                try {
+                    await downloads.save({ filename: name, data });
+                    return true;
+                } catch (e) {
+                    if (e && e.code !== 'declined')
+                        this.dialogs.message(`The file couldn't be saved here (${e.code || e.message}).`, 'Error');
+                    return false;
+                }
+            }
+
+            for (const { name, blob } of files) {
+                const a = el('a', { href: URL.createObjectURL(blob), download: name });
+                document.body.append(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+            }
+            return true;
         }
 
         pickFile(accept, multiple = false) {
@@ -601,7 +689,8 @@
         }
 
         async saveAs(map) {
-            const canUseFolders = !!window.showDirectoryPicker;
+            // folder access isn't allowed inside frames (like a Claude artifact)
+            const canUseFolders = !!window.showDirectoryPicker && window.self === window.top;
             const result = await this.dialogs.saveAs(map, canUseFolders);
             if (!result)
                 return false;
@@ -623,12 +712,15 @@
                     return false;
                 }
             } else {
-                this.download(new Blob([Formats.writeTxt(map)], { type: 'text/plain' }), `${name}.txt`);
-                this.download(new Blob([Formats.writeIni(map)], { type: 'text/plain' }), `${name}.ini`);
-                map.fileName = `${name}.txt`;
-                map.dirHandle = null;
-                map.savedText = this.mapText(map);
-                ok = true;
+                ok = await this.downloadFiles([
+                    { name: `${name}.txt`, blob: new Blob([Formats.writeTxt(map)], { type: 'text/plain' }) },
+                    { name: `${name}.ini`, blob: new Blob([Formats.writeIni(map)], { type: 'text/plain' }) },
+                ], name);
+                if (ok) {
+                    map.fileName = `${name}.txt`;
+                    map.dirHandle = null;
+                    map.savedText = this.mapText(map);
+                }
             }
 
             this.afterSave(map, ok);

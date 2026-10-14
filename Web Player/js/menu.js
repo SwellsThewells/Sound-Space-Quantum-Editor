@@ -150,7 +150,9 @@
         try {
             text = await navigator.clipboard.readText();
         } catch {
-            text = window.prompt('Paste map data (id,x|y|ms,x|y|ms,...)') || '';
+            // reading the clipboard isn't allowed everywhere (e.g. inside a Claude artifact); a normal paste still works
+            toast('PRESS CTRL+V TO PASTE THE MAP');
+            return;
         }
         if (!text.trim())
             return;
@@ -175,6 +177,20 @@
         setMap('demo,' + notes.join(','));
         toast('GENERATED DEMO MAP');
     }
+
+    // Ctrl+V on the menu pastes map data
+    window.addEventListener('paste', e => {
+        if (game || document.activeElement && document.activeElement.id === 'touch-input')
+            return;
+        const text = (e.clipboardData || window.clipboardData).getData('text').trim();
+        if (!text || (SSQE.GUI.activeWindow && SSQE.GUI.activeWindow.textboxFocused()))
+            return;
+        e.preventDefault();
+        if (setMap(text))
+            toast('PASTED MAP');
+        else
+            toast(mapError || 'INVALID MAP', true);
+    });
 
     // drag & drop anywhere
     window.addEventListener('dragover', e => e.preventDefault());
