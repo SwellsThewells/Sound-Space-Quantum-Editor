@@ -294,6 +294,11 @@
             if (replay.format === 'sspre') {
                 replay = SSQEGame.alignReplay(replay, SSQEGame.parseMap(mapText, settings.noteColors).notes);
                 replayStart = Math.max(0, replay.cursor[0].Ms);
+                // the game moves replay cursors on its own clock (real time since it started, which begins 65ms before a
+                // 2s lead-in, after which the song plays from replayStart at the replay's tempo) and centred on the
+                // grid (-1..1, where notes are 0..2)
+                const tempo = replay.tempo || 1;
+                replay = { ...replay, cursor: replay.cursor.map(c => ({ X: c.X - 1, Y: c.Y - 1, Ms: (c.Ms - replayStart) / tempo + 2000 - 65 })) };
                 if (replay.alignment && replay.alignment.matched < 0.5)
                     toast('THIS REPLAY MAY NOT BE FOR THIS MAP', true);
             }

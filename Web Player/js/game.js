@@ -248,7 +248,9 @@ void main()
                 cursor.push({ X: 2 - view.getFloat32(o + 5, true), Y: 2 - view.getFloat32(o + 9, true), Ms: ms });
                 o += 13;
             } else {
-                events.push({ type, ms });
+                // type 1 = note hit, 2 = note miss (value = note index), others are markers; "at" is the replay
+                // time of the cursor record before it
+                events.push({ type, value: ms, at: cursor.length ? cursor[cursor.length - 1].Ms : 0 });
                 o += 5;
             }
         }
@@ -264,12 +266,31 @@ void main()
         };
     }
 
-    // Finds the time shift (and whether positions are mirrored) that puts the replay's cursor on the map's notes, since
-    // a replay can start part way into the song. Returns a copy of the replay with song times.
+    // Replay times are real time from the start of the replay, while the map is in song time: the replay may start
+    // part way into the song and the song may have been sped up or slowed down. Newer replays record which notes were
+    // hit, which gives the mapping directly; older ones are matched by searching for the speed and start that put the
+    // cursor on the notes. Returns a copy of the replay in song time, with the tempo it was played at.
     function alignReplay(replay, notes) {
         if (!notes.length || replay.format !== 'sspre')
             return replay;
         const cursor = replay.cursor;
+        const convert = (tempo, shift) => cursor.map(c => ({ X: c.X, Y: c.Y, Ms: c.Ms * tempo + shift }));
+
+        // 1. from the hit records: replay time = song time / tempo + start
+        const pairs = replay.events.filter(e => e.type === 1 && notes[e.value]).map(e => [notes[e.value].Ms, e.at]);
+        if (pairs.length >= 20) {
+            const n = pairs.length;
+            const mx = pairs.reduce((a, p) => a + p[0], 0) / n, my = pairs.reduce((a, p) => a + p[1], 0) / n;
+            const slope = pairs.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / pairs.reduce((a, p) => a + (p[0] - mx) ** 2, 0);
+            const icpt = my - slope * mx;
+            const resid = pairs.map(p => Math.abs(p[1] - (slope * p[0] + icpt))).sort((a, b) => a - b)[n >> 1];
+            if (slope > 0.2 && slope < 5 && resid < 60) {
+                const tempo = 1 / slope;
+                return { ...replay, tempo, alignment: { tempo, shift: -icpt * tempo, matched: 1, from: 'hits' }, cursor: convert(tempo, -icpt * tempo) };
+            }
+        }
+
+        // 2. search: score how often the cursor is on a note at the note's time
         const times = cursor.map(c => c.Ms);
         const at = ms => {
             let lo = 0, hi = times.length - 1;
@@ -284,39 +305,39 @@ void main()
         };
         const step = Math.max(1, Math.floor(notes.length / 300));
         const sample = notes.filter((_, i) => i % step === 0);
-        const score = (shift, mirror) => {
+        const score = (tempo, shift) => {
             let hits = 0;
             for (const n of sample) {
-                const t = n.Ms - shift;
+                const t = (n.Ms - shift) / tempo;
                 if (t < times[0] || t > times[times.length - 1])
                     continue;
                 const c = at(t);
-                const x = mirror ? 2 - c.X : c.X, y = mirror ? 2 - c.Y : c.Y;
-                if (Math.abs(x - n.X) < 0.6 && Math.abs(y - n.Y) < 0.6)
+                if (Math.abs(c.X - n.X) < 0.6 && Math.abs(c.Y - n.Y) < 0.6)
                     hits++;
             }
             return hits;
         };
 
-        let best = { shift: 0, mirror: false, hits: -1 };
         const lastNote = notes[notes.length - 1].Ms;
-        for (const mirror of [false, true]) {
+        const tempos = [1, 1 / 1.35, 0.75, 0.8, 0.85, 0.9, 1.15, 1.25, 1.35, 1.45];
+        let best = { tempo: 1, shift: 0, hits: -1 };
+        for (const tempo of tempos)
             for (let shift = -5000; shift <= lastNote; shift += 50) {
-                const hits = score(shift, mirror);
+                const hits = score(tempo, shift);
                 if (hits > best.hits)
-                    best = { shift, mirror, hits };
+                    best = { tempo, shift, hits };
             }
-        }
         for (let shift = best.shift - 50; shift <= best.shift + 50; shift++) {
-            const hits = score(shift, best.mirror);
+            const hits = score(best.tempo, shift);
             if (hits > best.hits)
-                best = { shift, mirror: best.mirror, hits };
+                best = { ...best, shift, hits };
         }
 
         return {
             ...replay,
-            alignment: { shift: best.shift, mirrored: best.mirror, matched: best.hits / sample.length },
-            cursor: cursor.map(c => ({ X: best.mirror ? 2 - c.X : c.X, Y: best.mirror ? 2 - c.Y : c.Y, Ms: c.Ms + best.shift })),
+            tempo: best.tempo,
+            alignment: { tempo: best.tempo, shift: best.shift, matched: best.hits / sample.length, from: 'search' },
+            cursor: convert(best.tempo, best.shift),
         };
     }
 
