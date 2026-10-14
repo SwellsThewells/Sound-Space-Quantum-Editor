@@ -206,6 +206,9 @@ void main()
     // then records: a type byte and a u32 time, followed for type 0 (cursor) by the cursor's x and y.
     // Positions are mirrored from the editor's (like SSPM notes); times are from the start of the replay, which may
     // not be the start of the song (see alignReplay).
+    // the "s" setting: speed mods ("+++" was measured at 1.35x and "---" at 1/1.35x)
+    const SSPRE_SPEEDS = { '': 1, '+': 1.15, '++': 1.25, '+++': 1.35, '++++': 1.45, '-': 1 / 1.15, '--': 1 / 1.25, '---': 1 / 1.35 };
+
     function parseSspre(buffer) {
         const bytes = new Uint8Array(buffer);
         const view = new DataView(buffer);
@@ -250,7 +253,8 @@ void main()
             } else {
                 // type 1 = note hit, 2 = note miss (value = note index), others are markers; "at" is the replay
                 // time of the cursor record before it
-                events.push({ type, value: ms, at: cursor.length ? cursor[cursor.length - 1].Ms : 0 });
+                const last = cursor[cursor.length - 1];
+                events.push({ type, value: ms, at: last ? last.Ms : 0, x: last ? last.X : 1, y: last ? last.Y : 1 });
                 o += 5;
             }
         }
@@ -258,10 +262,9 @@ void main()
             throw new Error('This replay has no cursor data');
 
         const startOffset = parseFloat(settings.so) || 0;
-        const speed = parseFloat(settings.s);
         return {
             format: 'sspre', version, mapId, name, settings, endMs, events,
-            tempo: Number.isFinite(speed) && speed > 0 ? speed : 1,
+            tempo: SSPRE_SPEEDS[settings.s] || 1,
             cursor, skips: [], startOffset,
         };
     }
@@ -276,17 +279,124 @@ void main()
         const cursor = replay.cursor;
         const convert = (tempo, shift) => cursor.map(c => ({ X: c.X, Y: c.Y, Ms: c.Ms * tempo + shift }));
 
-        // 1. from the hit records: replay time = song time / tempo + start
-        const pairs = replay.events.filter(e => e.type === 1 && notes[e.value]).map(e => [notes[e.value].Ms, e.at]);
-        if (pairs.length >= 20) {
+        const noteTimes = notes.map(n => n.Ms);
+        const firstAtOrAfter = ms => {
+            let lo = 0, hi = noteTimes.length;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (noteTimes[mid] < ms)
+                    lo = mid + 1;
+                else
+                    hi = mid;
+            }
+            return lo;
+        };
+        // the note within `window` ms of song time t that the cursor (x, y) is on, if any
+        const noteAt = (t, x, y, window) => {
+            for (let i = firstAtOrAfter(t - window); i < notes.length && noteTimes[i] <= t + window; i++)
+                if (Math.abs(notes[i].X - x) < 0.6 && Math.abs(notes[i].Y - y) < 0.6)
+                    return notes[i];
+            return null;
+        };
+        const fitLine = pairs => {
             const n = pairs.length;
             const mx = pairs.reduce((a, p) => a + p[0], 0) / n, my = pairs.reduce((a, p) => a + p[1], 0) / n;
             const slope = pairs.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / pairs.reduce((a, p) => a + (p[0] - mx) ** 2, 0);
             const icpt = my - slope * mx;
             const resid = pairs.map(p => Math.abs(p[1] - (slope * p[0] + icpt))).sort((a, b) => a - b)[n >> 1];
-            if (slope > 0.2 && slope < 5 && resid < 60) {
-                const tempo = 1 / slope;
-                return { ...replay, tempo, alignment: { tempo, shift: -icpt * tempo, matched: 1, from: 'hits' }, cursor: convert(tempo, -icpt * tempo) };
+            return { slope, icpt, resid };
+        };
+
+        // 1. newer replays record each hit: find the speed and start that put those hits on notes the cursor is over,
+        // then fit replay time = song time / tempo + start through the matched pairs. Skips (type 9) jump the song
+        // forward, so each stretch between skips gets its own start, and the replay's skips jump to exactly there.
+        const hitEvents = replay.events.filter(e => e.type === 1);
+        if (hitEvents.length >= 20) {
+            const thin = (list, n) => list.filter((_, i) => i % Math.max(1, Math.floor(list.length / n)) === 0);
+            const countHits = (list, tempo, shift, window = 40) => {
+                let hits = 0;
+                for (const e of list)
+                    if (noteAt(e.at * tempo + shift, e.x, e.y, window))
+                        hits++;
+                return hits;
+            };
+            const searchShift = (list, tempo, from, to) => {
+                const sample = thin(list, 200);
+                let best = { shift: from, hits: -1 };
+                for (let shift = from; shift <= to; shift += 10) {
+                    const hits = countHits(sample, tempo, shift);
+                    if (hits > best.hits)
+                        best = { shift, hits };
+                }
+                return best;
+            };
+            const pairsFor = (list, tempo, shift) => {
+                const pairs = [];
+                for (const e of list) {
+                    const n = noteAt(e.at * tempo + shift, e.x, e.y, 60);
+                    if (n)
+                        pairs.push([n.Ms, e.at]);
+                }
+                return pairs;
+            };
+
+            // the stretches between skips
+            const skipTimes = replay.events.filter(e => e.type === 9).map(e => e.at).sort((a, b) => a - b);
+            const bounds = [-Infinity, ...skipTimes, Infinity];
+            const segments = [];
+            for (let i = 0; i < bounds.length - 1; i++) {
+                const hits = hitEvents.filter(e => e.at >= bounds[i] && e.at < bounds[i + 1]);
+                if (hits.length >= 5)
+                    segments.push({ start: bounds[i], hits });
+            }
+
+            // speed: from the replay's settings if it fits the longest stretch, otherwise the best of the known speeds
+            const longest = segments.reduce((a, b) => b.hits.length > a.hits.length ? b : a, segments[0]);
+            const so = replay.startOffset || 0;
+            const speed = replay.tempo || 1;
+            let tempo = speed, found = null;
+            for (const t of [speed, ...Object.values(SSPRE_SPEEDS).filter(t => t !== speed)]) {
+                const r = searchShift(longest.hits, t, so - 10000, notes[notes.length - 1].Ms);
+                if (!found || r.hits > found.hits) {
+                    found = r;
+                    tempo = t;
+                }
+                if (r.hits > Math.min(200, longest.hits.length) * 0.6)
+                    break;
+            }
+            const longPairs = pairsFor(longest.hits, tempo, found.shift);
+            if (longPairs.length >= 10) {
+                const f = fitLine(longPairs);
+                if (f.slope > 0.2 && f.slope < 5 && f.resid < 60)
+                    tempo = 1 / f.slope;
+            }
+
+            // each stretch's start, in order (the song only moves forward)
+            let prev = so - 10000, matched = 0;
+            for (const seg of segments) {
+                const coarse = seg === longest ? found : searchShift(seg.hits, tempo, prev - 2000, prev + 150000 + (seg === segments[0] ? notes[notes.length - 1].Ms : 0));
+                const diffs = pairsFor(seg.hits, tempo, coarse.shift).map(p => p[0] - p[1] * tempo).sort((a, b) => a - b);
+                seg.shift = diffs.length ? diffs[diffs.length >> 1] : coarse.shift;
+                matched += diffs.length;
+                prev = seg.shift;
+            }
+
+            if (matched >= hitEvents.length * 0.3) {
+                // cursor and skips in song time: each stretch uses its own start, and a skip fires when the song
+                // reaches the end of the stretch before it
+                const shiftAt = at => {
+                    let shift = segments[0].shift;
+                    for (const seg of segments)
+                        if (at >= seg.start)
+                            shift = seg.shift;
+                    return shift;
+                };
+                const skips = segments.slice(1).map((seg, i) => ({ X: 0, Y: 0, Ms: seg.start * tempo + segments[i].shift, To: seg.start * tempo + seg.shift }));
+                return {
+                    ...replay, tempo, skips, songTime: true,
+                    alignment: { tempo, shift: segments[0].shift, matched: matched / hitEvents.length, from: 'hits', sections: segments.map(sg => Math.round(sg.shift)) },
+                    cursor: cursor.map(c => ({ X: c.X, Y: c.Y, Ms: c.Ms * tempo + shiftAt(c.Ms) })),
+                };
             }
         }
 
@@ -996,6 +1106,9 @@ void main()
             this.confirmTempo(r.tempo);
             this.CursorNodes = r.cursor;
             this.SkipNodes = r.skips;
+            // .sspre replays are kept in song time, so the cursor can't drift from the music
+            this.ReplaySongTime = !!r.songTime;
+            this.ReplayHitWindow = (r.settings && parseFloat(r.settings.hitw)) || this.hitWindow || 55;
         }
 
         get SpawnZ() {
@@ -1264,16 +1377,17 @@ void main()
             const currentTime = this.currentTime;
 
             if (this.Replay) {
+                const clock = this.ReplaySongTime ? this.currentTime - this.waitTimer - this.Offset : this.time;
                 if (this.ReplayCursorIndex < this.CursorNodes.length) {
                     let a = this.CursorNodes[Math.max(this.ReplayCursorIndex - 1, 0)];
                     let b = this.CursorNodes[this.ReplayCursorIndex];
 
-                    while (b.Ms <= this.time && ++this.ReplayCursorIndex < this.CursorNodes.length) {
+                    while (b.Ms <= clock && ++this.ReplayCursorIndex < this.CursorNodes.length) {
                         a = b;
                         b = this.CursorNodes[this.ReplayCursorIndex];
                     }
 
-                    const t = b.Ms === a.Ms ? 1 : (this.time - a.Ms) / (b.Ms - a.Ms);
+                    const t = b.Ms === a.Ms ? 1 : clamp((clock - a.Ms) / (b.Ms - a.Ms), 0, 1);
                     const result = lerp2([a.X, a.Y], [b.X, b.Y], t);
 
                     this.Camera.setReplay(result);
@@ -1283,8 +1397,8 @@ void main()
                     return;
                 }
 
-                while (this.ReplaySkipIndex < this.SkipNodes.length && this.SkipNodes[this.ReplaySkipIndex].Ms <= this.time) {
-                    this.skip();
+                while (this.ReplaySkipIndex < this.SkipNodes.length && this.SkipNodes[this.ReplaySkipIndex].Ms <= clock) {
+                    this.skip(this.SkipNodes[this.ReplaySkipIndex]);
                     this.ReplaySkipIndex++;
                 }
             } else if (this.Autoplay) {
@@ -1339,7 +1453,14 @@ void main()
                 this.raf = requestAnimationFrame(t => this.frame(t));
         }
 
-        skip() {
+        skip(node) {
+            // .sspre replays know exactly where their skips landed
+            if (node && node.To !== undefined) {
+                this.music.pause();
+                this.currentTime = node.To;
+                this.music.play();
+                return;
+            }
             if (this.AutoIndex < this.Notes.length) {
                 this.music.pause();
                 this.currentTime = this.Notes[this.AutoIndex].Ms - 1000 * (0.875 + this.Tempo);
@@ -1486,7 +1607,16 @@ void main()
                 const prevZ = NoteSpeed * (timeDiff - frametime) / 1000;
                 const z = NoteSpeed * timeDiff / 1000;
 
-                if (this.noteSet[i] && z <= 0) {
+                if (this.noteSet[i] && this.ReplaySongTime) {
+                    // Sound Space Plus judging for its replays: a hit is any recorded cursor position on the note
+                    // within the hit window either side of it (early hits count), shown when the song gets there
+                    const window = this.ReplayHitWindow * this.Tempo;
+                    const hitAt = this.replayHitTime(i, x, y, window);
+                    if (hitAt !== null && currentTime >= hitAt)
+                        this.hitNote(i);
+                    else if (hitAt === null && timeDiff < -window)
+                        this.missNote(i);
+                } else if (this.noteSet[i] && z <= 0) {
                     const hovering = !this.Paused && this.isOverNote([x, y, z], zHitbox, prevZ);
                     const passed = hovering || z < -zHitbox;
 
@@ -1656,6 +1786,31 @@ void main()
             this.combo = 0;
 
             this.noteSet[index] = 0;
+        }
+
+        // the song time the replay's cursor first touches note i within its hit window, or null for a miss
+        replayHitTime(i, x, y, window) {
+            this.replayHits = this.replayHits || new Map();
+            if (this.replayHits.has(i))
+                return this.replayHits.get(i);
+            const nodes = this.CursorNodes, ms = this.Notes[i].Ms;
+            const half = (NOTE_SIZE[0] + CURSOR_SIZE[0]) / 2;
+            let lo = 0, hi = nodes.length;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (nodes[mid].Ms < ms - window)
+                    lo = mid + 1;
+                else
+                    hi = mid;
+            }
+            let result = null;
+            for (let k = lo; k < nodes.length && nodes[k].Ms <= ms + window; k++)
+                if (Math.abs(nodes[k].X - x) <= half && Math.abs(nodes[k].Y - y) <= half) {
+                    result = nodes[k].Ms;
+                    break;
+                }
+            this.replayHits.set(i, result);
+            return result;
         }
 
         isOverNote(notePos, zHitbox, prevZ) {
