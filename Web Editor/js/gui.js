@@ -29,14 +29,23 @@
     // sizes the canvas to the viewport; onResize(cssWidth, cssHeight) runs whenever the size or pixel ratio changes
     function fitCanvas(canvas, onResize) {
         let device = null;
+        let applied = '';
+        let cssW = 1, cssH = 1;
+        // the canvas fills the viewport through CSS (position: fixed; inset: 0), so its own box is the real size;
+        // phones can report a stale window.innerWidth for a while after rotating
+        const measure = () => {
+            const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
+            const zoom = window.visualViewport && window.visualViewport.scale > 1 ? window.visualViewport.scale : 1;
+            return [w, h, (window.devicePixelRatio || 1) * zoom];
+        };
         const apply = () => {
-            const w = window.innerWidth, h = window.innerHeight;
+            const [w, h, ratio] = measure();
+            applied = `${w}x${h}@${ratio}`;
+            cssW = w;
+            cssH = h;
             // a pinch-zoomed page (or a browser's forced zoom on phones) magnifies the canvas, so draw it at the
             // magnified resolution too, capped to stay inside mobile canvas size limits
-            const zoom = window.visualViewport && window.visualViewport.scale > 1 ? window.visualViewport.scale : 1;
-            pixelRatio = Math.min((window.devicePixelRatio || 1) * zoom, Math.sqrt(16e6 / (w * h)));
-            canvas.style.width = w + 'px';
-            canvas.style.height = h + 'px';
+            pixelRatio = Math.min(ratio, Math.sqrt(16e6 / (w * h)));
             // the exact device-pixel size is only used when it agrees with the pixel ratio (emulators can report CSS pixels)
             const exact = device && Math.abs(device[0] - w * pixelRatio) < 2 && Math.abs(device[1] - h * pixelRatio) < 2;
             const pw = exact ? device[0] : Math.round(w * pixelRatio);
@@ -85,17 +94,23 @@
         };
         watchRatio();
         window.addEventListener('resize', apply);
+        window.addEventListener('orientationchange', apply);
         window.visualViewport && window.visualViewport.addEventListener('resize', apply);
         apply();
         return {
             // transform that maps CSS pixels onto the canvas bitmap
             setTransform(ctx) {
-                ctx.setTransform(canvas.width / window.innerWidth, 0, 0, canvas.height / window.innerHeight, 0, 0);
+                // checked every frame too, because rotating a phone doesn't always fire a resize in time
+                const [w, h, ratio] = measure();
+                if (`${w}x${h}@${ratio}` !== applied)
+                    apply();
+                ctx.setTransform(canvas.width / cssW, 0, 0, canvas.height / cssH, 0, 0);
             },
             dispose() {
                 observer && observer.disconnect();
                 media && media.removeEventListener('change', onRatio);
                 window.removeEventListener('resize', apply);
+                window.removeEventListener('orientationchange', apply);
                 window.visualViewport && window.visualViewport.removeEventListener('resize', apply);
             },
         };

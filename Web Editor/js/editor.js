@@ -255,7 +255,7 @@
             window.addEventListener('wheel', this.handlers.wheel, { passive: false });
             window.addEventListener('keydown', this.handlers.keydown);
             window.addEventListener('keyup', this.handlers.keyup);
-            this.fit = G.fitCanvas(this.canvas, () => this.resize());
+            this.fit = G.fitCanvas(this.canvas, (w, h) => this.resize(w, h));
             window.addEventListener('paste', this.handlers.paste);
             window.addEventListener('contextmenu', this.handlers.contextmenu);
             window.addEventListener('blur', this.handlers.blur);
@@ -275,8 +275,7 @@
             window.removeEventListener('blur', h.blur);
         }
 
-        resize() {
-            const w = window.innerWidth, h = window.innerHeight;
+        resize(w = window.innerWidth, h = window.innerHeight) {
             this.win.resize(w, h);
             TRACK = this.ui.Track.rect;
             GRID = this.ui.Grid.rect;
