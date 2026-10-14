@@ -106,19 +106,44 @@
         }
     }
 
+    const sniffAudio = b => b[0] === 0x4f && b[1] === 0x67 ? ['audio/ogg', 'ogg'] : b[0] === 0x52 && b[1] === 0x49 ? ['audio/wav', 'wav']
+        : b[0] === 0x66 && b[1] === 0x4c ? ['audio/flac', 'flac'] : ['audio/mpeg', 'mp3'];
+
+    // .txt map data, or a .sspm / .rhm file with the song inside it
     async function loadMapFile(file) {
-        if (setMap(await file.text()))
-            toast('LOADED MAP');
-        else
-            toast(mapError || 'INVALID MAP', true);
+        const name = file.name.toLowerCase();
+        try {
+            if (name.endsWith('.sspm') || name.endsWith('.rhm')) {
+                const map = new SSQE.Map();
+                const { audio } = name.endsWith('.sspm')
+                    ? SSQE.Formats.readSspm(map, await file.arrayBuffer())
+                    : await SSQE.Formats.readRhm(map, await file.arrayBuffer(), file.name);
+                map.sortAll();
+                if (!setMap(SSQE.Formats.writeTxt(map)))
+                    throw new Error(mapError);
+                if (audio) {
+                    const [type, ext] = sniffAudio(audio);
+                    loadAudioFile(new File([audio], `${map.soundId}.${ext}`, { type }), true);
+                }
+                toast(audio ? 'LOADED MAP AND AUDIO' : 'LOADED MAP');
+                return;
+            }
+            if (setMap(await file.text()))
+                toast('LOADED MAP');
+            else
+                toast(mapError || 'INVALID MAP', true);
+        } catch (err) {
+            toast(`INVALID MAP: ${err.message}`, true);
+        }
     }
 
     let audioBuffer = null;
 
-    function loadAudioFile(file) {
+    function loadAudioFile(file, quiet = false) {
         audioFile = file;
         audioBuffer = null;
-        toast('LOADED AUDIO');
+        if (!quiet)
+            toast('LOADED AUDIO');
         // decoded up front: plays with exact timing and doesn't need an <audio> element (which iOS restricts)
         if (!audioCtx)
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -136,7 +161,9 @@
             const buffer = await file.arrayBuffer();
             const r = SSQEGame.parseReplay(buffer);
             replayBuffer = buffer;
-            replayInfo = `${file.name} - ${r.cursor.length} cursor nodes - tempo ${Math.round(r.tempo * 100)}%`;
+            replayInfo = r.format === 'sspre'
+                ? `${r.name || file.name} - ${formatTime(r.endMs)} long`
+                : `${file.name} - ${r.cursor.length} cursor nodes - tempo ${Math.round(r.tempo * 100)}%`;
             toast('LOADED REPLAY');
         } catch (err) {
             replayBuffer = null;
@@ -200,9 +227,9 @@
             return;
         for (const file of e.dataTransfer.files) {
             const name = file.name.toLowerCase();
-            if (name.endsWith('.qer'))
+            if (name.endsWith('.sspre') || name.endsWith('.qer'))
                 loadReplayFile(file);
-            else if (name.endsWith('.txt') && !file.type.startsWith('audio'))
+            else if (/\.(sspm|rhm)$/.test(name) || (name.endsWith('.txt') && !file.type.startsWith('audio')))
                 loadMapFile(file);
             else
                 loadAudioFile(file);
@@ -260,6 +287,18 @@
         if (document.activeElement)
             document.activeElement.blur();
 
+        // .sspre replays can start part way into the song: line their cursor up with the map's notes
+        let replay = null, replayStart = null;
+        if (mode === 'replay') {
+            replay = SSQEGame.parseReplay(replayBuffer);
+            if (replay.format === 'sspre') {
+                replay = SSQEGame.alignReplay(replay, SSQEGame.parseMap(mapText, settings.noteColors).notes);
+                replayStart = Math.max(0, replay.cursor[0].Ms);
+                if (replay.alignment && replay.alignment.matched < 0.5)
+                    toast('THIS REPLAY MAY NOT BE FOR THIS MAP', true);
+            }
+        }
+
         try {
             game = new SSQEGame.Game({
                 canvas: document.getElementById('game'),
@@ -270,10 +309,10 @@
                 audioBuffer,
                 audioCtx,
                 hitBuffer,
-                replayBuffer: mode === 'replay' ? replayBuffer : null,
+                replayBuffer: replay,
                 mode,
-                fromStart,
-                startTime: parseStartTime(menu.startBox.text),
+                fromStart: replayStart === null ? fromStart : false,
+                startTime: replayStart === null ? parseStartTime(menu.startBox.text) : replayStart,
                 onExit: finish,
             });
         } catch (err) {
@@ -336,7 +375,7 @@
             label(60, 195, 200, 40, 'MAP', 42),
 
             button(60, 250, 280, 50, 'LOAD MAP', 30, async () => {
-                const f = await pickFile('.txt,text/plain');
+                const f = await pickFile('.txt,.sspm,.rhm,text/plain');
                 f && loadMapFile(f);
             }),
             button(350, 250, 280, 50, 'PASTE MAP', 30, pasteMap),
@@ -353,7 +392,7 @@
                 ? `${audioFile.name} (${(audioFile.size / 1048576).toFixed(1)} MB)` : 'No audio - the map will play silently'),
 
             button(60, 500, 280, 50, 'LOAD REPLAY', 30, async () => {
-                const f = await pickFile('.qer');
+                const f = await pickFile('.sspre,.qer');
                 f && loadReplayFile(f);
             }),
             dynamic(60, 565, 880, 30, 24, () => replayInfo || 'No replay loaded'),
@@ -381,7 +420,7 @@
             label(1190, 660, 600, 300, touch
                 ? 'Controls:\n\n> Drag anywhere to move the cursor\n> Buttons in the top right corner:\n>> Restart, pause (hold to unpause) and quit'
                 : 'Controls:\n\n> Quit: ESCAPE / hold R\n> Restart: TAB\n> Pause: SPACE (hold to unpause)\n> Offset: SCROLL\n> Unfocus: CTRL + U\n> Focus: LEFT CLICK\n> Fullscreen: F11', 22),
-            label(0, 1040, 1920, 40, 'Drop a map (.txt), audio or a replay (.qer) anywhere on the page', 20, { centerMode: G.CenterMode.XY }),
+            label(0, 1040, 1920, 40, 'Drop a map (.sspm, .rhm or .txt), audio or a replay (.sspre) anywhere on the page', 20, { centerMode: G.CenterMode.XY }),
             toast,
         ];
 

@@ -326,7 +326,7 @@
         }
 
         async loadMapDialog() {
-            const files = await this.pickFile('.txt,.ini,.sspm,.osu,audio/*,.asset,.mp3,.ogg,.wav,.flac,.m4a,.opus', true);
+            const files = await this.pickFile('.txt,.ini,.sspm,.rhm,.osu,audio/*,.asset,.mp3,.ogg,.wav,.flac,.m4a,.opus', true);
             if (files.length)
                 this.loadFiles(files);
         }
@@ -402,7 +402,7 @@
 
         async loadFiles(files) {
             const byExt = ext => files.filter(f => f.name.toLowerCase().endsWith(ext));
-            const audioFiles = files.filter(f => !/\.(txt|ini|sspm|osu)$/i.test(f.name));
+            const audioFiles = files.filter(f => !/\.(txt|ini|sspm|osu|rhm)$/i.test(f.name));
             const base = name => name.replace(/\.[^.]*$/, '');
 
             try {
@@ -410,6 +410,18 @@
                 if (sspm) {
                     const map = new Map();
                     const { audio, cover } = Formats.readSspm(map, await sspm.arrayBuffer());
+                    if (audio)
+                        await this.storage.putAudio(map.soundId, new Blob([audio], { type: sniffAudio(audio) }));
+                    if (cover)
+                        map.coverBytes = cover;
+                    await this.openNewMap(map, null);
+                    return;
+                }
+
+                const rhm = byExt('.rhm')[0];
+                if (rhm) {
+                    const map = new Map();
+                    const { audio, cover } = await Formats.readRhm(map, await rhm.arrayBuffer(), rhm.name);
                     if (audio)
                         await this.storage.putAudio(map.soundId, new Blob([audio], { type: sniffAudio(audio) }));
                     if (cover)

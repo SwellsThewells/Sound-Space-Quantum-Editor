@@ -55,7 +55,8 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
     delete.
   - Create BPM from two selected notes, and all the default keybinds (rebindable in Settings).
 - **Files:**
-  - Opens `.txt` maps (legacy and `ssmapv2`) with their `.ini`, `.sspm` (v1 and v2) and `.osu`.
+  - Opens `.txt` maps (legacy and `ssmapv2`) with their `.ini`, `.sspm` (v1 and v2), Rhythia `.rhm` (with
+    their song and cover) and `.osu`.
   - Saves `.txt` and `.ini` in the same format as the desktop editor.
   - Exports SSPM v2.
 - **Saving:** in Chromium-based browsers, Save As can write to a folder you pick, and later saves

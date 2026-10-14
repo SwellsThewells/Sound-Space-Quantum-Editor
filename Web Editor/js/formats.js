@@ -662,5 +662,81 @@
         return audioPath || null;
     }
 
-    SSQE.Formats = { VFX_LOOKUP, fixId, readObjects, readTxt, writeTxt, readIni, writeIni, readSspm, writeSspm, readOsu, setExportOffset };
+    // ---------------------------------------------------------------- zip (for .rhm)
+
+    // Reads a zip's entries into { name: Uint8Array }. Stored and deflated entries are supported; deflate uses the
+    // browser's DecompressionStream.
+    async function readZip(buffer) {
+        const bytes = new Uint8Array(buffer);
+        const view = new DataView(buffer);
+        let end = -1;
+        for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--)
+            if (view.getUint32(i, true) === 0x06054b50) {
+                end = i;
+                break;
+            }
+        if (end < 0)
+            throw new Error('Not a zip file');
+
+        const count = view.getUint16(end + 10, true);
+        let p = view.getUint32(end + 16, true);
+        const files = {};
+        const decoder = new TextDecoder();
+        for (let n = 0; n < count; n++) {
+            if (view.getUint32(p, true) !== 0x02014b50)
+                throw new Error('Broken zip directory');
+            const method = view.getUint16(p + 10, true);
+            const compressed = view.getUint32(p + 20, true);
+            const nameLength = view.getUint16(p + 28, true);
+            const extraLength = view.getUint16(p + 30, true);
+            const commentLength = view.getUint16(p + 32, true);
+            const local = view.getUint32(p + 42, true);
+            const name = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLength));
+            p += 46 + nameLength + extraLength + commentLength;
+
+            const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+            const data = bytes.subarray(start, start + compressed);
+            if (method === 0)
+                files[name] = data.slice();
+            else if (method === 8) {
+                if (!window.DecompressionStream)
+                    throw new Error('This browser can\'t unpack compressed files');
+                const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+                files[name] = new Uint8Array(await new Response(stream).arrayBuffer());
+            } else
+                throw new Error(`Unsupported zip compression (${method})`);
+        }
+        return files;
+    }
+
+    // ---------------------------------------------------------------- Rhythia .rhm
+
+    // A .rhm is a zip of "map" (JSON: notes, timing points, title, mappers, difficulty), "audio" and "cover".
+    // Positions use the same orientation as SSPM, which is mirrored from the editor's.
+    async function readRhm(map, buffer, fileName = '') {
+        const files = await readZip(buffer);
+        if (!files.map)
+            throw new Error('This .rhm has no map data');
+        const data = JSON.parse(new TextDecoder().decode(files.map));
+
+        for (const n of data.Notes || [])
+            map.notes.add(new Note(2 - n.X, 2 - n.Y, Math.round(n.Time)));
+        for (const t of data.TimingPoints || [])
+            if (t.Bpm > 0)
+                map.timingPoints.push(new TimingPoint(t.Bpm, Math.round(t.OffsetMs)));
+
+        const title = data.Title || data.SongName || '';
+        map.soundId = fixId(title || fileName.replace(/\.[^.]*$/, '') || 'rhythia_map');
+        map.props.songName = data.SongName || title;
+        map.props.songTitle = title;
+        map.props.mappers = (Array.isArray(data.Mappers) ? data.Mappers : [data.Mappers || '']).filter(Boolean).join('\n');
+        map.props.difficulty = DIFFICULTIES[data.Difficulty] || 'N/A';
+        map.props.customDifficulty = data.CustomDifficultyName || '';
+        map.props.useCover = !!files.cover;
+        map.sortAll && map.sortAll();
+
+        return { audio: files.audio || null, cover: files.cover || null };
+    }
+
+    SSQE.Formats = { VFX_LOOKUP, fixId, readObjects, readTxt, writeTxt, readIni, writeIni, readSspm, writeSspm, readOsu, setExportOffset, readZip, readRhm };
 })();

@@ -201,7 +201,129 @@ void main()
     }
 
     // MainWindow.LoadReplay (.qer, little-endian BinaryWriter output)
+    // Sound Space Plus / Rhythia replay (.sspre): "Ss*R", a version, the map's id and name on text lines, a settings line
+    // ("ar:..;hbox:..;hitw:..;s:..;so:<start offset ms>"), some player settings, the end time and record count,
+    // then records: a type byte and a u32 time, followed for type 0 (cursor) by the cursor's x and y.
+    // Positions are mirrored from the editor's (like SSPM notes); times are from the start of the replay, which may
+    // not be the start of the song (see alignReplay).
+    function parseSspre(buffer) {
+        const bytes = new Uint8Array(buffer);
+        const view = new DataView(buffer);
+        const decoder = new TextDecoder();
+        let o = 4;
+        const version = view.getUint16(o, true);
+        o = 6;
+        while (o < bytes.length && bytes[o] === 0)
+            o++;
+        const line = () => {
+            let e = o;
+            while (e < bytes.length && bytes[e] !== 0x0a)
+                e++;
+            const text = decoder.decode(bytes.subarray(o, e));
+            o = e + 1;
+            return text;
+        };
+        const mapId = line();
+        const name = line();
+        const settings = {};
+        for (const part of line().split(';')) {
+            const [k, v] = part.split(':');
+            if (k)
+                settings[k] = v;
+        }
+
+        // 8 floats of player settings, a u16, the end time and the record count
+        o += 32 + 2;
+        const endMs = view.getUint32(o, true);
+        o += 8;
+
+        const cursor = [];
+        const events = [];
+        while (o + 5 <= bytes.length) {
+            const type = bytes[o];
+            const ms = view.getUint32(o + 1, true);
+            if (type === 0) {
+                if (o + 13 > bytes.length)
+                    break;
+                cursor.push({ X: 2 - view.getFloat32(o + 5, true), Y: 2 - view.getFloat32(o + 9, true), Ms: ms });
+                o += 13;
+            } else {
+                events.push({ type, ms });
+                o += 5;
+            }
+        }
+        if (!cursor.length)
+            throw new Error('This replay has no cursor data');
+
+        const startOffset = parseFloat(settings.so) || 0;
+        const speed = parseFloat(settings.s);
+        return {
+            format: 'sspre', version, mapId, name, settings, endMs, events,
+            tempo: Number.isFinite(speed) && speed > 0 ? speed : 1,
+            cursor, skips: [], startOffset,
+        };
+    }
+
+    // Finds the time shift (and whether positions are mirrored) that puts the replay's cursor on the map's notes, since
+    // a replay can start part way into the song. Returns a copy of the replay with song times.
+    function alignReplay(replay, notes) {
+        if (!notes.length || replay.format !== 'sspre')
+            return replay;
+        const cursor = replay.cursor;
+        const times = cursor.map(c => c.Ms);
+        const at = ms => {
+            let lo = 0, hi = times.length - 1;
+            while (lo < hi) {
+                const mid = (lo + hi + 1) >> 1;
+                if (times[mid] <= ms)
+                    lo = mid;
+                else
+                    hi = mid - 1;
+            }
+            return cursor[lo];
+        };
+        const step = Math.max(1, Math.floor(notes.length / 300));
+        const sample = notes.filter((_, i) => i % step === 0);
+        const score = (shift, mirror) => {
+            let hits = 0;
+            for (const n of sample) {
+                const t = n.Ms - shift;
+                if (t < times[0] || t > times[times.length - 1])
+                    continue;
+                const c = at(t);
+                const x = mirror ? 2 - c.X : c.X, y = mirror ? 2 - c.Y : c.Y;
+                if (Math.abs(x - n.X) < 0.6 && Math.abs(y - n.Y) < 0.6)
+                    hits++;
+            }
+            return hits;
+        };
+
+        let best = { shift: 0, mirror: false, hits: -1 };
+        const lastNote = notes[notes.length - 1].Ms;
+        for (const mirror of [false, true]) {
+            for (let shift = -5000; shift <= lastNote; shift += 50) {
+                const hits = score(shift, mirror);
+                if (hits > best.hits)
+                    best = { shift, mirror, hits };
+            }
+        }
+        for (let shift = best.shift - 50; shift <= best.shift + 50; shift++) {
+            const hits = score(shift, best.mirror);
+            if (hits > best.hits)
+                best = { shift, mirror: best.mirror, hits };
+        }
+
+        return {
+            ...replay,
+            alignment: { shift: best.shift, mirrored: best.mirror, matched: best.hits / sample.length },
+            cursor: cursor.map(c => ({ X: best.mirror ? 2 - c.X : c.X, Y: best.mirror ? 2 - c.Y : c.Y, Ms: c.Ms + best.shift })),
+        };
+    }
+
     function parseReplay(buffer) {
+        if (new TextDecoder().decode(new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength))) === 'Ss*R')
+            return parseSspre(buffer);
+
         const view = new DataView(buffer);
         let o = 0;
         const f32 = () => { const v = view.getFloat32(o, true); o += 4; return v; };
@@ -849,7 +971,7 @@ void main()
         }
 
         loadReplay(buffer) {
-            const r = parseReplay(buffer);
+            const r = buffer instanceof ArrayBuffer ? parseReplay(buffer) : buffer;
             this.confirmTempo(r.tempo);
             this.CursorNodes = r.cursor;
             this.SkipNodes = r.skips;
@@ -1601,5 +1723,5 @@ void main()
         }
     }
 
-    return { Game, parseMap, parseReplay, loadAudio };
+    return { Game, parseMap, parseReplay, alignReplay, loadAudio };
 })();

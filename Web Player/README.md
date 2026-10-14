@@ -14,11 +14,12 @@ python3 -m http.server 8000   # from the repository root
 # then open http://localhost:8000/Web%20Player/
 ```
 
-1. Load a map: **LOAD MAP** for a `.txt` file, or **PASTE MAP** for map data in the
+1. Load a map: **LOAD MAP** for a `.sspm` or `.rhm` file (their song is loaded too) or a `.txt` file, or **PASTE MAP** for map data in the
    `id,x|y|ms,x|y|ms,...` format (the same format the editor writes to `assets/temp/tempmap.txt`).
 2. Optionally **LOAD AUDIO** (any format your browser can decode: mp3, ogg, wav and so on).
    Without audio the map plays silently.
-3. Optionally **LOAD REPLAY** for a `.qer` replay.
+3. Optionally **LOAD REPLAY** for a `.sspre` replay (older `.qer` replays still work). A replay that
+   starts part way into the song is lined up with the map's notes automatically.
 4. Click **PLAY**, **AUTOPLAY** or **WATCH REPLAY**.
 
 You can also drag files onto the page. **DEMO MAP** creates a random map for testing.
