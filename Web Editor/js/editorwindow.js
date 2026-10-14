@@ -169,6 +169,8 @@
             slider(245, 370, 250, 32, () => s.cursorPos, v => { s.cursorPos = Math.round(v); saveS(); }, 100, 1, 40),
             ApproachRateLabel, CursorPosLabel,
             checkbox(245, 50, 'Smooth Autoplay Cursor', 26, 'smoothAutoplay'),
+            // web only: notes fly out from the middle of the grid, like in game
+            checkbox(245, 430, '3D Mode', 26, 'mode3D'),
         ]);
 
         // ------------------------------------------------ Export

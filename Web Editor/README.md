@@ -60,6 +60,8 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
   - Exports SSPM v2.
 - **Saving:** in Chromium-based browsers, Save As can write to a folder you pick, and later saves
   and autosaves go to the same files. In other browsers the `.txt` and `.ini` are downloaded.
+- **3D Mode** (Graphics tab, web only): notes fly out from the middle of the grid towards their cell,
+  like in game, instead of fading in on it.
 - **Playtest:** Play From Start and Play Here open the web player on top of the editor. Hold Alt
   while clicking to watch autoplay. Esc returns to the editor.
 

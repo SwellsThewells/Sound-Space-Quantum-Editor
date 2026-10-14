@@ -124,6 +124,7 @@
         gridSquircleRadius: 0.125,
         fpsLimit: 60,
         createGame: 'Sound Space',
+        mode3D: false,
         playtestGame: 'SSQE Player',
     };
 

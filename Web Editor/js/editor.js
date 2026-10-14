@@ -1313,11 +1313,34 @@
             const showNotes = this.renderNotes;
             this.hoveringXY = null;
 
+            // web only: 3D mode puts the notes in perspective, flying out from the middle of the grid towards their
+            // cell (full size when hit), with notes that were just hit growing past it as they fade
+            const mode3D = s.mode3D;
+            const DEPTH = 5, PASSED_MS = 200;
+            const window3D = Math.max(1, maxMs - t);
+            const gcx = GRID.x + GRID.w / 2, gcy = GRID.y + GRID.h / 2;
+            const place = (note, scale) => {
+                const size = noteSize * scale;
+                const cx = gcx + (GRID.x + (2 - note.x + 0.5) * cell - gcx) * scale;
+                const cy = gcy + (GRID.y + (2 - note.y + 0.5) * cell - gcy) * scale;
+                return [cx - size / 2, cy - size / 2, size];
+            };
+
             const drawn = [];
+            if (mode3D) {
+                const [passedLow] = notes.searchRange(t - PASSED_MS, t);
+                for (let i = passedLow; i < low; i++) {
+                    const note = notes.items[i];
+                    const age = clamp((t - note.ms) / PASSED_MS, 0, 1);
+                    const [x, y, size] = place(note, 1 + age * 0.6);
+                    drawn.push({ note, i, x, y, size, progress: 1 - age });
+                }
+            }
             for (let i = low; i < high; i++) {
                 const note = notes.items[i];
-                const x = GRID.x + (2 - note.x) * cell + noteGap;
-                const y = GRID.y + (2 - note.y) * cell + noteGap;
+                let x = GRID.x + (2 - note.x) * cell + noteGap;
+                let y = GRID.y + (2 - note.y) * cell + noteGap;
+                let size = noteSize;
 
                 let progress = 1 - Math.min(1, (note.ms - t) * ar / 750);
                 if (isSpecial && note.enableEasing)
@@ -1326,17 +1349,24 @@
                     progress = Math.min(1, progress ** 2);
                 progress = clamp(progress, 0, 1);
 
-                if (this.canSelect && showNotes && Math.abs(mx - noteSize / 2 - x) <= noteSize / 2 && Math.abs(my - noteSize / 2 - y) <= noteSize / 2)
+                if (mode3D) {
+                    const z = clamp((note.ms - t) / window3D, 0, 1);
+                    [x, y, size] = place(note, 1 / (1 + z * DEPTH));
+                } else if (this.canSelect && showNotes && Math.abs(mx - noteSize / 2 - x) <= noteSize / 2 && Math.abs(my - noteSize / 2 - y) <= noteSize / 2)
                     this.hoveringXY ??= note;
 
-                drawn.push({ note, i, x, y, progress });
+                drawn.push({ note, i, x, y, size, progress });
             }
+            // far notes first so the near ones are drawn on top
+            if (mode3D)
+                drawn.sort((a, b) => a.size - b.size);
 
             for (const d of drawn) {
                 const c = d.i % s.noteColors.length;
-                this.roundedRect(d.x, d.y, noteSize, noteSize, this.noteColor(c, 0.15 * d.progress), this.noteColor(c, d.progress), 2);
+                const lineWidth = mode3D ? Math.max(1, 2 * d.size / noteSize) : 2;
+                this.roundedRect(d.x, d.y, d.size, d.size, this.noteColor(c, 0.15 * d.progress), this.noteColor(c, d.progress), lineWidth);
 
-                if (s.approachSquares) {
+                if (s.approachSquares && !mode3D) {
                     const size = 4 + noteSize + noteSize * (1 - d.progress) * 2 + 0.5;
                     this.roundedRect(d.x - size / 2 + noteSize / 2, d.y - size / 2 + noteSize / 2, size, size, null, this.noteColor(c, d.progress), Math.max(1, size * 0.0125));
                 }
@@ -1345,15 +1375,15 @@
             if (showNotes) {
                 for (const d of drawn) {
                     if (d.note.selected)
-                        this.roundedRect(d.x - 4, d.y - 4, noteSize + 8, noteSize + 8, null, this.color(6, d.progress), 2);
+                        this.roundedRect(d.x - 4, d.y - 4, d.size + 8, d.size + 8, null, this.color(6, d.progress), 2);
                     if (this.hoveringXY === d.note)
-                        this.roundedRect(d.x - 4, d.y - 4, noteSize + 8, noteSize + 8, null, this.color(5, 0.25), 2);
+                        this.roundedRect(d.x - 4, d.y - 4, d.size + 8, d.size + 8, null, this.color(5, 0.25), 2);
                 }
             }
 
             if (s.gridNumbers) {
                 for (const d of drawn)
-                    this.text(fmtInt(d.i + 1), d.x + noteSize / 2, d.y + noteSize / 2, 28 * this.gridTextScale, this.color(4, d.progress), 'center', 'middle');
+                    this.text(fmtInt(d.i + 1), d.x + d.size / 2, d.y + d.size / 2, 28 * this.gridTextScale * d.size / noteSize, this.color(4, d.progress), 'center', 'middle');
             }
 
             // special objects
