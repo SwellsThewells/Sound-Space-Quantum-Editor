@@ -922,9 +922,13 @@ window.SSQEAutoMapper = (function () {
             return { at, err: Math.abs(at - ms), step, weight: slotWeight(((p % div) + div) % div, div) };
         };
         // how close together notes may come at this difficulty: the fastest stretches get about 2.6x the average
-        // notes a second, up to about 30 a second (the hardest maps' streams)
+        // notes a second, up to a top speed that rises with the difficulty (about 21 notes a second at 5, 42 at 10:
+        // 1/16 streams at 130 BPM)
+        const level10 = Math.min(10, Math.max(1, opts.difficulty || 5));
+        const hard = level10 >= 8;
         const span_s = Math.max(1, (endMs - startMs) / 1000);
-        const busiest = Math.min(30 * Math.max(1, opts.density || 1), (opts.count > 0 ? Math.max(opts.count / span_s, 0.5) : nps) * 2.6);
+        const peak = 12 * Math.pow(1.15, level10 - 1) * Math.max(1, opts.density || 1);
+        const busiest = Math.min(peak, (opts.count > 0 ? Math.max(opts.count / span_s, 0.5) : nps) * 2.6);
         const fastest = 1000 / busiest;
         // the finest beat division allowed at a tempo: 1/1 or 1/2 for easy maps up to 1/16 for the hardest
         const topDiv = (family, beatLen) => {
@@ -944,10 +948,14 @@ window.SSQEAutoMapper = (function () {
 
         const fill = opts.fill || 'intense';
         const avoid = opts.avoid || [];
-        const out = [];
-        const heard = new Map(); // note time on the grid -> when its sound is heard
-        let carry = 0;
+        let out = [];
+        let heard = new Map(); // note time on the grid -> when its sound is heard
 
+        // maps every bar; scale: section -> how much of its note allowance to use
+        const mapBars = scale => {
+        out = [];
+        heard = new Map();
+        let carry = 0;
         inRange.forEach((b, j) => {
             const s = sectionAt(b.from);
             const beatLen = 60000 / ctx.timing[beats[b.first].tp].bpm;
@@ -980,7 +988,7 @@ window.SSQEAutoMapper = (function () {
             const grid = (other.full && (!main.full || other.div < main.div)) ? other : main;
             const { family, div } = grid;
 
-            const exact = cap[j] + carry;
+            const exact = cap[j] * (scale.get(s) ?? 1) + carry;
             // never more notes than the bar has positions at the finest division allowed
             const k = Math.max(0, Math.min(Math.round(exact), beatsIn * topDiv(family, beatLen)));
             // how close notes may be: the beat division this many notes needs
@@ -1007,11 +1015,12 @@ window.SSQEAutoMapper = (function () {
             picked.sort((p, q) => p - q);
 
             // streams between the sounds, only where the song itself is busy (two sounds a beat or more), and at
-            // most one division finer than the bar's own rhythm (and the difficulty's limit)
+            // most one division finer than the bar's own rhythm (two at difficulty 8 and up), within the
+            // difficulty's top speed. Hard maps fill the busy medium parts too, not only the drops.
             const busy = raw.length >= beatsIn * 2;
-            const intense = s.level >= 0.6 || s.drop;
+            const intense = s.level >= 0.6 || s.drop || (hard && s.level >= 0.3);
             if (picked.length < k && busy && (fill === 'busy' || (fill === 'intense' && intense))) {
-                const fillDiv = Math.min(topDiv(family, beatLen), finer(family, div), Math.max(div, d));
+                const fillDiv = Math.min(topDiv(family, beatLen), hard ? finer(family, finer(family, div)) : finer(family, div), Math.max(div, d));
                 const step = beatLen / fillDiv;
                 const extra = [];
                 for (let i = 0; i + 1 < picked.length && picked.length + extra.length < k; i++) {
@@ -1029,6 +1038,32 @@ window.SSQEAutoMapper = (function () {
             carry = Math.min(2, Math.max(-2, exact - picked.length));
             out.push(...picked);
         });
+        };
+        mapBars(new Map());
+
+        // A drop is never easier than the calmer parts: a section that came out with more notes a second than a
+        // more intense one (its sounds or rhythm let it fill up more) is mapped again with fewer
+        const inSection = sec => {
+            const from = Math.max(sec.from, startMs), to = Math.min(sec.to, endMs);
+            return to - from >= 2000 ? { n: out.filter(t => t >= from && t < to).length / ((to - from) / 1000) } : null;
+        };
+        const rates = new Map(sections.map(sec => [sec, inSection(sec)]));
+        const scale = new Map();
+        for (const sec of sections) {
+            const mine = rates.get(sec);
+            if (!mine || !mine.n)
+                continue;
+            let allowed = Infinity;
+            for (const other of sections) {
+                const theirs = rates.get(other);
+                if (theirs && other.level >= sec.level + 0.1)
+                    allowed = Math.min(allowed, theirs.n * 0.95);
+            }
+            if (mine.n > allowed)
+                scale.set(sec, allowed / mine.n);
+        }
+        if (scale.size)
+            mapBars(scale);
         // Streams and other quick runs stay exactly on the grid, so they're perfectly even. A note on its own (no
         // other note within 200ms) goes exactly where its sound is heard: the sounds of a song never all sit on one
         // perfect grid, and on a slow note being late or early by even 15ms is easy to feel.
@@ -1496,7 +1531,8 @@ window.SSQEAutoMapper = (function () {
         // intense sections and drops
         const sections = ctx.sections || [];
         const styleScale = { streams: 0.72, jumps: 1.4 }[opts.patterns] || 1;
-        const base = fm.move * (opts.jumpScale || 1) * styleScale;
+        // (harder maps jump a little further: 0.85x at 1, 1.17x at 10)
+        const base = fm.move * (opts.jumpScale || 1) * styleScale * (0.85 + 0.035 * (difficulty - 1));
         const boost = opts.dropBoost ?? 1;
         const free = rank(smooth(a.hits, 150));
         const jumpAt = ms => {
@@ -1536,7 +1572,7 @@ window.SSQEAutoMapper = (function () {
         }
         best.notes.info = {
             bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady),
-            sections: sections.map(s => ({ from: s.from, to: s.to, level: +s.level.toFixed(2), drop: s.drop, rate: s.rate && +s.rate.toFixed(1) })),
+            sections: sections.map(s => ({ from: s.from, to: s.to, level: +s.level.toFixed(2), drop: s.drop, rate: s.rate && +s.rate.toFixed(1), nps: s.nps && +s.nps.toFixed(1) })),
         };
         return best.notes;
     }
