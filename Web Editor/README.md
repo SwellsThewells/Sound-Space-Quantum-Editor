@@ -68,12 +68,13 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
   teaches it how far and where notes move for each time gap, and how dense maps are. **AUTO MAP**
   fills from the timeline's position up to the next note (or the end of the song): it finds the hits
   in the song, snaps them to the BPM if there is one, and places notes the way the learned maps do.
-  **Density %** scales how many notes it makes and **Difficulty** (1-10, 5 = like the learned maps)
-  makes maps denser with bigger jumps, or sparser with smaller moves. It's one undo step.
+  **Difficulty** (1-10) sets how dense the map is: 1 is about 1.5 notes a second, 5 about 5.5 and 10
+  about 30 with fast streams (like Tasukete maps); between the song's hits it streams where the song is
+  busy. **Density %** scales that further. It's one undo step.
   **LEARN FROM MAPS** teaches it from many map files at once.
 - **Grid Zoom** (Graphics tab, web only): makes the 3x3 grid bigger or smaller (50-200%).
-- **Custom cursor** (Settings > Graphics, web only): any image or animated GIF, with a size and an
-  optional centred hotspot.
+- **Grid cursor image** (Settings > Graphics, web only): replaces the square cursor that follows the
+  notes on the grid (Autoplay in the Graphics tab) with any image or animated GIF, at any size.
 - **Editor background** (Settings > Colors, web only): pick the default background, your own image
   (**LOAD IMAGE**) or one of the map player's worlds.
 - **Playtest background and note mesh** (Settings > Player, web only): the same 3D worlds and custom

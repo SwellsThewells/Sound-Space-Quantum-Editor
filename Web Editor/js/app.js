@@ -204,46 +204,6 @@
             const root = document.documentElement.style;
             for (let i = 1; i <= 5; i++)
                 root.setProperty(`--c${i}`, `rgb(${this.settings[`color${i}`].join(',')})`);
-            this.updateCursor();
-        }
-
-        // web only: a custom mouse cursor (any image, animated GIFs included) drawn as an <img> that follows the mouse,
-        // since CSS cursors don't animate and are limited to 128px
-        updateCursor() {
-            if (!this.cursorEl) {
-                const style = el('style');
-                style.textContent = `
-                    #custom-cursor { position: fixed; left: 0; top: 0; z-index: 10000; pointer-events: none; display: none; }
-                    body.custom-cursor #custom-cursor.shown { display: block; }
-                    body.custom-cursor, body.custom-cursor * { cursor: none !important; }
-                    body.playtesting #custom-cursor { display: none !important; }`;
-                document.head.append(style);
-                this.cursorEl = el('img', { id: 'custom-cursor', alt: '', draggable: false });
-                document.body.append(this.cursorEl);
-                const move = e => {
-                    if (e.pointerType === 'touch')
-                        return;
-                    const c = this.cursorEl;
-                    c.classList.add('shown');
-                    const size = this.cursorSizePx || 32;
-                    const off = this.settings.cursorCentered ? size / 2 : 0;
-                    c.style.transform = `translate(${e.clientX - off}px, ${e.clientY - off}px)`;
-                };
-                window.addEventListener('pointermove', move, { passive: true });
-                window.addEventListener('pointerdown', move, { passive: true });
-                document.addEventListener('pointerleave', () => this.cursorEl.classList.remove('shown'));
-                document.documentElement.addEventListener('mouseleave', () => this.cursorEl.classList.remove('shown'));
-                if (window.SSQECustom)
-                    SSQECustom.ready.then(() => this.updateCursor());
-            }
-            const url = window.SSQECustom && SSQECustom.state.cursorUrl;
-            const on = !!url;
-            document.body.classList.toggle('custom-cursor', on);
-            if (on && this.cursorEl.getAttribute('src') !== url)
-                this.cursorEl.src = url;
-            this.cursorSizePx = Math.min(Math.max(Math.round(this.settings.cursorSize || 32), 8), 256);
-            this.cursorEl.style.width = this.cursorEl.style.height = `${this.cursorSizePx}px`;
-            this.cursorEl.style.objectFit = 'contain';
         }
 
         dialogOpen() {

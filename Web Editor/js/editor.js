@@ -1542,6 +1542,15 @@
             }
 
             const width = Math.sin(p * Math.PI) * 8 + 16;
+            // web only: the user's own cursor image (Settings > Graphics), animated GIFs included
+            const custom = window.SSQECustom && SSQECustom.cursorFrame();
+            if (custom) {
+                const size = width * clamp((this.settings.cursorScale ?? 100) / 100, 0.25, 8) * GRID.w / 300 * 1.5;
+                const iw = custom.naturalWidth || custom.width, ih = custom.naturalHeight || custom.height;
+                const k = size / Math.max(iw, ih);
+                this.ctx.drawImage(custom, x - iw * k / 2, y - ih * k / 2, iw * k, ih * k);
+                return;
+            }
             this.ctx.fillStyle = 'rgba(255,255,255,0.25)';
             this.ctx.fillRect(x - width / 2, y - width / 2, width, width);
             this.ctx.strokeStyle = 'rgba(255,255,255,1)';

@@ -442,7 +442,6 @@
                 return;
             try {
                 await SSQECustom.setCursor(file);
-                app.updateCursor();
             } catch (err) {
                 app.dialogs.message(`The cursor couldn't be saved: ${err.message}`, 'Error');
             }
@@ -586,13 +585,12 @@
             num(700, 485, 200, 50, 'gridSquircleRadius', { increment: 0.025, isPositive: true, isFloat: true, textSize: 30, bounds: [0, 0.5], style: G.Styles.Textbox_Uncolored }),
             lbl(700, 455, 200, 26, 'Grid Squircle Corner Radius:'),
             new G.Square(955, 395, 40, 40, { color: [255, 255, 255], outline: true, stretch: 'None', cornerRadius: s.gridSquircleRadius }),
-            // web only: custom mouse cursor (images and animated GIFs)
-            dynamicLbl(0, 580, 680, 26, () => `Editor Cursor: ${(window.SSQECustom && SSQECustom.state.cursorName) || 'Default'}`, 30),
-            btn(0, 610, 220, 50, 'LOAD CURSOR', 30, loadCursor),
-            btn(230, 610, 150, 50, 'RESET', 30, () => SSQECustom.setCursor(null).then(() => app.updateCursor()).catch(() => { })),
-            lbl(700, 580, 200, 26, 'Cursor Size (px):'),
-            num(700, 610, 200, 50, 'cursorSize', { increment: 4, isPositive: true, textSize: 30, bounds: [8, 256], style: G.Styles.Textbox_Uncolored }),
-            chk(930, 612, 'Centered', 'cursorCentered'),
+            // web only: custom image (animated GIFs too) for the cursor square that follows the notes on the grid
+            dynamicLbl(0, 580, 680, 26, () => `Grid Cursor Image: ${(window.SSQECustom && SSQECustom.state.cursorName) || 'Default'}`, 30),
+            btn(0, 610, 220, 50, 'LOAD IMAGE', 30, loadCursor),
+            btn(230, 610, 150, 50, 'RESET', 30, () => SSQECustom.setCursor(null).catch(() => { })),
+            lbl(700, 580, 200, 26, 'Grid Cursor Size (%):'),
+            num(700, 610, 200, 50, 'cursorScale', { increment: 10, isPositive: true, textSize: 30, bounds: [25, 800], style: G.Styles.Textbox_Uncolored }),
         ]);
         const fpsLabel = GraphicsNav.controls[7];
         const squirclePreview = GraphicsNav.controls.find(c => c instanceof G.Square && c.outline);

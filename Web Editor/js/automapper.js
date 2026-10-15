@@ -154,7 +154,7 @@ window.SSQEAutoMapper = (function () {
 
     // difficulty 1..10 (5 = like the learned maps): above 5 favours bigger jumps, below favours small moves
     function pickMove(gap, prevMove, pos, random, difficulty = 5) {
-        const k = (difficulty - 5) * 0.7;
+        const k = (difficulty - 5) * 0.25;
         let dist = null;
         for (const k of contextKeys(gap, prevMove)) {
             const t = model.trans[k];
@@ -303,9 +303,11 @@ window.SSQEAutoMapper = (function () {
     async function generate(opts) {
         await load();
         const difficulty = Math.min(10, Math.max(1, opts.difficulty || 5));
-        const learned = density();
-        const nps = learned.nps * Math.pow(2, (difficulty - 5) / 3.5);
-        const minGap = Math.max(30, learned.minGap * Math.pow(2, (5 - difficulty) / 4));
+        // Difficulty sets how dense the map is, on a fixed scale: 1 is about 1.5 notes a second, 5 about 5.5 and
+        // 10 about 30 with streams down to ~15ms apart (like Tasukete maps such as RAVE GIRLS or Wall of Death).
+        // What was learned decides the movement.
+        const nps = 1.5 * Math.pow(20, (difficulty - 1) / 9);
+        const minGap = Math.max(12, 450 / nps);
         const found = await onsets(opts.buffer, opts.startMs, opts.endMs);
         const target = Math.round(nps * (opts.density || 1) * (opts.endMs - opts.startMs) / 1000);
 
@@ -343,6 +345,44 @@ window.SSQEAutoMapper = (function () {
             }
         }
         taken.sort((a, b) => a - b);
+
+        // still short (no BPM, or a coarse beat divisor): stream between the hits where the song is busy, evenly spaced
+        if (taken.length < target && taken.length) {
+            const spacing = Math.max(minGap, (opts.endMs - opts.startMs) / target);
+            const points = [opts.startMs, ...taken, opts.endMs];
+            const gaps = [];
+            for (let i = 0; i + 1 < points.length; i++) {
+                const a = points[i], b = points[i + 1];
+                const level = Math.max(found.level(a + (b - a) / 3), found.level((a + b) / 2), found.level(b - (b - a) / 3));
+                if (b - a >= spacing * 1.6 && level > 0.08)
+                    gaps.push({ a, b, level, edgeA: i === 0, edgeB: i + 2 === points.length });
+            }
+            // busiest parts first
+            gaps.sort((x, y) => y.level - x.level);
+            const extra = [];
+            for (const g of gaps) {
+                if (taken.length + extra.length >= target)
+                    break;
+                const count = Math.min(Math.round((g.b - g.a) / spacing) - 1, target - taken.length - extra.length);
+                for (let k = 1; k <= count; k++) {
+                    let ms = Math.round(g.a + (g.b - g.a) * k / (count + 1));
+                    if (opts.snap) {
+                        const snapped = Math.round(opts.snap(ms));
+                        if (Math.abs(snapped - ms) < spacing / 3)
+                            ms = snapped;
+                    }
+                    if ((g.edgeA && ms - g.a < minGap) || (g.edgeB && g.b - ms < minGap))
+                        continue;
+                    if (avoid.every(t => Math.abs(t - ms) >= minGap))
+                        extra.push(ms);
+                }
+            }
+            taken.push(...extra);
+            taken.sort((a, b) => a - b);
+            for (let i = taken.length - 1; i > 0; i--)
+                if (taken[i] - taken[i - 1] < minGap * 0.8)
+                    taken.splice(i, 1);
+        }
 
         // place them
         const random = Math.random;
