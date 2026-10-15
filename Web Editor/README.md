@@ -64,17 +64,17 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
 - **3D Mode** (Graphics tab, web only): notes fly out from the middle of the grid towards their cell,
   like in game, instead of fading in on it. **3D Hit Effect** makes notes keep growing as they fade
   after being hit, and **3D Grid Opacity** sets how see-through the grid is while 3D Mode is on.
-- **Auto mapper** (Patterns tab, web only): every map you import (in the editor or the map player)
-  teaches it how far and where notes move for each time gap, and how dense maps are. **AUTO MAP**
-  fills from the timeline's position up to the next note (or the end of the song): it finds the hits
-  in the song, snaps them to the BPM if there is one, and places notes the way the learned maps do.
-  **Difficulty** (1-10) sets how dense the map is: 1 is about 1.5 notes a second, 5 about 5.5 and 10
-  about 30 with fast streams (like Tasukete maps); between the song's hits it streams where the song is
-  busy. **Density %** scales that further.
-  If the map already has notes, their patterns are followed (they decide most moves), so new parts
-  continue the way you've been mapping.
-  **Notes (0 = Auto)** adds exactly that many notes instead of what the difficulty asks for. It's one undo step.
-  **LEARN FROM MAPS** teaches it from many map files at once.
+- **Auto mapper** (Patterns tab, web only): learns from every map you import (in the editor or the map
+  player) or teach it with **LEARN FROM MAPS**. It keeps the maps themselves and copies whole runs of
+  notes from them (turned or mirrored to fit) whose rhythm matches and that carry on from the last note,
+  so the patterns are ones someone actually mapped; with one map learned it follows that map's design.
+  Notes on the same spot twice and little 2x2 circles are avoided. Timing follows the song's drums (bass
+  and highs, so vocals don't place random notes) on the beat (the map's BPM, or one it works out), with
+  more notes and bigger moves where the song is intense (drops). **AUTO MAP** fills from the timeline's
+  position up to the next note (or the end of the song), as one undo step. **Difficulty** (1-10) sets the
+  average density (1 = ~1.5 notes a second, 5 = ~5.5, 10 = ~30), **Density %** scales it,
+  **Notes (0 = Auto)** asks for an exact number of notes, and **Quantum** lets it place notes off the
+  3x3 grid (copied from quantum maps it learned). The map's own notes are preferred as a pattern source.
 - **Grid Zoom** (Graphics tab, web only): makes the 3x3 grid bigger or smaller (50-200%).
   **Note Size** (25-200%) scales the notes on the grid, custom note meshes included.
 - **Grid cursor image** (Settings > Graphics, web only): replaces the square cursor that follows the

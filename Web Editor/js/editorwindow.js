@@ -96,13 +96,13 @@
             const next = notes.find(n => n.ms > start);
             const end = next ? next.ms : Math.trunc(editor.totalTime);
             const before = notes.filter(n => n.ms <= start).slice(-2).map(n => ({ x: n.x, y: n.y, ms: n.ms }));
-            const hasBpm = map.timingPoints.some(p => p.bpm > 0);
             autoMapping = true;
             editor.toast('AUTO MAPPING...', 'other');
             try {
                 const made = await SSQEAutoMapper.generate({
                     buffer, startMs: start, endMs: end, density: (s.autoMapDensity ?? 100) / 100, difficulty: s.autoMapDifficulty ?? 5,
-                    snap: hasBpm ? ms => { const b = editor.closestBeat(ms); return b >= 0 ? b : ms; } : null,
+                    timing: map.timingPoints.filter(p => p.bpm > 0).map(p => ({ bpm: p.bpm, ms: p.ms })).sort((p, q) => p.ms - q.ms),
+                    quantum: !!s.autoMapQuantum,
                     before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
                     styleNotes: notes.map(n => ({ x: n.x, y: n.y, ms: n.ms })),
                     count: s.autoMapCount || 0,
@@ -163,6 +163,7 @@
                 if (files && files.length)
                     SSQEAutoMapper.learnFiles(files, (text, error) => editor.toast(text, error ? 'error' : 'other'));
             }),
+            checkbox(370, 565, 'Quantum', 27, 'autoMapQuantum'),
             label(370, 480, 175, 30, 'Notes (0 = Auto):', 26, { centerMode: None }),
             numberBox(370, 510, 140, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [0, 100000], get: () => s.autoMapCount ?? 0, set: v => { s.autoMapCount = Math.round(v); saveS(); } }),
             button(370, 430, 175, 40, 'RESET LEARNING', 27, () => {

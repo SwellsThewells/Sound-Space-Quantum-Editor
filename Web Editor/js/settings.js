@@ -79,6 +79,7 @@
         editorBackground: 'Default', // web only, see EDITOR_BACKGROUNDS
         autoMapDensity: 100, // web only: % of the density the auto mapper learned
         autoMapDifficulty: 5, // web only: 1..10
+        autoMapQuantum: false, // web only: the auto mapper may place notes off the 3x3 grid
         autoMapCount: 0, // web only: how many notes the auto mapper adds (0 = as many as the difficulty asks for)
         gridZoom: 100, // web only: size of the 3x3 grid in %
         gridNoteSize: 100, // web only: size of the notes on the grid in %
