@@ -104,6 +104,7 @@
                     buffer, startMs: start, endMs: end, density: (s.autoMapDensity ?? 100) / 100, difficulty: s.autoMapDifficulty ?? 5,
                     snap: hasBpm ? ms => { const b = editor.closestBeat(ms); return b >= 0 ? b : ms; } : null,
                     before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
+                    styleNotes: notes.map(n => ({ x: n.x, y: n.y, ms: n.ms })),
                 });
                 if (!made.length)
                     editor.toast('NOTHING TO MAP HERE', 'other');

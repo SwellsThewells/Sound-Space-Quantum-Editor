@@ -66,6 +66,30 @@ window.SSQEAutoMapper = (function () {
         return (h >>> 0).toString(36);
     }
 
+    // adds the moves between consecutive notes (one per timestamp, sorted) to a transition table
+    // anyGap: also count the moves regardless of the time gap (for a single map, which has few examples per gap)
+    function countMoves(list, trans, gaps, anyGap = false) {
+        let prevMove = null;
+        for (let i = 1; i < list.length; i++) {
+            const a = list[i - 1], b = list[i];
+            const gap = b.ms - a.ms;
+            const move = [q(b.x) - q(a.x), q(b.y) - q(a.y)];
+            const dKey = `${move[0]},${move[1]}`;
+            const keys = contextKeys(gap, prevMove);
+            if (anyGap)
+                keys.push(prevMove ? `a|${dirClass(prevMove[0], prevMove[1])}${magClass(prevMove[0], prevMove[1])}` : 'a|start', 'a');
+            for (const k of keys) {
+                const t = trans[k] || (trans[k] = {});
+                t[dKey] = (t[dKey] || 0) + 1;
+            }
+            if (gaps) {
+                const gk = Math.min(300, Math.round(gap / 10));
+                gaps[gk] = (gaps[gk] || 0) + 1;
+            }
+            prevMove = move;
+        }
+    }
+
     // notes: [{ x, y, ms }] in editor coordinates (0..2). Returns true when the map taught it something new.
     async function learn(notes) {
         await load();
@@ -79,20 +103,7 @@ window.SSQEAutoMapper = (function () {
 
         // one note per timestamp: the auto mapper doesn't make stacks
         const list = notes.filter((n, i) => i === 0 || n.ms !== notes[i - 1].ms);
-        let prevMove = null;
-        for (let i = 1; i < list.length; i++) {
-            const a = list[i - 1], b = list[i];
-            const gap = b.ms - a.ms;
-            const move = [q(b.x) - q(a.x), q(b.y) - q(a.y)];
-            const dKey = `${move[0]},${move[1]}`;
-            for (const k of contextKeys(gap, prevMove)) {
-                const t = model.trans[k] || (model.trans[k] = {});
-                t[dKey] = (t[dKey] || 0) + 1;
-            }
-            const gk = Math.min(300, Math.round(gap / 10));
-            model.gaps[gk] = (model.gaps[gk] || 0) + 1;
-            prevMove = move;
-        }
+        countMoves(list, model.trans, model.gaps);
 
         model.maps++;
         model.notes += list.length;
@@ -153,17 +164,29 @@ window.SSQEAutoMapper = (function () {
     }
 
     // difficulty 1..10 (5 = like the learned maps): above 5 favours bigger jumps, below favours small moves
-    function pickMove(gap, prevMove, pos, random, difficulty = 5) {
+    // local: moves counted from the map being edited; where it has a few examples they mostly decide (3 to 1)
+    function pickMove(gap, prevMove, pos, random, difficulty = 5, local = null) {
         const k = (difficulty - 5) * 0.25;
-        let dist = null;
-        for (const k of contextKeys(gap, prevMove)) {
-            const t = model.trans[k];
-            if (t && Object.values(t).reduce((a, b) => a + b, 0) >= 8) {
-                dist = t;
-                break;
-            }
+        const sum = t => t ? Object.values(t).reduce((a, b) => a + b, 0) : 0;
+        const find = (trans, min, anyGap = false) => {
+            const keys = contextKeys(gap, prevMove);
+            if (anyGap)
+                keys.push(prevMove ? `a|${dirClass(prevMove[0], prevMove[1])}${magClass(prevMove[0], prevMove[1])}` : 'a|start', 'a');
+            for (const key of keys)
+                if (sum(trans[key]) >= min)
+                    return trans[key];
+            return null;
+        };
+        let dist = find(model.trans, 8) || prior(gap);
+        const mine = local && find(local, 4, true);
+        if (mine) {
+            const mixed = {}, total = sum(dist), localTotal = sum(mine);
+            for (const [key, c] of Object.entries(dist))
+                mixed[key] = 0.25 * c / total;
+            for (const [key, c] of Object.entries(mine))
+                mixed[key] = (mixed[key] || 0) + 0.75 * c / localTotal;
+            dist = mixed;
         }
-        dist = dist || prior(gap);
 
         const options = [];
         let total = 0;
@@ -297,7 +320,8 @@ window.SSQEAutoMapper = (function () {
         return out;
     }
 
-    // opts: { buffer (AudioBuffer), startMs, endMs, density (1 = as learned), difficulty (1..10, 5 = as learned),
+    // opts: { buffer (AudioBuffer), startMs, endMs, density (1 = as learned), difficulty (1..10),
+    //         styleNotes (the notes already in the map: their patterns are followed),
     //         snap (ms => ms, optional),
     //         before: the notes just before startMs (to carry on their flow), avoid: times already used }
     async function generate(opts) {
@@ -384,8 +408,15 @@ window.SSQEAutoMapper = (function () {
                     taken.splice(i, 1);
         }
 
-        // place them
+        // place them, in the style of the notes already in the map when there are some
         const random = Math.random;
+        let local = null;
+        const style = (opts.styleNotes || []).filter(n => Number.isFinite(n.x) && Number.isFinite(n.y) && Number.isFinite(n.ms))
+            .sort((a, b) => a.ms - b.ms).filter((n, i, a) => i === 0 || n.ms !== a[i - 1].ms);
+        if (style.length >= 10) {
+            local = {};
+            countMoves(style, local, null, true);
+        }
         const before = (opts.before || []).slice(-2);
         let pos = before.length ? [q(before[before.length - 1].x), q(before[before.length - 1].y)] : [4, 4];
         pos = pos.map(v => Math.min(8, Math.max(0, v)));
@@ -394,7 +425,7 @@ window.SSQEAutoMapper = (function () {
         const notes = [];
         for (const ms of taken) {
             if (lastMs !== null) {
-                const move = pickMove(ms - lastMs, prevMove, pos, random, difficulty);
+                const move = pickMove(ms - lastMs, prevMove, pos, random, difficulty, local);
                 pos = [pos[0] + move[0], pos[1] + move[1]];
                 prevMove = move;
             }

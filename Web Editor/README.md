@@ -70,7 +70,9 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
   in the song, snaps them to the BPM if there is one, and places notes the way the learned maps do.
   **Difficulty** (1-10) sets how dense the map is: 1 is about 1.5 notes a second, 5 about 5.5 and 10
   about 30 with fast streams (like Tasukete maps); between the song's hits it streams where the song is
-  busy. **Density %** scales that further. It's one undo step.
+  busy. **Density %** scales that further.
+  If the map already has notes, their patterns are followed (they decide most moves), so new parts
+  continue the way you've been mapping. It's one undo step.
   **LEARN FROM MAPS** teaches it from many map files at once.
 - **Grid Zoom** (Graphics tab, web only): makes the 3x3 grid bigger or smaller (50-200%).
 - **Grid cursor image** (Settings > Graphics, web only): replaces the square cursor that follows the
