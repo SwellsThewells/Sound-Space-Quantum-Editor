@@ -99,19 +99,32 @@
             autoMapping = true;
             editor.toast('AUTO MAPPING...', 'other');
             try {
+                const timing = map.timingPoints.filter(p => p.bpm > 0).map(p => ({ bpm: p.bpm, ms: p.ms })).sort((p, q) => p.ms - q.ms);
                 const made = await SSQEAutoMapper.generate({
+                    progress: text => editor.toast(text, 'other'),
                     buffer, startMs: start, endMs: end, density: (s.autoMapDensity ?? 100) / 100, difficulty: s.autoMapDifficulty ?? 5,
-                    timing: map.timingPoints.filter(p => p.bpm > 0).map(p => ({ bpm: p.bpm, ms: p.ms })).sort((p, q) => p.ms - q.ms),
+                    timing,
                     quantum: !!s.autoMapQuantum,
                     before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
                     styleNotes: notes.map(n => ({ x: n.x, y: n.y, ms: n.ms })),
                     count: s.autoMapCount || 0,
                 });
+                // no BPM yet and the song keeps a steady beat: the detected BPM becomes the map's timing point, so the
+                // beat lines match what was mapped
+                const info = made.info || {};
+                let bpmText = '';
+                if (!timing.length && info.bpm) {
+                    if (info.steady) {
+                        map.replacePoints('DETECTED BPM', [], [new SSQE.TimingPoint(info.bpm, Math.round(info.offsetMs))]);
+                        bpmText = ` - SET BPM TO ${info.bpm}`;
+                    } else
+                        bpmText = ` - ABOUT ${info.bpm} BPM (NOT STEADY, NOT SET)`;
+                }
                 if (!made.length)
-                    editor.toast('NOTHING TO MAP HERE', 'other');
+                    editor.toast(`NOTHING TO MAP HERE${bpmText}`, 'other');
                 else {
                     map.notes.addObjects('AUTO MAP', made.map(n => new SSQE.Note(n.x, n.y, n.ms)));
-                    editor.toast(`AUTO MAPPED ${made.length} NOTES`, 'other');
+                    editor.toast(`AUTO MAPPED ${made.length} NOTES${bpmText}`, 'other');
                 }
             } catch (err) {
                 app.dialogs.message(`Auto mapping failed: ${err.message}`, 'Error');

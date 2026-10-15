@@ -65,16 +65,20 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
   like in game, instead of fading in on it. **3D Hit Effect** makes notes keep growing as they fade
   after being hit, and **3D Grid Opacity** sets how see-through the grid is while 3D Mode is on.
 - **Auto mapper** (Patterns tab, web only): learns from every map you import (in the editor or the map
-  player) or teach it with **LEARN FROM MAPS**. It keeps the maps themselves and copies whole runs of
-  notes from them (turned or mirrored to fit) whose rhythm matches and that carry on from the last note,
-  so the patterns are ones someone actually mapped; with one map learned it follows that map's design.
-  Notes on the same spot twice and little 2x2 circles are avoided. Timing follows the song's drums (bass
-  and highs, so vocals don't place random notes) on the beat (the map's BPM, or one it works out), with
-  more notes and bigger moves where the song is intense (drops). **AUTO MAP** fills from the timeline's
-  position up to the next note (or the end of the song), as one undo step. **Difficulty** (1-10) sets the
-  average density (1 = ~1.5 notes a second, 5 = ~5.5, 10 = ~30), **Density %** scales it,
-  **Notes (0 = Auto)** asks for an exact number of notes, and **Quantum** lets it place notes off the
-  3x3 grid (copied from quantum maps it learned). The map's own notes are preferred as a pattern source.
+  player) or teach it with **LEARN FROM MAPS**. **AUTO MAP** fills from the timeline's position up to the
+  next note (or the end of the song) as one undo step, taking a few seconds to study the song first:
+  - It splits the song into drums and everything else (vocals, instruments) and only syncs to the drums.
+  - It finds the song's true BPM (trying the related tempos x2, /2, x3/2, /3/2 and keeping the one whose
+    beats land on the kicks and snares) and, if the map has no BPM yet and the beat is steady, sets it as
+    the map's timing point. With timing points already in the map, it uses those.
+  - It splits the song into sections (calm parts, verses, builds, drops) and gives each a steady density
+    and move size, so drops are the hardest part and there are no random spikes.
+  - It copies whole runs of notes from the learned maps (turned or mirrored to fit) whose rhythm matches
+    and that carry on from the last note, avoiding notes on the same spot twice, little 2x2 circles and
+    moves too fast for the difficulty. It maps 5 times and keeps the most balanced result.
+  **Difficulty** (1-10) sets the average density (1 = ~1.5 notes a second, 5 = ~5.5, 10 = ~30) and how
+  far and fast moves can be, **Density %** scales it, **Notes (0 = Auto)** asks for an exact number of
+  notes, and **Quantum** lets it place notes off the 3x3 grid (copied from quantum maps it learned).
 - **Grid Zoom** (Graphics tab, web only): makes the 3x3 grid bigger or smaller (50-200%).
   **Note Size** (25-200%) scales the notes on the grid, custom note meshes included.
 - **Grid cursor image** (Settings > Graphics, web only): replaces the square cursor that follows the
