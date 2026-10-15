@@ -106,19 +106,26 @@
                     timing,
                     quantum: !!s.autoMapQuantum,
                     before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
-                    styleNotes: notes.map(n => ({ x: n.x, y: n.y, ms: n.ms })),
+                    styleNotes: s.autoMapUseMap === false ? [] : notes.map(n => ({ x: n.x, y: n.y, ms: n.ms })),
                     count: s.autoMapCount || 0,
+                    flow: (s.autoMapFlow ?? 70) / 100,
+                    follow: (s.autoMapFollow ?? 75) / 100,
+                    jumpScale: (s.autoMapJump ?? 100) / 100,
+                    patterns: s.autoMapPatterns || 'mixed',
+                    dropBoost: (s.autoMapDrops ?? 100) / 100,
+                    variety: (s.autoMapVariety ?? 50) / 100,
+                    syncTo: s.autoMapSync || 'drums',
                 });
                 // no BPM yet and the song keeps a steady beat: the detected BPM becomes the map's timing point, so the
                 // beat lines match what was mapped
                 const info = made.info || {};
                 let bpmText = '';
                 if (!timing.length && info.bpm) {
-                    if (info.steady) {
+                    if (info.steady && s.autoMapSetBpm !== false) {
                         map.replacePoints('DETECTED BPM', [], [new SSQE.TimingPoint(info.bpm, Math.round(info.offsetMs))]);
                         bpmText = ` - SET BPM TO ${info.bpm}`;
                     } else
-                        bpmText = ` - ABOUT ${info.bpm} BPM (NOT STEADY, NOT SET)`;
+                        bpmText = ` - ABOUT ${info.bpm} BPM${info.steady ? '' : ' (NOT STEADY, NOT SET)'}`;
                 }
                 if (!made.length)
                     editor.toast(`NOTHING TO MAP HERE${bpmText}`, 'other');
@@ -132,6 +139,7 @@
                 autoMapping = false;
             }
         };
+        editor.autoMap = autoMap;
         const AutoMapDifficultyLabel = label(370, 200, 175, 30, '', 30, { centerMode: None });
         AutoMapDifficultyLabel.process = function (dt) {
             G.Label.prototype.process.call(this, dt);
@@ -177,6 +185,7 @@
                     SSQEAutoMapper.learnFiles(files, (text, error) => editor.toast(text, error ? 'error' : 'other'));
             }),
             checkbox(370, 565, 'Quantum', 27, 'autoMapQuantum'),
+            button(370, 610, 175, 40, 'MORE OPTIONS', 27, () => app.dialogs.autoMapOptions(editor)),
             label(370, 480, 175, 30, 'Notes (0 = Auto):', 26, { centerMode: None }),
             numberBox(370, 510, 140, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [0, 100000], get: () => s.autoMapCount ?? 0, set: v => { s.autoMapCount = Math.round(v); saveS(); } }),
             button(370, 430, 175, 40, 'RESET LEARNING', 27, () => {

@@ -672,6 +672,98 @@
             return win;
         }
 
+        // ------------------------------------------------------------ auto mapper options (web only)
+
+        autoMapOptions(editor) {
+            const s = editor.settings;
+            const save = () => editor.settingsChanged();
+            const X = 12, LW = 150, CW = 170, VX = X + LW + CW + 8;
+            const controls = [];
+            let y = 12;
+            const rows = [];
+
+            const slider = (label, key, min, max, step, def, fmt, hint) => {
+                const value = aLabel('', VX, y, 52, 22);
+                const input = at(el('input', { type: 'range', min, max, step, title: hint }), X + LW, y, CW, 22);
+                const show = () => value.textContent = fmt(+input.value);
+                const read = () => {
+                    input.value = s[key] ?? def;
+                    show();
+                };
+                input.addEventListener('input', () => {
+                    s[key] = +input.value;
+                    show();
+                    save();
+                });
+                controls.push(aLabel(label, X, y, LW, 22), input, value);
+                rows.push({ read, reset: () => s[key] = def });
+                y += 30;
+            };
+            const choice = (label, key, options, def, hint) => {
+                const select = at(el('select', { class: 'av-combo', title: hint }, options.map(([v, t]) => el('option', { value: v }, t))), X + LW, y, CW + 60, 22);
+                select.addEventListener('change', () => {
+                    s[key] = select.value;
+                    save();
+                });
+                controls.push(aLabel(label, X, y, LW, 22), select);
+                rows.push({ read: () => select.value = s[key] ?? def, reset: () => s[key] = def });
+                y += 30;
+            };
+            const check = (label, key, def, hint) => {
+                const c = aCheck(label, s[key] ?? def, X, y, LW + CW + 60, 22);
+                c.label.title = hint;
+                c.input.addEventListener('change', () => {
+                    s[key] = c.input.checked;
+                    save();
+                });
+                controls.push(c.label);
+                rows.push({ read: () => c.input.checked = s[key] ?? def, reset: () => s[key] = def });
+                y += 28;
+            };
+            const number = (label, key, min, max, def, hint) => {
+                const box = aBox(X + LW, y, 80, 22, '');
+                box.title = hint;
+                box.addEventListener('change', () => {
+                    const v = Math.min(max, Math.max(min, Math.round(+box.value || 0)));
+                    s[key] = v;
+                    box.value = v;
+                    save();
+                });
+                controls.push(aLabel(label, X, y, LW, 22), box);
+                rows.push({ read: () => box.value = s[key] ?? def, reset: () => s[key] = def });
+                y += 30;
+            };
+            const pct = v => `${v}%`;
+
+            slider('Difficulty', 'autoMapDifficulty', 1, 10, 1, 5, v => `${v}/10`, 'How hard: 1 is about 1.5 notes a second, 5 about 5.5, 10 about 30');
+            slider('Density', 'autoMapDensity', 25, 300, 5, 100, pct, 'More or fewer notes than the difficulty gives');
+            number('Notes to Add (0 = Auto)', 'autoMapCount', 0, 100000, 0, 'An exact number of notes instead of what the difficulty gives');
+            y += 6;
+            slider('Flow', 'autoMapFlow', 0, 100, 5, 70, pct, 'How smooth the cursor\'s path is kept: higher avoids sudden turns and speed changes');
+            slider('Follow Learned Maps', 'autoMapFollow', 0, 100, 5, 75, pct, 'How closely the patterns and their rhythm stick to the maps it learned');
+            slider('Jump Size', 'autoMapJump', 50, 200, 5, 100, pct, 'Bigger or smaller moves than the learned maps make');
+            choice('Patterns', 'autoMapPatterns', [['mixed', 'Like the learned maps'], ['streams', 'More streams (small moves)'], ['jumps', 'More jumps (big moves)']], 'mixed', 'What kind of patterns to favour');
+            slider('Drop Intensity', 'autoMapDrops', 0, 200, 10, 100, pct, 'How much denser and wider the intense parts and drops are than the rest');
+            slider('Variety', 'autoMapVariety', 0, 100, 5, 50, pct, 'Higher avoids repeating the same patterns; lower repeats what works');
+            choice('Sync To', 'autoMapSync', [['drums', 'Drums (not vocals)'], ['melody', 'Drums and melody'], ['all', 'Every sound']], 'drums', 'Which sounds get notes');
+            y += 6;
+            check('Quantum (notes off the 3x3 grid)', 'autoMapQuantum', false, 'Lets it place notes between grid cells, from quantum maps it learned');
+            check('Follow this map\'s own patterns', 'autoMapUseMap', true, 'The notes already in the map are the patterns it prefers');
+            check('Set the detected BPM when the map has none', 'autoMapSetBpm', true, 'Adds the song\'s BPM as a timing point so the beat lines match');
+            y += 8;
+
+            const refresh = () => rows.forEach(r => r.read());
+            controls.push(aButton('Reset to Defaults', () => {
+                rows.forEach(r => r.reset());
+                save();
+                refresh();
+            }, X, y, 170, 30));
+            controls.push(aButton('Auto Map', () => editor.autoMap && editor.autoMap(), X + 180, y, 214, 30));
+            y += 42;
+            refresh();
+            return this.floating('autoMapOptions', 'Auto Mapper Options', 418, y, controls);
+        }
+
         // ------------------------------------------------------------ save as (stands in for the native save dialog)
 
         saveAs(map, canUseFolders) {

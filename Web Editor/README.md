@@ -73,12 +73,20 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
     the map's timing point. With timing points already in the map, it uses those.
   - It splits the song into sections (calm parts, verses, builds, drops) and gives each a steady density
     and move size, so drops are the hardest part and there are no random spikes.
-  - It copies whole runs of notes from the learned maps (turned or mirrored to fit) whose rhythm matches
-    and that carry on from the last note, avoiding notes on the same spot twice, little 2x2 circles and
-    moves too fast for the difficulty. It maps 5 times and keeps the most balanced result.
+  - It copies whole runs of 12-24 notes from the learned maps (turned or mirrored to fit), matched by the
+    shape of their rhythm at any speed, so the maps' main patterns come through even at a lower density.
+    Each join has to carry on the way the maps move (it learns how often they turn by each angle for each
+    move size), and it avoids notes on the same spot twice, little 2x2 circles, repeating the same loop
+    and moves too fast for the difficulty.
+  - It plays each attempt through like a player would (how sharply the cursor has to turn and change speed)
+    and compares that with the learned maps; it maps 8 times and keeps the smoothest, most balanced one.
   **Difficulty** (1-10) sets the average density (1 = ~1.5 notes a second, 5 = ~5.5, 10 = ~30) and how
-  far and fast moves can be, **Density %** scales it, **Notes (0 = Auto)** asks for an exact number of
-  notes, and **Quantum** lets it place notes off the 3x3 grid (copied from quantum maps it learned).
+  fast moves can be, **Density %** scales it, **Notes (0 = Auto)** asks for an exact number of notes, and
+  **Quantum** lets it place notes off the 3x3 grid (copied from quantum maps it learned).
+  **MORE OPTIONS** adds Flow (how smooth the cursor's path is kept), Follow Learned Maps (how closely the
+  patterns stick to the maps), Jump Size, Patterns (like the maps / more streams / more jumps), Drop
+  Intensity, Variety, Sync To (drums / drums and melody / every sound), whether to follow the map's own
+  patterns and whether to set the detected BPM.
 - **Grid Zoom** (Graphics tab, web only): makes the 3x3 grid bigger or smaller (50-200%).
   **Note Size** (25-200%) scales the notes on the grid, custom note meshes included.
 - **Grid cursor image** (Settings > Graphics, web only): replaces the square cursor that follows the

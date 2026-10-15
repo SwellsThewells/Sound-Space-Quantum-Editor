@@ -80,6 +80,15 @@
         autoMapDensity: 100, // web only: % of the density the auto mapper learned
         autoMapDifficulty: 5, // web only: 1..10
         autoMapQuantum: false, // web only: the auto mapper may place notes off the 3x3 grid
+        autoMapFlow: 70, // web only: auto mapper options (dialogs.autoMapOptions)
+        autoMapFollow: 75,
+        autoMapJump: 100,
+        autoMapPatterns: 'mixed',
+        autoMapDrops: 100,
+        autoMapVariety: 50,
+        autoMapSync: 'drums',
+        autoMapUseMap: true,
+        autoMapSetBpm: true,
         autoMapCount: 0, // web only: how many notes the auto mapper adds (0 = as many as the difficulty asks for)
         gridZoom: 100, // web only: size of the 3x3 grid in %
         gridNoteSize: 100, // web only: size of the notes on the grid in %

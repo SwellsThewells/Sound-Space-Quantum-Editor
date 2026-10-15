@@ -264,6 +264,9 @@ window.SSQEAutoMapper = (function () {
         const ring = Array.from({ length: T }, () => new Float32Array(B + 1));
         const tmp = new Float32Array(T);
         let prevLp = new Float32Array(B + 1), lp = new Float32Array(B + 1);
+        let prevLh = new Float32Array(B + 1), lh = new Float32Array(B + 1);
+        let prevLa = new Float32Array(B + 1), la = new Float32Array(B + 1);
+        const melodyRaw = new Float32Array(frames), allRaw = new Float32Array(frames);
         const low = new Float32Array(frames), mid = new Float32Array(frames), high = new Float32Array(frames);
         const rms = new Float32Array(frames), harmonic = new Float32Array(frames);
 
@@ -291,7 +294,7 @@ window.SSQEAutoMapper = (function () {
                 continue;
             const cur = ring[g % T];
             const from = Math.max(0, g - HALF), to = Math.min(frames - 1, g + HALF);
-            let l = 0, m = 0, h = 0, harm = 0;
+            let l = 0, m = 0, h = 0, harm = 0, mel = 0, all = 0;
             for (let k = 1; k <= B; k++) {
                 // harmonic: median over time; percussive: median over frequency
                 let n = 0;
@@ -304,7 +307,13 @@ window.SSQEAutoMapper = (function () {
                 const P = median(tmp, n);
                 const mask = P * P / (P * P + H * H + 1e-12);
                 lp[k] = Math.log1p(100 * cur[k] * mask);
+                lh[k] = Math.log1p(100 * cur[k] * (1 - mask));
+                la[k] = Math.log1p(100 * cur[k]);
                 harm += cur[k] * (1 - mask);
+                if (k >= lowEnd && lh[k] > prevLh[k])
+                    mel += lh[k] - prevLh[k];
+                if (la[k] > prevLa[k])
+                    all += la[k] - prevLa[k];
                 const d = lp[k] - prevLp[k];
                 if (d > 0) {
                     if (k < lowEnd)
@@ -321,7 +330,13 @@ window.SSQEAutoMapper = (function () {
                 high[g] = h;
             }
             harmonic[g] = harm;
+            if (g) {
+                melodyRaw[g] = mel;
+                allRaw[g] = all;
+            }
             [prevLp, lp] = [lp, prevLp];
+            [prevLh, lh] = [lh, prevLh];
+            [prevLa, la] = [la, prevLa];
             if (g % 400 === 399) {
                 progress(`LISTENING TO THE SONG ${Math.round(g / frames * 100)}%`);
                 await new Promise(r => setTimeout(r));
@@ -353,7 +368,11 @@ window.SSQEAutoMapper = (function () {
         await new Promise(r => setTimeout(r));
         const tempo = findTempo(beats, hits, frames);
 
-        const result = { frames, hits, beats, low, rms, harmonic, tempo };
+        // for "sync to": melody onsets (notes of vocals and instruments starting) and everything together
+        const melody = peaky(melodyRaw);
+        const everything = peaky(allRaw);
+
+        const result = { frames, hits, beats, low, rms, harmonic, melody, everything, tempo };
         analyses.set(buffer, result);
         return result;
     }
@@ -680,7 +699,8 @@ window.SSQEAutoMapper = (function () {
         ctx.sections = sections;
 
         // density per section, averaging `nps` over the whole song
-        const shape = s => (0.3 + 1.6 * Math.pow(s.level, 1.5)) * (s.drop ? 1.15 : 1);
+        const boost = opts.dropBoost ?? 1;
+        const shape = s => (0.3 + 1.6 * Math.pow(s.level, 1 + 0.5 * boost)) * (s.drop ? 1 + 0.15 * boost : 1);
         const total = sections.reduce((t, s) => t + shape(s) * (s.to - s.from), 0) || 1;
         const span = sections.reduce((t, s) => t + (s.to - s.from), 0) || 1;
         sections.forEach(s => s.nps = nps * shape(s) * span / total);
@@ -728,7 +748,8 @@ window.SSQEAutoMapper = (function () {
             }
             return out;
         };
-        const strength = ms => around(a.hits, ms / 10, 2);
+        const env = ctx.env || a.hits;
+        const strength = ms => around(env, ms / 10, 2);
 
         // where the drums usually hit in each section (per position in the bar)
         const usual = new Map();
@@ -767,10 +788,10 @@ window.SSQEAutoMapper = (function () {
 
     // No beat to follow (the tempo drifts and the map has no timing points): the drum hits themselves, then even
     // steps between them where it's busy
-    function chooseTimesFree(a, opts, nps) {
+    function chooseTimesFree(a, opts, nps, env = a.hits) {
         const { startMs, endMs } = opts;
         const WINDOW = 2000;
-        const lv = smooth(a.hits, 150);
+        const lv = smooth(env, 150);
         const r = rank(lv);
         const out = [];
         for (let w = startMs; w < endMs; w += WINDOW) {
@@ -783,8 +804,8 @@ window.SSQEAutoMapper = (function () {
             const taken = [];
             const cands = [];
             for (let f = Math.max(1, Math.floor(w / 10)); f < Math.min(a.frames - 1, to / 10); f++)
-                if (a.hits[f] > 0.08 && a.hits[f] >= a.hits[f - 1] && a.hits[f] >= a.hits[f + 1])
-                    cands.push({ ms: f * 10, score: a.hits[f] });
+                if (env[f] > 0.08 && env[f] >= env[f - 1] && env[f] >= env[f + 1])
+                    cands.push({ ms: f * 10, score: env[f] });
             for (const c of cands.sort((p, q) => q.score - p.score)) {
                 if (taken.length >= want)
                     break;
@@ -828,28 +849,43 @@ window.SSQEAutoMapper = (function () {
         const vmax = opts.vmax; // the fastest a single move should make the cursor go (cells per second)
         const candidates = [];
 
+        const flow = opts.flow ?? 0.7, follow = opts.follow ?? 0.75, variety = opts.variety ?? 0.5;
+        const model = opts.flowModel;
+        // how far apart the rhythm may be: a run is matched by the shape of its rhythm (which gaps are short and
+        // which long) at any speed from 0.6x to 5x the original, with a small cost for playing it at another speed
+        const relTol = opts.loose ? 3 : 0.3 + 0.35 * (1 - follow);
         const consider = (e, k, i, ox, oy) => {
             // copy e[i + 1 ...] after e[i], which lands on prev
             const f = SYM[k];
             const len = Math.min(gaps.length, e.n - i - 1, opts.quantum ? Infinity : e.wholeUntil[i + 1] - i - 1);
             if (len < Math.min(3, gaps.length))
                 return;
-            let cost = 0, used_len = 0, dist = 0, time = 0, jacks = 0, spins = 0, spikes = 0;
+            let cost = 0, used_len = 0, dist = 0, jacks = 0, spins = 0, spikes = 0, logSum = 0, rough = 0, roughN = 0;
             const recent = [prev2, prev].filter(Boolean).map(p => [p.x, p.y]);
+            let lastGap = prev && prev2 ? prev.ms - prev2.ms : 0;
             for (let q = 0; q < len; q++) {
                 const gl = e.t[i + q + 1] - e.t[i + q], gg = gaps[q];
-                const c = Math.abs(Math.log((Math.min(gg, 800) + 10) / (Math.min(gl, 800) + 10)));
-                if (c > (opts.loose ? 3 : 0.45) && q > 0)
+                const r = Math.log((Math.min(gg, 1200) + 10) / (Math.min(gl, 1200) + 10));
+                const dev = q ? Math.abs(r - logSum / q) : 0;
+                if (dev > relTol && q > 0)
                     break;
                 const [x, y] = f(e.x[i + q + 1], e.y[i + q + 1]);
                 if (x + ox < bounds[0] - 1e-6 || x + ox > bounds[1] + 1e-6 || y + oy < bounds[0] - 1e-6 || y + oy > bounds[1] + 1e-6)
                     break;
-                cost += c * (q === 0 ? 2 : 1);
+                logSum += r;
+                cost += dev;
                 // notes on the same spot twice and little 2x2 circles are what make auto maps feel wrong
                 const last = recent[recent.length - 1];
                 if (last && Math.abs(last[0] - x - ox) < 1e-3 && Math.abs(last[1] - y - oy) < 1e-3)
                     jacks++;
                 recent.push([x + ox, y + oy]);
+                // how the cursor's velocity changes through here, at the new timing
+                if (recent.length >= 3 && lastGap > 0) {
+                    const [a, b, c] = recent.slice(-3);
+                    rough += velocityChange({ x: a[0], y: a[1], ms: 0 }, { x: b[0], y: b[1], ms: lastGap }, { x: c[0], y: c[1], ms: lastGap + gg });
+                    roughN++;
+                }
+                lastGap = gg;
                 if (recent.length >= 4) {
                     const w = recent.slice(-4);
                     const xs = w.map(v => v[0]), ys = w.map(v => v[1]);
@@ -861,33 +897,55 @@ window.SSQEAutoMapper = (function () {
                 dist += move;
                 if (move > Math.max(1.5, 2.1 * J) || move / Math.max(gg, 1) * 1000 > vmax)
                     spikes++;
-                time += Math.max(gl, 1);
                 used_len++;
             }
             if (used_len < Math.min(opts.loose ? 1 : 3, gaps.length))
                 return;
-            cost /= used_len + 1;
-            cost += 1.2 * jacks / used_len + 0.8 * spins / used_len;
+            // variety: the same shape as was just placed (going round the same loop again and again) gets dull
+            if (opts.history && recent.length >= 6) {
+                let seen = 0, total = 0;
+                for (let j = 6; j <= recent.length; j++) {
+                    total++;
+                    if (opts.history.has(recent.slice(j - 6, j).map(v => v.join(',')).join(' ')))
+                        seen++;
+                }
+                cost += (0.35 + 1.4 * variety) * seen / total;
+            }
+            const scale = logSum / used_len;
+            if (!opts.loose && (scale > Math.log(5) || scale < Math.log(0.6)))
+                return;
+            cost = cost / used_len * 1.5 + 0.12 * Math.abs(scale) * (0.5 + follow);
+            cost += 2.6 * jacks / used_len + 1.8 * spins / used_len;
+            // Flow: no rougher than the learned maps (at 100%, a fair bit smoother)
+            if (model && roughN)
+                cost += 1.4 * flow * Math.max(0, rough / roughN - model.change * (1.2 - 0.45 * flow));
             // steady difficulty: moves about as big as wanted here, without sudden far jumps
-            cost += 1.2 * Math.abs(Math.log((dist / used_len + 0.15) / (J + 0.15))) + 1.5 * spikes / used_len;
-            // carries on in the same way the library did before this point
+            cost += 0.45 * Math.abs(Math.log((dist / used_len + 0.15) / (J + 0.15))) + 1.5 * spikes / used_len;
+            // flow: carries on the way the map it comes from did before this point...
+            const [fx, fy] = f(e.x[i + 1], e.y[i + 1]);
             if (prev2 && i > 0) {
                 const [px, py] = f(e.x[i - 1], e.y[i - 1]);
                 const [cx, cy] = f(e.x[i], e.y[i]);
                 const v1 = [prev.x - prev2.x, prev.y - prev2.y], v2 = [cx - px, cy - py];
                 const l1 = Math.hypot(...v1), l2 = Math.hypot(...v2);
                 if (l1 > 1e-3 && l2 > 1e-3)
-                    cost += 0.25 * (1 - (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * l2)) + 0.08 * Math.abs(Math.log(l1 / l2));
+                    cost += (0.15 + 0.5 * flow) * (1 - (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * l2)) + (0.08 + 0.15 * flow) * Math.abs(Math.log(l1 / l2));
                 else if ((l1 > 1e-3) !== (l2 > 1e-3))
                     cost += 0.3;
+                // ...and the turn it makes here is one the learned maps make often at this move size
+                if (model) {
+                    const v3 = [fx + ox - prev.x, fy + oy - prev.y], l3 = Math.hypot(...v3);
+                    if (l1 > 0.05 && l3 > 0.05)
+                        cost += flow * 0.3 * model.turnCost(v1, v3, l3);
+                }
             }
-            cost += 0.25 * Math.hypot(ox, oy);
+            cost += (0.15 + 0.4 * follow) * Math.hypot(ox, oy);
             const usedBefore = used.get(e);
             if (usedBefore && usedBefore.some(u => Math.abs(u - i) < 24))
-                cost += 0.5;
+                cost += 0.2 + 0.8 * variety;
             cost -= e.bonus || 0;
-            cost -= 0.004 * used_len;
-            candidates.push({ e, k, i, ox, oy, len: used_len, cost, speed: dist / Math.max(time, 1) });
+            cost -= 0.006 * used_len;
+            candidates.push({ e, k, i, ox, oy, len: used_len, cost });
         };
 
         const sample = (list, max) => {
@@ -931,8 +989,8 @@ window.SSQEAutoMapper = (function () {
             return null;
 
         candidates.sort((p, q) => p.cost - q.cost);
-        const top = candidates.slice(0, 6);
-        const weights = top.map(c => Math.exp(-(c.cost - top[0].cost) / 0.06));
+        const top = candidates.slice(0, 3 + Math.round(variety * 7));
+        const weights = top.map(c => Math.exp(-(c.cost - top[0].cost) / (0.03 + 0.08 * variety)));
         let r = Math.random() * weights.reduce((p, q) => p + q, 0);
         for (let j = 0; j < top.length; j++) {
             r -= weights[j];
@@ -940,6 +998,55 @@ window.SSQEAutoMapper = (function () {
                 return top[j];
         }
         return top[0];
+    }
+
+    // How a player's cursor has to change velocity from one move to the next: 0 = straight on at the same speed,
+    // 1 = a full reversal. It doesn't depend on the map's speed, so maps of any density compare.
+    function velocityChange(a, b, c) {
+        const t1 = Math.max(b.ms - a.ms, 1), t2 = Math.max(c.ms - b.ms, 1);
+        const v1 = [(b.x - a.x) / t1, (b.y - a.y) / t1], v2 = [(c.x - b.x) / t2, (c.y - b.y) / t2];
+        const s = Math.hypot(...v1) + Math.hypot(...v2);
+        return s < 1e-9 ? 0 : Math.hypot(v2[0] - v1[0], v2[1] - v1[1]) / s;
+    }
+
+    // What the learned maps are like to play: how often they turn by each angle for each size of move, their usual
+    // move size, and how smoothly the cursor travels through them
+    function flowModel(lib) {
+        const BINS = 12, SIZES = [0.8, 1.6, Infinity];
+        const hist = SIZES.map(() => new Float64Array(BINS).fill(1));
+        const moves = [];
+        let change = 0, changes = 0;
+        for (const e of lib) {
+            const n = Math.min(e.n, 6000);
+            for (let i = 1; i + 1 < n; i++) {
+                const ax = e.x[i] - e.x[i - 1], ay = e.y[i] - e.y[i - 1], bx = e.x[i + 1] - e.x[i], by = e.y[i + 1] - e.y[i];
+                const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+                if (lb > 0.05)
+                    moves.push(lb);
+                if (la > 0.05 && lb > 0.05) {
+                    const ang = Math.acos(Math.max(-1, Math.min(1, (ax * bx + ay * by) / (la * lb))));
+                    hist[SIZES.findIndex(s => lb < s)][Math.min(BINS - 1, Math.floor(ang / Math.PI * BINS))]++;
+                }
+                change += velocityChange({ x: e.x[i - 1], y: e.y[i - 1], ms: e.t[i - 1] }, { x: e.x[i], y: e.y[i], ms: e.t[i] },
+                    { x: e.x[i + 1], y: e.y[i + 1], ms: e.t[i + 1] });
+                changes++;
+            }
+        }
+        const logp = hist.map(h => {
+            const total = h.reduce((p, q) => p + q, 0), max = Math.max(...h);
+            return Array.from(h, v => Math.log(max / v) / Math.log(BINS));
+        });
+        moves.sort((p, q) => p - q);
+        return {
+            // 0 for the turn the maps make most at this move size, towards 1 (or more) for turns they never make
+            turnCost(v1, v2, size) {
+                const l1 = Math.hypot(...v1), l2 = Math.hypot(...v2);
+                const ang = Math.acos(Math.max(-1, Math.min(1, (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * l2))));
+                return logp[SIZES.findIndex(s => size < s)][Math.min(BINS - 1, Math.floor(ang / Math.PI * BINS))];
+            },
+            move: moves.length ? moves[Math.floor(moves.length / 2)] : 1,
+            change: changes ? change / changes : 0.5,
+        };
     }
 
     // Places notes at `times` by copying runs from the library. jumpAt(ms): the average move wanted there.
@@ -951,6 +1058,13 @@ window.SSQEAutoMapper = (function () {
         if (prev && !opts.quantum && (!isWhole(prev.x) || !isWhole(prev.y)))
             prev = { x: Math.min(2, Math.max(0, Math.round(prev.x))), y: Math.min(2, Math.max(0, Math.round(prev.y))), ms: prev.ms };
         const used = new Map();
+        const history = new Set();
+        const remember = () => {
+            history.clear();
+            const tail = out.slice(-64).map(n => `${n.x},${n.y}`);
+            for (let j = 6; j <= tail.length; j++)
+                history.add(tail.slice(j - 6, j).join(' '));
+        };
         let i = 0;
         const copyRun = r => {
             const f = SYM[r.k];
@@ -969,16 +1083,17 @@ window.SSQEAutoMapper = (function () {
         };
 
         while (i < times.length) {
-            // a run of up to 8-16 notes, ending where the rhythm changes a lot (a new phrase)
-            const L = 8 + Math.floor(Math.random() * 9);
+            // a run of up to 12-24 notes (fewer joins, more of the original flow), ending at a long pause
+            const L = 12 + Math.floor(Math.random() * 13);
             const gaps = [];
             for (let q = 0; q < L && i + q < times.length; q++) {
                 const g = times[i + q] - (q === 0 ? (prev ? prev.ms : times[i] - 500) : times[i + q - 1]);
-                if (q > 2 && (g > gaps[q - 1] * 1.9 || g * 1.9 < gaps[q - 1]))
+                if (q > 2 && g > 4 * gaps[q - 1] && g > 600)
                     break;
                 gaps.push(g);
             }
-            const ropts = { quantum: !!opts.quantum, jump: jumpAt(times[i]), vmax: opts.vmax };
+            remember();
+            const ropts = { ...opts.runOptions, quantum: !!opts.quantum, jump: jumpAt(times[i]), vmax: opts.vmax, history };
             // nothing carries on from here: anything that does, then a fresh start
             const run = findRun(lib, gaps, prev, prev2, ropts, used)
                 || findRun(lib, gaps, prev, prev2, { ...ropts, loose: true }, used)
@@ -992,7 +1107,7 @@ window.SSQEAutoMapper = (function () {
 
     // How unbalanced or awkward a generated map is (lower is better): moves drifting away from what's wanted where they
     // are, sudden far jumps, notes on the same spot twice and little 2x2 circles
-    function badness(notes, jumpAt, vmax = Infinity) {
+    function badness(notes, jumpAt, vmax = Infinity, model = null, flow = 0.7) {
         const n = notes.length;
         if (n < 2)
             return 0;
@@ -1019,7 +1134,24 @@ window.SSQEAutoMapper = (function () {
                     spins++;
             }
         }
-        return 3 * drift / n + 4 * spikes / n + 5 * jacks / n + 4 * spins / n;
+        let feel = 0;
+        if (model && n > 3) {
+            // played through like a player would: how much rougher than the learned maps, overall and at its worst
+            const ch = [];
+            for (let i = 1; i + 1 < n; i++)
+                ch.push(velocityChange(notes[i - 1], notes[i], notes[i + 1]));
+            const mean = ch.reduce((p, q) => p + q, 0) / ch.length;
+            let worst = 0;
+            for (let i = 0; i + 16 <= ch.length; i += 4) {
+                let s = 0;
+                for (let k = i; k < i + 16; k++)
+                    s += ch[k];
+                worst = Math.max(worst, s / 16);
+            }
+            const target = model.change * (1.2 - 0.45 * flow);
+            feel = 4 * Math.max(0, mean - target) + 2 * Math.max(0, worst - target * 1.4);
+        }
+        return 3 * drift / n + 4 * spikes / n + 8 * jacks / n + 6 * spins / n + flow * feel;
     }
 
     // swing for a given beat (period/phase in frames): are the hits between beats on thirds rather than quarters?
@@ -1032,9 +1164,12 @@ window.SSQEAutoMapper = (function () {
         return thirds > quarters * 1.25;
     }
 
-    const TRIES = 5;
+    const TRIES = 8;
 
     // opts: { buffer (AudioBuffer), startMs, endMs, difficulty (1..10), density (1 = normal), count (0 = by difficulty),
+    //         flow (0..1: how smooth to keep the cursor's path), follow (0..1: how closely to stick to the learned maps),
+    //         jumpScale (1 = like the maps), patterns ('mixed' | 'streams' | 'jumps'), dropBoost (0..2: how much harder
+    //         intense parts and drops are), variety (0..1), syncTo ('drums' | 'melody' | 'all'),
     //         quantum (allow notes off the 3x3 grid), timing ([{ bpm, ms }] from the map, if it has any),
     //         before (the notes just before startMs), styleNotes (the map's own notes: their patterns are preferred),
     //         avoid (times already taken), progress (text => void) }
@@ -1051,6 +1186,10 @@ window.SSQEAutoMapper = (function () {
         progress('STUDYING THE SECTIONS AND DROPS');
         await tick();
         const ctx = {};
+        // what notes sync to: the drums (default), drums and melody, or every sound
+        const sync = opts.syncTo || 'drums';
+        ctx.env = sync === 'all' ? a.everything
+            : sync === 'melody' ? Float32Array.from(a.hits, (v, i) => Math.max(v, 0.8 * a.melody[i])) : a.hits;
         let detected = null;
         if (opts.timing && opts.timing.length) {
             ctx.timing = opts.timing;
@@ -1061,19 +1200,9 @@ window.SSQEAutoMapper = (function () {
             ctx.triplet = a.tempo.triplet;
             ctx.shifts = a.tempo.steady ? null : a.tempo.shifts;
         }
-        const times = ctx.timing ? chooseTimes(a, opts, nps, ctx) : chooseTimesFree(a, opts, nps);
+        const times = ctx.timing ? chooseTimes(a, opts, nps, ctx) : chooseTimesFree(a, opts, nps, ctx.env);
         if (!times.length)
             return Object.assign([], { info: { bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady) } });
-
-        // how big the moves should be: bigger with difficulty, and in intense sections and drops
-        const sections = ctx.sections || [];
-        const base = 0.85 + 0.07 * difficulty;
-        const free = rank(smooth(a.hits, 150));
-        const jumpAt = ms => {
-            const s = sections.find(x => ms >= x.from && ms < x.to);
-            const level = s ? s.level : free[Math.min(a.frames - 1, Math.max(0, Math.round(ms / 10)))] || 0.5;
-            return base * (0.8 + 0.4 * level + (s && s.drop ? 0.1 : 0));
-        };
 
         // what to copy from: the learned maps, the map being made (preferred), or built-in patterns
         const entries = model.maps.slice();
@@ -1086,6 +1215,21 @@ window.SSQEAutoMapper = (function () {
         let lib = prepare(entries, !!opts.quantum);
         if (!lib.length)
             lib = prepare([defaultEntry()], !!opts.quantum);
+        const fm = flowModel(lib);
+
+        // how big the moves should be: like the learned maps (Jump Size and Patterns adjust it), a little bigger in
+        // intense sections and drops
+        const sections = ctx.sections || [];
+        const styleScale = { streams: 0.72, jumps: 1.4 }[opts.patterns] || 1;
+        const base = fm.move * (opts.jumpScale || 1) * styleScale;
+        const boost = opts.dropBoost ?? 1;
+        const free = rank(smooth(a.hits, 150));
+        const jumpAt = ms => {
+            const s = sections.find(x => ms >= x.from && ms < x.to);
+            const level = s ? s.level : free[Math.min(a.frames - 1, Math.max(0, Math.round(ms / 10)))] || 0.5;
+            return base * (0.92 + 0.16 * level * (0.5 + 0.5 * boost) + (s && s.drop ? 0.06 * boost : 0));
+        };
+        const runOptions = { flow: opts.flow ?? 0.7, follow: opts.follow ?? 0.75, variety: opts.variety ?? 0.5, flowModel: fm };
 
         // how fast one move may make the cursor go: comfortable for the difficulty (about 12 cells a second at 5)
         const vmax = 4 * Math.pow(1.33, difficulty - 1);
@@ -1095,8 +1239,8 @@ window.SSQEAutoMapper = (function () {
         for (let t = 0; t < TRIES; t++) {
             progress(`MAPPING (TRY ${t + 1} OF ${TRIES})`);
             await tick();
-            const notes = place(times, lib, { ...opts, vmax }, jumpAt);
-            const score = badness(notes, jumpAt, vmax);
+            const notes = place(times, lib, { ...opts, vmax, runOptions }, jumpAt);
+            const score = badness(notes, jumpAt, vmax, fm, runOptions.flow);
             if (!best || score < best.score)
                 best = { notes, score };
         }
