@@ -1249,7 +1249,8 @@
             const s = this.settings;
             const map = this.map;
             const cell = this.cellSize;
-            const noteSize = cell * 0.75, previewSize = cell * 0.65;
+            // web only: Note Size (Graphics tab) scales the notes (and custom meshes) on the grid
+            const noteSize = cell * 0.75 * clamp((s.gridNoteSize ?? 100) / 100, 0.25, 2), previewSize = cell * 0.65;
             const noteGap = (cell - noteSize) / 2, previewGap = (cell - previewSize) / 2;
             const t = this.currentTime;
             const ar = (s.approachRate + 1) / 10;

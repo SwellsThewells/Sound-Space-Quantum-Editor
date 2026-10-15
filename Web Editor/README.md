@@ -76,6 +76,7 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
   **Notes (0 = Auto)** adds exactly that many notes instead of what the difficulty asks for. It's one undo step.
   **LEARN FROM MAPS** teaches it from many map files at once.
 - **Grid Zoom** (Graphics tab, web only): makes the 3x3 grid bigger or smaller (50-200%).
+  **Note Size** (25-200%) scales the notes on the grid, custom note meshes included.
 - **Grid cursor image** (Settings > Graphics, web only): replaces the square cursor that follows the
   notes on the grid (Autoplay in the Graphics tab) with any image or animated GIF, at any size.
 - **Editor background** (Settings > Colors, web only): pick the default background, your own image

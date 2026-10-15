@@ -81,6 +81,7 @@
         autoMapDifficulty: 5, // web only: 1..10
         autoMapCount: 0, // web only: how many notes the auto mapper adds (0 = as many as the difficulty asks for)
         gridZoom: 100, // web only: size of the 3x3 grid in %
+        gridNoteSize: 100, // web only: size of the notes on the grid in %
         cursorScale: 100, // web only: size of the custom grid cursor image (customassets.js), in %
         gridOpacity: 255,
         trackOpacity: 255,

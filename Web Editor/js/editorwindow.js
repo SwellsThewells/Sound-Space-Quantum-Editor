@@ -229,6 +229,7 @@
         const ApproachRateLabel = label(245, 260, 250, 32, '', 28);
         const Grid3DLabel = label(0, 100, 230, 32, '', 26);
         const GridZoomLabel = label(0, 180, 230, 32, '', 26);
+        const NoteSizeLabel = label(0, 260, 230, 32, '', 26);
         const CursorPosLabel = label(245, 340, 250, 32, '', 28);
         const GraphicsNav = new G.Container(1365, 222, 545, 756, [
             checkbox(245, 10, 'Autoplay', 26, 'autoplay'),
@@ -253,6 +254,11 @@
                 editor.resize();
                 saveS();
             }, 150, 5, 50),
+            NoteSizeLabel,
+            slider(0, 290, 230, 32, () => (s.gridNoteSize ?? 100) - 25, v => {
+                s.gridNoteSize = Math.round(v / 5) * 5 + 25;
+                saveS();
+            }, 175, 5, 75),
         ]);
 
         // ------------------------------------------------ Export
@@ -483,6 +489,7 @@
             CursorPosLabel.text = `Cursor Position: ${Math.abs(Math.round(s.cursorPos))}%`;
             Grid3DLabel.text = `3D Grid Opacity: ${Math.round(s.grid3DOpacity / 255 * 100)}%`;
             GridZoomLabel.text = `Grid Zoom: ${s.gridZoom ?? 100}%`;
+            NoteSizeLabel.text = `Note Size: ${s.gridNoteSize ?? 100}%`;
             TempoLabel.text = `PLAYBACK SPEED - ${Math.round(map.tempo * 100)}%`;
             MusicVolumeValueLabel.text = String(Math.abs(Math.round(s.masterVolume * 100)));
             SfxVolumeValueLabel.text = String(Math.abs(Math.round(s.sfxVolume * 100)));
