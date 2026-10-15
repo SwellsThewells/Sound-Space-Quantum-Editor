@@ -525,13 +525,17 @@
     // SSPM.Write - meta: { songId, mapName, mappers, difficulty, customDifficulty }, audio/cover: Uint8Array
     function writeSspm(map, meta, audio, cover) {
         map.notes.sort();
-        const notes = map.notes.items;
+        const exportOffset = Math.trunc(map.props.exportOffset) || 0;
+        // web only: whole, non-negative times (a negative export offset would otherwise wrap around to ~49 days),
+        // and no notes with broken positions
+        const msOf = note => Math.max(0, Math.round(note.ms + exportOffset));
+        const notes = map.notes.items.filter(n => Number.isFinite(n.x) && Number.isFinite(n.y) && Number.isFinite(n.ms));
         const w = new Writer();
 
         w.push(new Uint8Array([0x53, 0x53, 0x2b, 0x6d, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00]));
 
         w.zeros(20); // hash
-        w.u32(notes.length ? notes[notes.length - 1].ms : 0);
+        w.u32(notes.length ? msOf(notes[notes.length - 1]) : 0);
         w.u32(notes.length);
         w.u32(notes.length);
 
@@ -582,10 +586,9 @@
         const defLength = w.length - defOffset;
 
         const markerOffset = w.length;
-        const exportOffset = Math.trunc(map.props.exportOffset);
 
         for (const note of notes) {
-            w.u32(note.ms + exportOffset);
+            w.u32(msOf(note));
             w.u8(0x00);
 
             let quantum = Math.round(note.x) !== SSQE.round2(note.x) || Math.round(note.y) !== SSQE.round2(note.y);
@@ -596,8 +599,10 @@
                 w.f32(2 - note.x);
                 w.f32(2 - note.y);
             } else {
-                w.u8(Math.trunc(2 - note.x));
-                w.u8(Math.trunc(2 - note.y));
+                // rounded rather than cut off like the desktop editor does: a note at 1.001 (left by rotating or
+                // scaling) would otherwise land on 2 - 0.999 -> 0, a whole cell away
+                w.u8(Math.round(2 - note.x));
+                w.u8(Math.round(2 - note.y));
             }
         }
         const markerLength = w.length - markerOffset;

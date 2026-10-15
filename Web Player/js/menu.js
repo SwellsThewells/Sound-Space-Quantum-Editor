@@ -745,6 +745,14 @@
                                 learnFromFiles(files, (text, error) => toast.show(text, error ? [255, 80, 80] : settings.color1));
                         }),
                         label(x, y + 85, 700, 40, 'Pick any number of .sspre replays, plus their maps (.sspm, .rhm, .txt)\nunless the map is already loaded. You can also drop them on the menu.', 22));
+                else if (item.type === 'mapperLearn')
+                    controls.push(
+                        label(x, y, 700, 26, `${title}:`, 30),
+                        button(x, y + 30, 360, 50, 'UPLOAD MAPS', 30, async () => {
+                            const files = await pickFile('.sspm,.rhm,.txt,.osu', true);
+                            if (files && files.length && window.SSQEAutoMapper)
+                                SSQEAutoMapper.learnFiles(files, (text, error) => toast.show(text, error ? [255, 80, 80] : settings.color1));
+                        }));
                 else if (item.type === 'botInfo' || item.type === 'mapperInfo') {
                     const bot = item.type === 'botInfo';
                     const lib = () => bot ? window.SSQEBot : window.SSQEAutoMapper;

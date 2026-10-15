@@ -91,6 +91,7 @@ window.SSQESettings = (function () {
             { key: 'botLearn', label: 'Learn from replays', type: 'botLearn' },
             { key: 'botLearning', label: 'Bot learning', type: 'botInfo' },
             { key: 'mapperLearning', label: 'Auto mapper learning', type: 'mapperInfo' },
+            { key: 'mapperLearn', label: 'Teach the auto mapper', type: 'mapperLearn' },
         ]],
         ['Colours', [
             { key: 'color1', label: 'Primary (grid, accuracy, combo)', type: 'color' },

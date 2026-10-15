@@ -436,6 +436,17 @@
                 app.dialogs.message(`The image couldn't be saved: ${err.message}`, 'Error');
             }
         };
+        const loadCursor = async () => {
+            const file = await app.pickFile('image/*,.gif,.png,.webp,.apng,.svg,.cur');
+            if (!file)
+                return;
+            try {
+                await SSQECustom.setCursor(file);
+                app.updateCursor();
+            } catch (err) {
+                app.dialogs.message(`The cursor couldn't be saved: ${err.message}`, 'Error');
+            }
+        };
         const loadNoteMesh = async () => {
             const file = await app.pickFile('.obj');
             if (!file)
@@ -575,9 +586,16 @@
             num(700, 485, 200, 50, 'gridSquircleRadius', { increment: 0.025, isPositive: true, isFloat: true, textSize: 30, bounds: [0, 0.5], style: G.Styles.Textbox_Uncolored }),
             lbl(700, 455, 200, 26, 'Grid Squircle Corner Radius:'),
             new G.Square(955, 395, 40, 40, { color: [255, 255, 255], outline: true, stretch: 'None', cornerRadius: s.gridSquircleRadius }),
+            // web only: custom mouse cursor (images and animated GIFs)
+            dynamicLbl(0, 580, 680, 26, () => `Editor Cursor: ${(window.SSQECustom && SSQECustom.state.cursorName) || 'Default'}`, 30),
+            btn(0, 610, 220, 50, 'LOAD CURSOR', 30, loadCursor),
+            btn(230, 610, 150, 50, 'RESET', 30, () => SSQECustom.setCursor(null).then(() => app.updateCursor()).catch(() => { })),
+            lbl(700, 580, 200, 26, 'Cursor Size (px):'),
+            num(700, 610, 200, 50, 'cursorSize', { increment: 4, isPositive: true, textSize: 30, bounds: [8, 256], style: G.Styles.Textbox_Uncolored }),
+            chk(930, 612, 'Centered', 'cursorCentered'),
         ]);
         const fpsLabel = GraphicsNav.controls[7];
-        const squirclePreview = GraphicsNav.controls[GraphicsNav.controls.length - 1];
+        const squirclePreview = GraphicsNav.controls.find(c => c instanceof G.Square && c.outline);
 
         const MappingNav = new G.Container(320, 0, 1220, 700, [
             chk(0, 0, 'Enable Autosave', 'enableAutosave'),

@@ -152,7 +152,9 @@ window.SSQEAutoMapper = (function () {
         return out;
     }
 
-    function pickMove(gap, prevMove, pos, random) {
+    // difficulty 1..10 (5 = like the learned maps): above 5 favours bigger jumps, below favours small moves
+    function pickMove(gap, prevMove, pos, random, difficulty = 5) {
+        const k = (difficulty - 5) * 0.7;
         let dist = null;
         for (const k of contextKeys(gap, prevMove)) {
             const t = model.trans[k];
@@ -170,8 +172,9 @@ window.SSQEAutoMapper = (function () {
             const x = pos[0] + dx, y = pos[1] + dy;
             if (x < 0 || y < 0 || x > 8 || y > 8)
                 continue;
-            options.push([dx, dy, weight]);
-            total += weight;
+            const w = weight * Math.pow(1 + Math.hypot(dx, dy) * STEP, k);
+            options.push([dx, dy, w]);
+            total += w;
         }
         if (!options.length)
             return [4 - pos[0], 4 - pos[1]];
@@ -294,11 +297,15 @@ window.SSQEAutoMapper = (function () {
         return out;
     }
 
-    // opts: { buffer (AudioBuffer), startMs, endMs, density (1 = as learned), snap (ms => ms, optional),
+    // opts: { buffer (AudioBuffer), startMs, endMs, density (1 = as learned), difficulty (1..10, 5 = as learned),
+    //         snap (ms => ms, optional),
     //         before: the notes just before startMs (to carry on their flow), avoid: times already used }
     async function generate(opts) {
         await load();
-        const { nps, minGap } = density();
+        const difficulty = Math.min(10, Math.max(1, opts.difficulty || 5));
+        const learned = density();
+        const nps = learned.nps * Math.pow(2, (difficulty - 5) / 3.5);
+        const minGap = Math.max(30, learned.minGap * Math.pow(2, (5 - difficulty) / 4));
         const found = await onsets(opts.buffer, opts.startMs, opts.endMs);
         const target = Math.round(nps * (opts.density || 1) * (opts.endMs - opts.startMs) / 1000);
 
@@ -347,7 +354,7 @@ window.SSQEAutoMapper = (function () {
         const notes = [];
         for (const ms of taken) {
             if (lastMs !== null) {
-                const move = pickMove(ms - lastMs, prevMove, pos, random);
+                const move = pickMove(ms - lastMs, prevMove, pos, random, difficulty);
                 pos = [pos[0] + move[0], pos[1] + move[1]];
                 prevMove = move;
             }
@@ -357,6 +364,51 @@ window.SSQEAutoMapper = (function () {
         return notes;
     }
 
+    // Bulk learning: reads every map file (.sspm, .rhm, .txt, .osu) and learns from it.
+    // report(text, isError) shows progress. Resolves to { learned, known, failed }.
+    async function learnFiles(files, report = () => { }) {
+        const maps = files.filter(f => /\.(sspm|rhm|txt|osu)$/i.test(f.name));
+        if (!maps.length) {
+            report('PICK .SSPM, .RHM, .TXT OR .OSU MAPS', true);
+            return { learned: 0, known: 0, failed: 0 };
+        }
+        let learned = 0, known = 0, failed = 0;
+        for (let i = 0; i < maps.length; i++) {
+            const f = maps[i];
+            report(`LEARNING FROM MAP ${i + 1} OF ${maps.length}...`);
+            await new Promise(r => setTimeout(r, 20));
+            try {
+                const map = new SSQE.Map();
+                const name = f.name.toLowerCase();
+                if (name.endsWith('.sspm'))
+                    SSQE.Formats.readSspm(map, await f.arrayBuffer());
+                else if (name.endsWith('.rhm'))
+                    await SSQE.Formats.readRhm(map, await f.arrayBuffer(), f.name);
+                else if (name.endsWith('.osu'))
+                    SSQE.Formats.readOsu(map, await f.text());
+                else
+                    SSQE.Formats.readTxt(map, await f.text());
+                const notes = map.notes.items.map(n => ({ x: n.x, y: n.y, ms: n.ms }));
+                if (notes.length < 20)
+                    failed++;
+                else if (await learn(notes))
+                    learned++;
+                else
+                    known++;
+            } catch (err) {
+                console.warn(`Couldn't learn from ${f.name}`, err);
+                failed++;
+            }
+        }
+        const parts = [`LEARNED FROM ${learned} OF ${maps.length} MAPS`];
+        if (known)
+            parts.push(`${known} ALREADY LEARNED`);
+        if (failed)
+            parts.push(`${failed} UNREADABLE OR TOO SHORT`);
+        report(parts.join(' - '), !learned && failed > 0);
+        return { learned, known, failed };
+    }
+
     load();
-    return { learn, stats, statsSync, reset, generate, onsets };
+    return { learn, learnFiles, stats, statsSync, reset, generate, onsets };
 })();

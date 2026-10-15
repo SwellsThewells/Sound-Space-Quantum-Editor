@@ -79,6 +79,8 @@ window.SSQECustom = (function () {
         imageName: '',
         noteMesh: null,     // Float32Array of triangle positions
         noteMeshName: '',
+        cursorUrl: null,    // object URL of the custom editor cursor (any image, animated GIFs included)
+        cursorName: '',
     };
 
     async function loadImage() {
@@ -100,7 +102,23 @@ window.SSQECustom = (function () {
             } catch { /* a broken save is ignored */ }
     }
 
-    const ready = Promise.all([loadImage(), loadMesh()]).catch(() => { });
+    async function loadCursor() {
+        const rec = await get('editorCursor');
+        if (state.cursorUrl)
+            URL.revokeObjectURL(state.cursorUrl);
+        state.cursorUrl = rec && rec.blob ? URL.createObjectURL(rec.blob) : null;
+        state.cursorName = rec ? rec.name : '';
+    }
+
+    async function setCursor(file) {
+        if (file)
+            await put('editorCursor', { name: file.name, blob: file });
+        else
+            await remove('editorCursor');
+        await loadCursor();
+    }
+
+    const ready = Promise.all([loadImage(), loadMesh(), loadCursor()]).catch(() => { });
 
     async function setImage(file) {
         if (file)
@@ -122,5 +140,5 @@ window.SSQECustom = (function () {
     }
 
     // learned data (auto mapper, bot) is stored next to the files
-    return { ready, state, parseObj, setImage, setNoteMesh, get, put, remove };
+    return { ready, state, parseObj, setImage, setNoteMesh, setCursor, get, put, remove };
 })();

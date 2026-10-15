@@ -101,7 +101,7 @@
             editor.toast('AUTO MAPPING...', 'other');
             try {
                 const made = await SSQEAutoMapper.generate({
-                    buffer, startMs: start, endMs: end, density: (s.autoMapDensity ?? 100) / 100,
+                    buffer, startMs: start, endMs: end, density: (s.autoMapDensity ?? 100) / 100, difficulty: s.autoMapDifficulty ?? 5,
                     snap: hasBpm ? ms => { const b = editor.closestBeat(ms); return b >= 0 ? b : ms; } : null,
                     before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
                 });
@@ -117,7 +117,12 @@
                 autoMapping = false;
             }
         };
-        const AutoMapStats = label(370, 200, 175, 120, '', 24, { centerMode: None });
+        const AutoMapDifficultyLabel = label(370, 200, 175, 30, '', 30, { centerMode: None });
+        AutoMapDifficultyLabel.process = function (dt) {
+            G.Label.prototype.process.call(this, dt);
+            this.text = `Difficulty: ${s.autoMapDifficulty ?? 5}/10`;
+        };
+        const AutoMapStats = label(370, 280, 175, 90, '', 24, { centerMode: None });
         AutoMapStats.process = function (dt) {
             G.Label.prototype.process.call(this, dt);
             const st = window.SSQEAutoMapper && SSQEAutoMapper.statsSync();
@@ -148,8 +153,15 @@
             button(370, 50, 175, 40, 'AUTO MAP', 27, () => autoMap()),
             label(370, 110, 175, 30, 'Density %:', 30, { centerMode: None }),
             numberBox(370, 140, 120, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [10, 400], get: () => s.autoMapDensity ?? 100, set: v => { s.autoMapDensity = v; saveS(); } }),
+            AutoMapDifficultyLabel,
+            slider(370, 230, 175, 32, () => (s.autoMapDifficulty ?? 5) - 1, v => { s.autoMapDifficulty = Math.round(v) + 1; saveS(); }, 9, 1, 4),
             AutoMapStats,
-            button(370, 330, 175, 40, 'RESET LEARNING', 27, () => {
+            button(370, 380, 175, 40, 'LEARN FROM MAPS', 27, async () => {
+                const files = await app.pickFile('.sspm,.rhm,.txt,.osu', true);
+                if (files && files.length)
+                    SSQEAutoMapper.learnFiles(files, (text, error) => editor.toast(text, error ? 'error' : 'other'));
+            }),
+            button(370, 430, 175, 40, 'RESET LEARNING', 27, () => {
                 app.dialogs.confirm('Forget everything the auto mapper has learned?').then(r => r === 'yes' && SSQEAutoMapper.reset());
             }),
         ]);
@@ -212,6 +224,7 @@
         // ------------------------------------------------ Graphics
         const ApproachRateLabel = label(245, 260, 250, 32, '', 28);
         const Grid3DLabel = label(0, 100, 230, 32, '', 26);
+        const GridZoomLabel = label(0, 180, 230, 32, '', 26);
         const CursorPosLabel = label(245, 340, 250, 32, '', 28);
         const GraphicsNav = new G.Container(1365, 222, 545, 756, [
             checkbox(245, 10, 'Autoplay', 26, 'autoplay'),
@@ -228,6 +241,14 @@
             checkbox(0, 50, '3D Hit Effect', 26, 'mode3DHitEffect'),
             Grid3DLabel,
             slider(0, 130, 230, 32, () => s.grid3DOpacity, v => { s.grid3DOpacity = Math.round(v); saveS(); }, 255, 1, 80),
+            // web only: grid size
+            GridZoomLabel,
+            slider(0, 210, 230, 32, () => (s.gridZoom ?? 100) - 50, v => {
+                s.gridZoom = Math.round(v / 5) * 5 + 50;
+                layoutGrid();
+                editor.resize();
+                saveS();
+            }, 150, 5, 50),
         ]);
 
         // ------------------------------------------------ Export
@@ -387,9 +408,28 @@
         const NotesLabel = label(0, 1048, 1344, 32, '', 30);
 
         const Grid = new SSQE.GridControl(810, 390, 300, 300, { stretch: 'None', editor });
+        // web only: Grid Zoom scales the grid around the middle of the screen; the buttons above and below it follow
+        function layoutGrid() {
+            const size = 300 * clamp((s.gridZoom ?? 100) / 100, 0.5, 2);
+            const top = 540 - size / 2, bottom = 540 + size / 2;
+            Grid.origin = { x: 960 - size / 2, y: top, w: size, h: size };
+            if (top - 117 >= 175) {
+                CopyButton.origin.y = top - 117;
+                BackButton.origin.y = bottom + 84;
+                ClickModeLabel.origin.y = bottom + 126;
+            } else {
+                // too big to fit Copy Map Data above without covering the timeline's labels: stack both buttons below
+                CopyButton.origin.y = bottom + 16;
+                BackButton.origin.y = bottom + 64;
+                ClickModeLabel.origin.y = bottom + 108;
+            }
+        }
+        layoutGrid();
         const Track = new SSQE.TrackControl(0, 0, 1920, 86, { editor });
         const Background = new G.Square(0, 0, 1920, 1080, {
             image: () => SSQE.Settings.editorBackgroundImage(s), cover: () => (s.editorBackground || 'Default') !== 'Default',
+            // the default picture is drawn around the grid, so it grows with Grid Zoom
+            imageZoom: () => (s.editorBackground || 'Default') === 'Default' ? clamp((s.gridZoom ?? 100) / 100, 0.5, 2) : 1,
             color: () => [30, 30, 30, s.editorBGOpacity],
         });
 
@@ -438,6 +478,7 @@
             PlayerApproachRateLabel.text = `Player Approach Rate: ${Math.round(ps.playerApproachRate + 1)}`;
             CursorPosLabel.text = `Cursor Position: ${Math.abs(Math.round(s.cursorPos))}%`;
             Grid3DLabel.text = `3D Grid Opacity: ${Math.round(s.grid3DOpacity / 255 * 100)}%`;
+            GridZoomLabel.text = `Grid Zoom: ${s.gridZoom ?? 100}%`;
             TempoLabel.text = `PLAYBACK SPEED - ${Math.round(map.tempo * 100)}%`;
             MusicVolumeValueLabel.text = String(Math.abs(Math.round(s.masterVolume * 100)));
             SfxVolumeValueLabel.text = String(Math.abs(Math.round(s.sfxVolume * 100)));

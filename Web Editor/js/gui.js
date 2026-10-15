@@ -540,8 +540,17 @@
                 const img = texture(image);
                 if (img.complete && img.naturalWidth) {
                     ctx.globalAlpha = (color[3] ?? 255) / 255;
-                    const r = this.rect;
+                    let r = this.rect;
                     const cover = typeof this.cover === 'function' ? this.cover() : this.cover;
+                    // web only: zoom the picture around its middle (it follows the editor's Grid Zoom)
+                    const zoom = typeof this.imageZoom === 'function' ? this.imageZoom() : this.imageZoom || 1;
+                    if (zoom !== 1) {
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.rect(r.x, r.y, r.w, r.h);
+                        ctx.clip();
+                        r = { x: r.x + r.w * (1 - zoom) / 2, y: r.y + r.h * (1 - zoom) / 2, w: r.w * zoom, h: r.h * zoom };
+                    }
                     if (cover) {
                         // web only: fill the square without stretching the picture
                         const scale = Math.max(r.w / img.naturalWidth, r.h / img.naturalHeight);
@@ -549,6 +558,8 @@
                         ctx.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, r.x, r.y, r.w, r.h);
                     } else
                         ctx.drawImage(img, r.x, r.y, r.w, r.h);
+                    if (zoom !== 1)
+                        ctx.restore();
                     ctx.globalAlpha = 1;
                 }
             }

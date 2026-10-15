@@ -78,6 +78,10 @@
         editorBGOpacity: 255,
         editorBackground: 'Default', // web only, see EDITOR_BACKGROUNDS
         autoMapDensity: 100, // web only: % of the density the auto mapper learned
+        autoMapDifficulty: 5, // web only: 1..10, 5 = like the learned maps
+        gridZoom: 100, // web only: size of the 3x3 grid in %
+        cursorSize: 32, // web only: custom editor cursor (customassets.js)
+        cursorCentered: false,
         gridOpacity: 255,
         trackOpacity: 255,
         sfxOffset: 0,

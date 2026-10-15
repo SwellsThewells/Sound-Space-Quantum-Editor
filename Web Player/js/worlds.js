@@ -447,56 +447,25 @@ void main() {
             }
             this.gridMesh = this.mesh(lines);
             this.planeMesh = this.mesh(flatQuad(-105, -112, 105, 112));
-            this.cubeMesh = this.mesh(box(1.088, 0.692, 1.489));
-            this.gridColor = [1, 1, 1];
             this.gridZ = -26;
-            this.particles = [];
-            this.random = rng(9);
-
-            this.onHit = () => {
-                // cube.tscn: a cube appears somewhere in the emission area, away from the middle, and fades out
-                const r = this.random;
-                const x = (r() * 2 - 1) * 42.26;
-                if (x >= -5 && x <= 5)
-                    return;
-                this.particles.push({
-                    x, y: -5, z: -47.61 + (r() * 2 - 1) * 17.77,
-                    angle: r() * Math.PI * 2, spin: 1.5 * (0.25 + r() * 1.5) * (r() < 0.5 ? -1 : 1),
-                    scale: 2 * (0.5 + r() * 0.5), speed: 1 + r(), age: 0, color: this.color.slice(),
-                });
-            };
+            // web only: the grid keeps its colour and doesn't react to hits at all (no cubes, flashes or colour changes)
+            const color = this.color.slice();
+            this.hit = () => { };
 
             this.renderScene = dt => {
                 const gl = this.gl;
                 this.gridZ += 6 * dt;
                 while (this.gridZ > -14.1)
                     this.gridZ -= 11.9;
-                // the colour drifts towards the last hit note's colour
-                const k = 1 - Math.pow(0.995, dt * 60);
-                this.gridColor = this.gridColor.map((c, i) => c + (this.color[i] - c) * k);
 
                 gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
                 this.fog([0, 0.121569, 0.917647], 10, 100);
                 gl.uniform1f(this.basic.u.uFade, 50);
-                const a = 0.4 + this.flash * 0.25;
-                this.draw(this.gridMesh, M.translate(0.119, -12, this.gridZ), [...this.gridColor, a]);
-                this.draw(this.gridMesh, M.translate(0.119, 13, this.gridZ), [...this.gridColor, a]);
-                this.draw(this.planeMesh, M.translate(1.3, -12, -25.4), [...this.gridColor, 0.03]);
-                this.draw(this.planeMesh, M.translate(1.3, 12.9, -25.4), [...this.gridColor, 0.03]);
+                this.draw(this.gridMesh, M.translate(0.119, -12, this.gridZ), [...color, 0.4]);
+                this.draw(this.gridMesh, M.translate(0.119, 13, this.gridZ), [...color, 0.4]);
+                this.draw(this.planeMesh, M.translate(1.3, -12, -25.4), [...color, 0.03]);
+                this.draw(this.planeMesh, M.translate(1.3, 12.9, -25.4), [...color, 0.03]);
                 gl.uniform1f(this.basic.u.uFade, 0);
-                gl.uniform4f(this.basic.u.uFog, 0, 0, 0, 0);
-
-                // ParticlesMaterial: gravity 0.4 up, ~86 deg/s spin, fade in and out over a 2 second life
-                this.particles = this.particles.filter(p => p.age < 2);
-                for (const p of this.particles) {
-                    p.age += dt;
-                    const t = Math.min(1, p.age * p.speed / 2);
-                    const life = p.age * p.speed;
-                    p.angle += p.spin * dt * p.speed;
-                    const alpha = t < 0.229 ? t / 0.229 : t < 0.446 ? 1 : 1 - (t - 0.446) / 0.554;
-                    const model = M.chain(M.translate(p.x, p.y + 0.2 * life * life + life * 0.6, p.z), M.rotate([0, 0, 1], p.angle), M.scale(p.scale));
-                    this.draw(this.cubeMesh, model, [...p.color, alpha * 0.8]);
-                }
             };
         }
 
