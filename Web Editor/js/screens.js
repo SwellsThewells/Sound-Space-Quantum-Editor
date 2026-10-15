@@ -605,6 +605,14 @@
             dynamicLbl(0, 280, 700, 26, () => `Custom Note Mesh: ${(window.SSQECustom && SSQECustom.state.noteMeshName) || 'Default'}`, 30),
             btn(0, 310, 200, 50, 'LOAD MESH', 30, loadNoteMesh),
             btn(210, 310, 150, 50, 'RESET', 30, () => SSQECustom.setNoteMesh(null).catch(() => { })),
+            new G.Checkbox(700, 180, 45, 45, {
+                text: 'Uncap Playtest FPS', textSize: 34, style: unc,
+                get: () => !!SSQESettings.load().uncapFps, set: v => playerSetting('uncapFps', v),
+            }),
+            new G.Checkbox(700, 240, 45, 45, {
+                text: 'Disable Background Effects', textSize: 34, style: unc,
+                get: () => !!SSQESettings.load().disableBgEffects, set: v => playerSetting('disableBgEffects', v),
+            }),
             lbl(0, 400, 400, 26, 'Playtest Background:'),
             new G.Dropdown(0, 430, 400, 50, {
                 options: SSQESettings.BACKGROUNDS, textSize: 30, toShow: 8,

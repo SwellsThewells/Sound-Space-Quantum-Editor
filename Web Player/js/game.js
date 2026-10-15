@@ -965,6 +965,7 @@ void main()
 
             this.Replay = opts.mode === 'replay' && !!opts.replayBuffer;
             this.Autoplay = opts.mode === 'autoplay' && !this.Replay;
+            // web only: a bot that moves like a person and is judged like one (bot.js)
             this.AutoIndex = 0;
 
             this.canvas = opts.canvas;
@@ -1007,6 +1008,8 @@ void main()
             this.setTempo(s.tempo);
             if (this.Replay)
                 this.loadReplay(opts.replayBuffer);
+
+            this.Bot = opts.mode === 'bot' && window.SSQEBot ? new SSQEBot.Driver(notes, s.botSkill) : null;
 
             this.Camera = new Camera(this);
             this.initWindow(startIndex);
@@ -1062,6 +1065,7 @@ void main()
                         name: s.background,
                         color: this.Notes.length ? this.Notes[0].Color : [1, 1, 1],
                         speed: () => this.NoteSpeed * 0.17,
+                        effects: !s.disableBgEffects,
                     });
                 } catch (e) {
                     console.warn('The background could not be created', e);
@@ -1166,7 +1170,7 @@ void main()
             this.resize();
             this.Camera.update();
             this.lastFrame = performance.now();
-            this.raf = requestAnimationFrame(t => this.frame(t));
+            this.schedule();
         }
 
         close() {
@@ -1193,7 +1197,7 @@ void main()
                 misses: this.misses,
                 maxCombo: this.maxCombo,
                 pauses: this.Pauses,
-                mode: this.Replay ? 'replay' : this.Autoplay ? 'autoplay' : 'play',
+                mode: this.Replay ? 'replay' : this.Autoplay ? 'autoplay' : this.Bot ? 'bot' : 'play',
             });
         }
 
@@ -1203,7 +1207,7 @@ void main()
             this.handlers = {
                 mousemove: e => { this.mouseDX += e.movementX; this.mouseDY += e.movementY; },
                 mousedown: e => {
-                    if (e.button === 0 && !this.Replay && !this.Autoplay && document.pointerLockElement !== this.canvas)
+                    if (e.button === 0 && !this.Replay && !this.Autoplay && !this.Bot && document.pointerLockElement !== this.canvas)
                         this.lockPointer();
                 },
                 keydown: e => this.onKeyDown(e),
@@ -1483,6 +1487,10 @@ void main()
                     this.Camera.setReplay(result);
                     this.LastCursorPos = [result[0], result[1], 0];
                 }
+            } else if (this.Bot) {
+                const p = this.Bot.position(currentTime - this.Offset);
+                this.LastCursorPos = this.CursorPos;
+                this.Camera.setReplay([p[0] - 1, p[1] - 1]);
             } else {
                 this.LastCursorPos = this.CursorPos;
                 this.Camera.setMouse(dx, dy);
@@ -1491,6 +1499,18 @@ void main()
             this.render(frametime);
 
             if (this.running)
+                this.schedule();
+        }
+
+        // web only: with Uncap FPS, frames run as fast as the browser allows instead of once per screen refresh
+        schedule() {
+            if (this.settings.uncapFps) {
+                if (!this.channel) {
+                    this.channel = new MessageChannel();
+                    this.channel.port1.onmessage = () => this.running && this.frame(performance.now());
+                }
+                this.channel.port2.postMessage(0);
+            } else
                 this.raf = requestAnimationFrame(t => this.frame(t));
         }
 

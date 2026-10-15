@@ -90,7 +90,8 @@
 
     // ---------------------------------------------------------------- map / audio / replay
 
-    function setMap(text) {
+    // learn: the map was loaded by the user, so the auto mapper learns from it (and a loaded replay can be learned)
+    function setMap(text, learn = false) {
         mapText = text;
         mapInfo = null;
         mapError = '';
@@ -99,6 +100,11 @@
         try {
             const { id, notes } = SSQEGame.parseMap(text, settings.noteColors);
             mapInfo = { name: id, notes: notes.length, length: notes.length ? notes[notes.length - 1].Ms : 0 };
+            if (learn) {
+                if (window.SSQEAutoMapper)
+                    SSQEAutoMapper.learn(notes.map(n => ({ x: n.X, y: n.Y, ms: n.Ms }))).catch(() => { });
+                learnReplay();
+            }
             return true;
         } catch (err) {
             mapError = err.message;
@@ -119,7 +125,7 @@
                     ? SSQE.Formats.readSspm(map, await file.arrayBuffer())
                     : await SSQE.Formats.readRhm(map, await file.arrayBuffer(), file.name);
                 map.sortAll();
-                if (!setMap(SSQE.Formats.writeTxt(map)))
+                if (!setMap(SSQE.Formats.writeTxt(map), true))
                     throw new Error(mapError);
                 if (audio) {
                     const [type, ext] = sniffAudio(audio);
@@ -128,7 +134,7 @@
                 toast(audio ? 'LOADED MAP AND AUDIO' : 'LOADED MAP');
                 return;
             }
-            if (setMap(await file.text()))
+            if (setMap(await file.text(), true))
                 toast('LOADED MAP');
             else
                 toast(mapError || 'INVALID MAP', true);
@@ -161,14 +167,46 @@
             const buffer = await file.arrayBuffer();
             const r = SSQEGame.parseReplay(buffer);
             replayBuffer = buffer;
+            replayName = file.name;
             replayInfo = r.format === 'sspre'
                 ? `${r.name || file.name} - ${formatTime(r.endMs)} long`
                 : `${file.name} - ${r.cursor.length} cursor nodes - tempo ${Math.round(r.tempo * 100)}%`;
             toast('LOADED REPLAY');
+            learnReplay();
         } catch (err) {
             replayBuffer = null;
             replayInfo = '';
             toast(`INVALID REPLAY: ${err.message}`, true);
+        }
+    }
+
+    // the bot learns from .sspre replays once they're lined up with their map
+    let replayName = '';
+    const learnedReplays = new Set();
+    async function learnReplay() {
+        if (!replayBuffer || !mapInfo || !window.SSQEBot)
+            return;
+        const id = `${replayName}|${replayBuffer.byteLength}|${mapInfo.name}|${mapInfo.notes}`;
+        if (learnedReplays.has(id))
+            return;
+        learnedReplays.add(id);
+        try {
+            const r = SSQEGame.parseReplay(replayBuffer);
+            if (r.format !== 'sspre')
+                return;
+            const notes = SSQEGame.parseMap(mapText, settings.noteColors).notes;
+            const aligned = SSQEGame.alignReplay(r, notes);
+            if (!aligned.alignment || aligned.alignment.matched < 0.5)
+                return;
+            const tempo = aligned.tempo || 1;
+            const ok = await SSQEBot.learn(aligned.cursor, notes, id, {
+                hitWindow: (parseFloat(r.settings && r.settings.hitw) || 55) * tempo,
+                hitbox: parseFloat(r.settings && r.settings.hbox) || 1.14,
+            });
+            if (ok)
+                toast('THE BOT LEARNED FROM THIS REPLAY');
+        } catch (err) {
+            console.warn('The bot could not learn from this replay', err);
         }
     }
 
@@ -183,7 +221,7 @@
         }
         if (!text.trim())
             return;
-        if (setMap(text.trim()))
+        if (setMap(text.trim(), true))
             toast('PASTED MAP');
         else
             toast(mapError || 'INVALID MAP', true);
@@ -213,7 +251,7 @@
         if (!text || (SSQE.GUI.activeWindow && SSQE.GUI.activeWindow.textboxFocused()))
             return;
         e.preventDefault();
-        if (setMap(text))
+        if (setMap(text, true))
             toast('PASTED MAP');
         else
             toast(mapError || 'INVALID MAP', true);
@@ -270,6 +308,8 @@
             document.documentElement.requestFullscreen().catch(() => { });
 
         await ensureAudio();
+        if (mode === 'bot' && window.SSQEBot)
+            await SSQEBot.load();
 
         let audioElement = null;
         const tempo = SSQESettings.tempoFromSlider(settings.tempo);
@@ -425,10 +465,15 @@
             ].join('\n') : ''),
 
             button(1190, 180, 600, 100, 'PLAY', 54, () => start('play')),
-            button(1190, 295, 600, 100, 'AUTOPLAY', 54, () => start('autoplay')),
+            button(1190, 295, 295, 100, 'AUTOPLAY', 46, () => start('autoplay')),
+            button(1495, 295, 295, 100, 'BOT PLAY', 46, () => start('bot')),
             replayButton,
             button(1190, 525, 600, 100, 'SETTINGS', 54, () => show(settingsScreen)),
 
+            dynamic(1190, 632, 600, 26, 22, () => {
+                const b = window.SSQEBot && SSQEBot.statsSync();
+                return b ? `Bot: learned from ${b.replays} replay${b.replays === 1 ? '' : 's'} (${b.notes} notes)` : '';
+            }),
             label(1190, 660, 600, 300, touch
                 ? 'Controls:\n\n> Drag anywhere to move the cursor\n> Buttons in the top right corner:\n>> Restart, pause (hold to unpause) and quit'
                 : 'Controls:\n\n> Quit: ESCAPE / hold R\n> Restart: TAB\n> Pause: SPACE (hold to unpause)\n> Offset: SCROLL\n> Unfocus: CTRL + U\n> Focus: LEFT CLICK\n> Fullscreen: F11', 22),
@@ -585,7 +630,32 @@
                             }
                         }),
                         button(x + 210, y + 30, 150, 50, 'RESET', 30, () => SSQECustom.setNoteMesh(null).catch(() => { })));
-                else if (item.type === 'color')
+                else if (item.type === 'botInfo' || item.type === 'mapperInfo') {
+                    const bot = item.type === 'botInfo';
+                    const lib = () => bot ? window.SSQEBot : window.SSQEAutoMapper;
+                    let confirm = false;
+                    const reset = button(x, y + 30, 300, 50, 'RESET LEARNING', 30, async () => {
+                        if (!confirm) {
+                            confirm = true;
+                            reset.text = 'ARE YOU SURE?';
+                            setTimeout(() => { confirm = false; reset.text = 'RESET LEARNING'; }, 4000);
+                            return;
+                        }
+                        confirm = false;
+                        reset.text = 'RESET LEARNING';
+                        lib() && await lib().reset();
+                        toast.show(bot ? 'BOT LEARNING RESET' : 'AUTO MAPPER LEARNING RESET', settings.color1);
+                    });
+                    controls.push(
+                        dynamic(x, y, 700, 26, 30, () => {
+                            const st = lib() && lib().statsSync();
+                            if (!st)
+                                return `${title}: -`;
+                            return bot ? `${title}: ${st.replays} replays, ${st.notes} notes`
+                                : `${title}: ${st.maps} maps, ${st.notes} notes`;
+                        }),
+                        reset);
+                } else if (item.type === 'color')
                     controls.push(
                         label(x, y, 600, 26, `${title}:`, 30),
                         button(x, y + 30, 200, 50, 'PICK COLOR', 30, () => pickColor(get()).then(c => c && set(c))),

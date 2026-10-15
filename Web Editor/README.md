@@ -64,10 +64,16 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
 - **3D Mode** (Graphics tab, web only): notes fly out from the middle of the grid towards their cell,
   like in game, instead of fading in on it. **3D Hit Effect** makes notes keep growing as they fade
   after being hit, and **3D Grid Opacity** sets how see-through the grid is while 3D Mode is on.
+- **Auto mapper** (Patterns tab, web only): every map you import (in the editor or the map player)
+  teaches it how far and where notes move for each time gap, and how dense maps are. **AUTO MAP**
+  fills from the timeline's position up to the next note (or the end of the song): it finds the hits
+  in the song, snaps them to the BPM if there is one, and places notes the way the learned maps do.
+  **Density %** scales how many notes it makes. It's one undo step.
 - **Editor background** (Settings > Colors, web only): pick the default background, your own image
   (**LOAD IMAGE**) or one of the map player's worlds.
 - **Playtest background and note mesh** (Settings > Player, web only): the same 3D worlds and custom
-  `.obj` note mesh as the map player's Visuals settings, shared with it.
+  `.obj` note mesh as the map player's Visuals settings, shared with it, plus Uncap Playtest FPS and
+  Disable Background Effects.
 - **Playtest:** Play From Start and Play Here open the web player on top of the editor. Hold Alt
   while clicking to watch autoplay. Esc returns to the editor.
 

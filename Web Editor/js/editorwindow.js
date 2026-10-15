@@ -80,6 +80,49 @@
 
         // ------------------------------------------------ Patterns
         const numberBox = (x, y, w, h, props) => new G.NumberBox(x, y, w, h, props);
+
+        // fills from the timeline's position up to the next note (or the end of the song)
+        let autoMapping = false;
+        const autoMap = async () => {
+            if (autoMapping || !window.SSQEAutoMapper)
+                return;
+            const buffer = editor.music.buffer;
+            if (!buffer) {
+                app.dialogs.message('The song is still loading (or couldn\'t be decoded), so it can\'t be auto mapped yet.');
+                return;
+            }
+            const start = Math.max(0, Math.round(editor.currentTime));
+            const notes = map.notes.items;
+            const next = notes.find(n => n.ms > start);
+            const end = next ? next.ms : Math.trunc(editor.totalTime);
+            const before = notes.filter(n => n.ms <= start).slice(-2).map(n => ({ x: n.x, y: n.y, ms: n.ms }));
+            const hasBpm = map.timingPoints.some(p => p.bpm > 0);
+            autoMapping = true;
+            editor.toast('AUTO MAPPING...', 'other');
+            try {
+                const made = await SSQEAutoMapper.generate({
+                    buffer, startMs: start, endMs: end, density: (s.autoMapDensity ?? 100) / 100,
+                    snap: hasBpm ? ms => { const b = editor.closestBeat(ms); return b >= 0 ? b : ms; } : null,
+                    before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
+                });
+                if (!made.length)
+                    editor.toast('NOTHING TO MAP HERE', 'other');
+                else {
+                    map.notes.addObjects('AUTO MAP', made.map(n => new SSQE.Note(n.x, n.y, n.ms)));
+                    editor.toast(`AUTO MAPPED ${made.length} NOTES`, 'other');
+                }
+            } catch (err) {
+                app.dialogs.message(`Auto mapping failed: ${err.message}`, 'Error');
+            } finally {
+                autoMapping = false;
+            }
+        };
+        const AutoMapStats = label(370, 200, 175, 120, '', 24, { centerMode: None });
+        AutoMapStats.process = function (dt) {
+            G.Label.prototype.process.call(this, dt);
+            const st = window.SSQEAutoMapper && SSQEAutoMapper.statsSync();
+            this.text = st ? `Learned from:\n${st.maps} map${st.maps === 1 ? '' : 's'}\n${st.notes} notes` : '';
+        };
         const PatternsNav = new G.Container(10, 222, 545, 756, [
             button(0, 20, 175, 40, 'HORIZONTAL FLIP', 27, () => editor.hFlip()),
             button(185, 20, 175, 40, 'VERTICAL FLIP', 27, () => editor.vFlip()),
@@ -99,6 +142,16 @@
             label(0, 80, 175, 30, 'Rotate by Degrees:', 30, { centerMode: None }),
             label(0, 160, 100, 30, 'Scale by Percent:', 30, { centerMode: None }),
             label(0, 530, 100, 30, 'Draw Bezier with Divisor:', 30, { centerMode: None }),
+
+            // web only: auto mapper (automapper.js), learns from every imported map
+            label(370, 20, 175, 30, 'Auto Mapper:', 30, { centerMode: None }),
+            button(370, 50, 175, 40, 'AUTO MAP', 27, () => autoMap()),
+            label(370, 110, 175, 30, 'Density %:', 30, { centerMode: None }),
+            numberBox(370, 140, 120, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [10, 400], get: () => s.autoMapDensity ?? 100, set: v => { s.autoMapDensity = v; saveS(); } }),
+            AutoMapStats,
+            button(370, 330, 175, 40, 'RESET LEARNING', 27, () => {
+                app.dialogs.confirm('Forget everything the auto mapper has learned?').then(r => r === 'yes' && SSQEAutoMapper.reset());
+            }),
         ]);
 
         // ------------------------------------------------ Player (playtest)

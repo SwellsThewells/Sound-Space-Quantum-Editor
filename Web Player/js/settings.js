@@ -41,6 +41,9 @@ window.SSQESettings = (function () {
 
         // web only: 3D world behind the grid (worlds.js)
         background: 'None',
+        disableBgEffects: false,
+        uncapFps: false,
+        botSkill: 1,
     };
 
     const BACKGROUNDS = ['None', 'Grid', 'Vaporwave', 'Neon Tunnel', 'Space Tunnel', 'Deep Space', 'Cubic', 'Custom Image'];
@@ -78,6 +81,13 @@ window.SSQESettings = (function () {
             { key: 'background', label: 'Background', type: 'dropdown', options: BACKGROUNDS },
             { key: 'backgroundImage', label: 'Custom background image', type: 'customImage' },
             { key: 'noteMesh', label: 'Custom note mesh (.obj)', type: 'customMesh' },
+            { key: 'disableBgEffects', label: 'Disable background effects', type: 'bool' },
+            { key: 'uncapFps', label: 'Uncap FPS', type: 'bool' },
+        ]],
+        ['Bot', [
+            { key: 'botSkill', label: 'Bot skill', type: 'range', min: 0.5, max: 3, step: 0.1, format: v => `${Math.round(v * 100)}%` },
+            { key: 'botLearning', label: 'Bot learning', type: 'botInfo' },
+            { key: 'mapperLearning', label: 'Auto mapper learning', type: 'mapperInfo' },
         ]],
         ['Colours', [
             { key: 'color1', label: 'Primary (grid, accuracy, combo)', type: 'color' },

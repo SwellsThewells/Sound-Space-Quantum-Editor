@@ -26,6 +26,14 @@ python3 -m http.server 8000   # from the repository root
 Cubic, rebuilt from Rhythia's worlds, or your own image) and loads a custom `.obj` note mesh. These
 are stored in the browser and shared with the editor's playtests.
 
+**BOT PLAY** plays the map like a person would: it moves between notes the way people do, aims a
+little off centre, shakes a little and sometimes misses, and it's judged like a player. Every
+`.sspre` replay you load (with its map) teaches it how you move, aim and miss. **Settings > Bot**
+sets its skill and can reset what it learned.
+
+Settings > Visuals also has **Disable Background Effects** (backgrounds stop reacting to hits) and
+**Uncap FPS** (frames aren't limited to the screen's refresh rate).
+
 You can also drag files onto the page. **DEMO MAP** creates a random map for testing.
 
 On phones and tablets, drag anywhere to move the cursor. Buttons in the top right corner restart,

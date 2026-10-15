@@ -492,6 +492,11 @@
 
         // adds a freshly parsed map to the open map list and opens it
         async openNewMap(map, key, savedAsLoaded = false) {
+            // web only: every imported map teaches the auto mapper
+            if (window.SSQEAutoMapper)
+                SSQEAutoMapper.learn(map.notes.items.map(n => ({ x: n.x, y: n.y, ms: n.ms })))
+                    .then(learned => learned && this.editor && this.editor.toast('AUTO MAPPER LEARNED FROM THIS MAP', 'other'))
+                    .catch(() => { });
             const entry = { key: key || newKey(), map, rec: null };
             if (savedAsLoaded)
                 map.savedText = this.mapText(map);

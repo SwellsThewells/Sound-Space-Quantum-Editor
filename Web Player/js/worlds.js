@@ -308,6 +308,8 @@ void main() {
             this.gl = gl;
             this.name = opts.name;
             this.speed = opts.speed || (() => 5);
+            // Rhythia's "disable background effects": nothing reacts to hits
+            this.effects = opts.effects !== false;
             this.color = (opts.color || [1, 1, 1]).slice(0, 3);
             this.time = 0;
             this.flash = 0;
@@ -364,6 +366,8 @@ void main() {
         }
 
         hit(color) {
+            if (!this.effects)
+                return;
             if (color)
                 this.color = color.slice(0, 3);
             this.flash = 1;

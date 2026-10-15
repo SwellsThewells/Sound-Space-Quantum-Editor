@@ -121,5 +121,6 @@ window.SSQECustom = (function () {
         await loadMesh();
     }
 
-    return { ready, state, parseObj, setImage, setNoteMesh };
+    // learned data (auto mapper, bot) is stored next to the files
+    return { ready, state, parseObj, setImage, setNoteMesh, get, put, remove };
 })();

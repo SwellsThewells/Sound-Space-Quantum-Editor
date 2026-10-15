@@ -77,6 +77,7 @@
 
         editorBGOpacity: 255,
         editorBackground: 'Default', // web only, see EDITOR_BACKGROUNDS
+        autoMapDensity: 100, // web only: % of the density the auto mapper learned
         gridOpacity: 255,
         trackOpacity: 255,
         sfxOffset: 0,
