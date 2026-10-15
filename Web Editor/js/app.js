@@ -371,6 +371,43 @@
             this.showScreen('settings');
         }
 
+        // web only: the map player runs in a frame over the editor, so the editor (and its open maps) stay as they are.
+        // Its BACK TO EDITOR button sends 'ssqe-close-player'. Settings, learned data and custom files are shared, as
+        // both are on the same site.
+        openPlayer() {
+            if (!this.playerFrame) {
+                const frame = el('iframe', {
+                    src: window.SSQE_PLAYER_URL || '../Web%20Player/index.html?embedded=1',
+                    allow: 'fullscreen; autoplay',
+                    allowfullscreen: '',
+                    title: 'Map Player',
+                });
+                Object.assign(frame.style, { position: 'fixed', inset: '0', width: '100%', height: '100%', border: '0', zIndex: '50', background: '#000', display: 'none' });
+                document.body.append(frame);
+                this.playerFrame = frame;
+                window.addEventListener('message', e => {
+                    if (e.source === frame.contentWindow && e.data === 'ssqe-close-player')
+                        this.closePlayer();
+                });
+            }
+            if (this.screen && this.screen.stop)
+                this.screen.stop();
+            this.playerFrame.style.display = 'block';
+            this.playerFrame.focus();
+        }
+
+        closePlayer() {
+            if (!this.playerFrame || this.playerFrame.style.display === 'none')
+                return;
+            this.playerFrame.style.display = 'none';
+            if (document.fullscreenElement)
+                document.exitFullscreen().catch(() => { });
+            if (this.screen && this.screen.start)
+                this.screen.start();
+            // settings may have changed in the player
+            this.settings && this.applyTheme();
+        }
+
         openKeybinds() {
             this.showScreen('keybinds');
         }

@@ -275,6 +275,8 @@
             button(1190, 295, 600, 100, 'LOAD MAP', 54, () => app.loadMapDialog()),
             button(1190, 410, 600, 100, 'PASTE MAP', 54, () => app.pasteMap()),
             button(1190, 525, 600, 100, 'SETTINGS', 54, () => app.openSettings()),
+            // web only: the map player, opened on top of the editor
+            button(1190, 640, 600, 100, 'MAP PLAYER', 54, () => app.openPlayer()),
             autosaved, lastMap, navLeft, navRight,
             ...selects, ...closes,
             button(35, 140, 100, 40, 'Feedback?', 20, () => window.open('https://forms.gle/Rh4RXKT9KyttJ9Dc6', '_blank', 'noopener')),
@@ -292,7 +294,7 @@
             autosaved.visible = false;
             lastMap.visible = !!app.lastMapEntry();
             const r = lastMap.origin;
-            lastMap.origin = { ...r, y: autosaved.visible ? 755 : 640 };
+            lastMap.origin = { ...r, y: autosaved.visible ? 870 : 755 };
 
             // GuiWindowMenu.AssembleMapList / Render
             const count = app.openMaps.length;

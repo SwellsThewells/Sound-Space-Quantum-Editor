@@ -7,6 +7,8 @@
     const None = G.CenterMode.None;
     const UNCOLORED_CHECK = [[255, 255, 255], [75, 75, 75], [13, 13, 13], [52, 52, 52], [255, 255, 255]];
 
+    // opened from the editor's menu (MAP PLAYER), inside a frame on top of it
+    const EMBEDDED = window.parent !== window && /[?&]embedded\b/.test(location.search);
     const settings = SSQESettings.load();
     let mapText = '';
     let mapInfo = null;      // { name, notes, length } of the loaded map
@@ -575,12 +577,18 @@
             button(1190, 295, 600, 100, 'AUTOPLAY', 54, () => start('autoplay')),
             replayButton,
             button(1190, 525, 600, 100, 'SETTINGS', 54, () => show(settingsScreen)),
+            // opened from the editor's menu: a way back to it
+            ...(EMBEDDED ? [button(1190, 640, 600, 100, 'BACK TO EDITOR', 54, () => {
+                if (game)
+                    return;
+                window.parent.postMessage('ssqe-close-player', '*');
+            })] : []),
 
-            dynamic(1190, 632, 600, 26, 22, () => {
+            dynamic(1190, EMBEDDED ? 747 : 632, 600, 26, 22, () => {
                 const b = window.SSQEBot && SSQEBot.statsSync();
                 return b ? `Realistic autoplay: ${settings.realisticAutoplay ? 'on' : 'off'} - learned from ${b.replays} replay${b.replays === 1 ? '' : 's'}` : '';
             }),
-            label(1190, 660, 600, 300, touch
+            label(1190, EMBEDDED ? 775 : 660, 600, 300, touch
                 ? 'Controls:\n\n> Drag anywhere to move the cursor\n> Buttons in the top right corner:\n>> Restart, pause (hold to unpause) and quit'
                 : 'Controls:\n\n> Quit: ESCAPE / hold R\n> Restart: TAB\n> Pause: SPACE (hold to unpause)\n> Offset: SCROLL\n> Unfocus: CTRL + U\n> Focus: LEFT CLICK\n> Fullscreen: F11', 22),
             label(0, 1040, 1920, 40, 'Drop a map (.sspm, .rhm or .txt), audio or a replay (.sspre) anywhere on the page', 20, { centerMode: G.CenterMode.XY }),

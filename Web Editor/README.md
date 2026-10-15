@@ -85,6 +85,8 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
   `.obj` note mesh as the map player's Visuals settings, shared with it (the mesh also replaces the note
   squares on the editor's grid), plus Uncap Playtest FPS,
   Disable Background Effects and Realistic Autoplay (Alt + playtest uses the map player's learning bot).
+- **Map player** (main menu, web only): **MAP PLAYER** under Settings opens the map player on top of the
+  editor (the editor and its open maps stay as they are); **BACK TO EDITOR** returns.
 - **Playtest:** Play From Start and Play Here open the web player on top of the editor. Hold Alt
   while clicking to watch autoplay. Esc returns to the editor.
 
