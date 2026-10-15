@@ -385,7 +385,7 @@ window.SSQEAutoMapper = (function () {
 
         progress('FINDING THE BPM');
         await new Promise(r => setTimeout(r));
-        const tempo = findTempo(beats, hits, frames);
+        const tempo = await findTempo(beats, hits, frames);
 
         // for "sync to": melody onsets (notes of vocals and instruments starting) and everything together
         const melody = peaky(melodyRaw);
@@ -432,9 +432,17 @@ window.SSQEAutoMapper = (function () {
     // The song's BPM and where its beats are. Every likely tempo (from the rhythm's repetition) and its relatives
     // (x2, /2, x3/2, /3/2) is tried; the one whose beats land on the most kick and snare hits wins, with a nudge
     // towards rhythm game tempos. Then the BPM is fine tuned and checked for drifting.
-    function findTempo(beats, hits, frames) {
+    async function findTempo(beats, hits, frames) {
         if (frames < 1500)
             return null;
+        // it's a lot of work on a long song: the page gets a moment between the steps so it doesn't freeze
+        let lastYield = performance.now();
+        const breathe = async () => {
+            if (performance.now() - lastYield > 25) {
+                await new Promise(r => setTimeout(r));
+                lastYield = performance.now();
+            }
+        };
         const mean = beats.reduce((a, b) => a + b, 0) / frames || 1e-6;
 
         // candidates from the autocorrelation of the drums
@@ -444,6 +452,7 @@ window.SSQEAutoMapper = (function () {
             for (let i = 0; i + lag < frames; i += 2)
                 s += hits[i] * hits[i + lag];
             ac[lag] = s;
+            await breathe();
         }
         const peaks = [];
         for (let lag = 21; lag < 140; lag++)
@@ -511,6 +520,7 @@ window.SSQEAutoMapper = (function () {
         };
         const tuned = [];
         for (const c of candidates) {
+            await breathe();
             let top = null;
             for (let bpm = c * 0.984; bpm <= c * 1.016; bpm += 0.01) {
                 const g = gather(bpm);
@@ -536,6 +546,7 @@ window.SSQEAutoMapper = (function () {
         };
         let best = null;
         for (const t of tuned) {
+            await breathe();
             const f = fullScore(t.bpm);
             const score = (f.onBeats + 0.5 * f.half) * (0.55 + 0.45 * prior(t.bpm));
             if (!best || score > best.score)
@@ -545,6 +556,7 @@ window.SSQEAutoMapper = (function () {
             return null;
 
         // 3) fine: 0.002 BPM steps
+        await breathe();
         let fine = { ...best, g: gather(best.bpm) };
         for (let bpm = best.bpm - 0.03; bpm <= best.bpm + 0.03; bpm += 0.002) {
             const g = gather(bpm);
@@ -593,6 +605,7 @@ window.SSQEAutoMapper = (function () {
         phase = ((phase % period) + period) % period;
 
         // does the beat stay put? the local shift that fits each 15 seconds best
+        await breathe();
         const shifts = [];
         for (let from = 0; from + 1500 <= frames; from += 1500) {
             let bestShift = 0, bestS = -1;
@@ -977,6 +990,9 @@ window.SSQEAutoMapper = (function () {
         }).filter(e => e.n >= 8 && e.usable);
     }
 
+    // How many places in the library to try for each run of notes
+    const SEARCH = 2400;
+
     // Finds the run of library notes to copy next.
     // gaps: the time from the previous note to each new note; prev/prev2: the last two notes placed
     function findRun(lib, gaps, prev, prev2, opts, used) {
@@ -1023,10 +1039,11 @@ window.SSQEAutoMapper = (function () {
                 }
                 lastGap = gg;
                 if (recent.length >= 4) {
-                    const w = recent.slice(-4);
-                    const xs = w.map(v => v[0]), ys = w.map(v => v[1]);
-                    if (Math.max(...xs) - Math.min(...xs) <= 1.001 && Math.max(...ys) - Math.min(...ys) <= 1.001
-                        && new Set(w.map(v => v.join(','))).size === 4)
+                    const m = recent.length;
+                    const w0 = recent[m - 4], w1 = recent[m - 3], w2 = recent[m - 2], w3 = recent[m - 1];
+                    const x0 = Math.min(w0[0], w1[0], w2[0], w3[0]), x1 = Math.max(w0[0], w1[0], w2[0], w3[0]);
+                    const y0 = Math.min(w0[1], w1[1], w2[1], w3[1]), y1 = Math.max(w0[1], w1[1], w2[1], w3[1]);
+                    if (x1 - x0 <= 1.001 && y1 - y0 <= 1.001 && new Set([w0.join(','), w1.join(','), w2.join(','), w3.join(',')]).size === 4)
                         spins++;
                 }
                 const move = Math.hypot(e.x[i + q + 1] - e.x[i + q], e.y[i + q + 1] - e.y[i + q]);
@@ -1093,33 +1110,47 @@ window.SSQEAutoMapper = (function () {
             return out;
         };
 
+        // A fixed number of places to try per run however many maps were learned (it used to try every map, which with
+        // a big library took minutes and froze the page). Each map gets a share by how much of it starts here; the
+        // map being made always gets a good look.
         if (prev) {
+            const pools = [];
+            let total = 0;
             for (const e of lib)
                 for (let k = 0; k < 8; k++) {
                     const [lx, ly] = SYM[INV[k]](prev.x, prev.y);
                     const list = e.at.get(posKey(lx, ly));
-                    if (list)
-                        for (const i of sample(list, 260))
-                            consider(e, k, i, 0, 0);
+                    if (list) {
+                        pools.push({ e, k, list });
+                        total += list.length;
+                    }
                 }
+            const share = Math.min(1, SEARCH / Math.max(1, total));
+            for (const { e, k, list } of pools) {
+                let take = list.length * share;
+                take = e.bonus ? Math.max(take, Math.min(list.length, 260)) : Math.floor(take) + (Math.random() < take % 1 ? 1 : 0);
+                for (const i of sample(list, take))
+                    consider(e, k, i, 0, 0);
+            }
             // nothing starts exactly here (a quantum note, or a spot the maps never use): shift a run over to it
             if (candidates.length < 6)
-                for (const e of lib)
-                    for (let s = 0; s < 120; s++) {
-                        const i = Math.floor(Math.random() * (e.n - 2));
-                        const k = Math.floor(Math.random() * 8);
-                        const [x, y] = SYM[k](e.x[i], e.y[i]);
-                        let ox = prev.x - x, oy = prev.y - y;
-                        if (!opts.quantum) {
-                            if (!isWhole(ox) || !isWhole(oy))
-                                continue;
-                        }
-                        consider(e, k, i, ox, oy);
+                for (let s = 0; s < Math.min(SEARCH, 120 * lib.length); s++) {
+                    const e = lib[Math.floor(Math.random() * lib.length)];
+                    const i = Math.floor(Math.random() * (e.n - 2));
+                    const k = Math.floor(Math.random() * 8);
+                    const [x, y] = SYM[k](e.x[i], e.y[i]);
+                    let ox = prev.x - x, oy = prev.y - y;
+                    if (!opts.quantum) {
+                        if (!isWhole(ox) || !isWhole(oy))
+                            continue;
                     }
+                    consider(e, k, i, ox, oy);
+                }
         } else
-            for (const e of lib)
-                for (let s = 0; s < 300; s++)
-                    consider(e, Math.floor(Math.random() * 8), Math.floor(Math.random() * (e.n - 2)), 0, 0);
+            for (let s = 0; s < Math.min(SEARCH, 300 * lib.length); s++) {
+                const e = lib[Math.floor(Math.random() * lib.length)];
+                consider(e, Math.floor(Math.random() * 8), Math.floor(Math.random() * (e.n - 2)), 0, 0);
+            }
 
         if (!candidates.length)
             return null;
@@ -1153,7 +1184,7 @@ window.SSQEAutoMapper = (function () {
         const moves = [];
         let change = 0, changes = 0;
         for (const e of lib) {
-            const n = Math.min(e.n, 6000);
+            const n = Math.min(e.n, Math.max(400, Math.floor(60000 / lib.length)));
             for (let i = 1; i + 1 < n; i++) {
                 const ax = e.x[i] - e.x[i - 1], ay = e.y[i] - e.y[i - 1], bx = e.x[i + 1] - e.x[i], by = e.y[i + 1] - e.y[i];
                 const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
@@ -1186,8 +1217,9 @@ window.SSQEAutoMapper = (function () {
     }
 
     // Places notes at `times` by copying runs from the library. jumpAt(ms): the average move wanted there.
-    function place(times, lib, opts, jumpAt) {
+    async function place(times, lib, opts, jumpAt) {
         const out = [];
+        const yieldNow = opts.yieldNow || (async () => { });
         const before = (opts.before || []).slice(-2);
         let prev = before.length ? before[before.length - 1] : null;
         let prev2 = before.length > 1 ? before[0] : null;
@@ -1219,6 +1251,7 @@ window.SSQEAutoMapper = (function () {
         };
 
         while (i < times.length) {
+            await yieldNow(i / times.length);
             // a run of up to 12-24 notes (fewer joins, more of the original flow), ending at a long pause
             const L = 12 + Math.floor(Math.random() * 13);
             const gaps = [];
@@ -1336,6 +1369,7 @@ window.SSQEAutoMapper = (function () {
             ctx.shifts = a.tempo.steady ? null : a.tempo.shifts;
         }
         const times = ctx.timing ? chooseTimes(a, opts, nps, ctx) : chooseTimesFree(a, opts, nps);
+        await tick();
         if (!times.length)
             return Object.assign([], { info: { bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady) } });
 
@@ -1350,7 +1384,9 @@ window.SSQEAutoMapper = (function () {
         let lib = prepare(entries, !!opts.quantum);
         if (!lib.length)
             lib = prepare([defaultEntry()], !!opts.quantum);
+        await tick();
         const fm = flowModel(lib);
+        await tick();
 
         // how big the moves should be: like the learned maps (Jump Size and Patterns adjust it), a little bigger in
         // intense sections and drops
@@ -1370,15 +1406,29 @@ window.SSQEAutoMapper = (function () {
         const vmax = 4 * Math.pow(1.33, difficulty - 1);
 
         // map it a few times and keep the most balanced (fewer tries for long stretches, so it doesn't take ages)
+        // (it hands the page back every few milliseconds so the editor never freezes, and stops trying once it has
+        // spent about 20 seconds)
         let best = null;
-        const tries = times.length < 600 ? TRIES : times.length < 1500 ? 5 : 3;
+        let tries = times.length < 600 ? TRIES : times.length < 1500 ? 5 : 3;
+        const started = performance.now();
         for (let t = 0; t < tries; t++) {
-            progress(`MAPPING (TRY ${t + 1} OF ${tries})`);
+            const label = `MAPPING (TRY ${t + 1} OF ${tries})`;
+            progress(label);
             await tick();
-            const notes = place(times, lib, { ...opts, vmax, runOptions }, jumpAt);
+            let last = performance.now();
+            const yieldNow = async done => {
+                if (performance.now() - last < 25)
+                    return;
+                progress(`${label} ${Math.floor(done * 100)}%`);
+                await tick();
+                last = performance.now();
+            };
+            const notes = await place(times, lib, { ...opts, vmax, runOptions, yieldNow }, jumpAt);
             const score = badness(notes, jumpAt, vmax, fm, runOptions.flow);
             if (!best || score < best.score)
                 best = { notes, score };
+            const each = (performance.now() - started) / (t + 1);
+            tries = Math.min(tries, Math.max(t + 1, Math.floor(20000 / each)));
         }
         best.notes.info = {
             bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady),

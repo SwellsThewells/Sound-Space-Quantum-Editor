@@ -84,8 +84,12 @@
         // fills from the timeline's position up to the next note (or the end of the song)
         let autoMapping = false;
         const autoMap = async () => {
-            if (autoMapping || !window.SSQEAutoMapper)
+            if (!window.SSQEAutoMapper)
                 return;
+            if (autoMapping) {
+                editor.toast('STILL AUTO MAPPING - ONE MOMENT', 'other');
+                return;
+            }
             const buffer = editor.music.buffer;
             if (!buffer) {
                 app.dialogs.message('The song is still loading (or couldn\'t be decoded), so it can\'t be auto mapped yet.');
