@@ -293,6 +293,60 @@ window.SSQECustom = (function () {
         state.cursorImage = img;
     }
 
+    // The custom note mesh seen from the front like in the player, drawn once per colour, for the editor's grid.
+    // rgb: [r, g, b] 0-255. Returns a square canvas, or null without a custom mesh.
+    const meshSprites = new Map();
+    let meshSpritesFor = null;
+    function noteMeshSprite(rgb) {
+        const mesh = state.noteMesh;
+        if (!mesh)
+            return null;
+        if (meshSpritesFor !== mesh) {
+            meshSprites.clear();
+            meshSpritesFor = mesh;
+        }
+        const key = rgb.join(',');
+        if (meshSprites.has(key))
+            return meshSprites.get(key);
+
+        const SIZE = 160;
+        let extent = 0;
+        for (let i = 0; i < mesh.length; i += 3)
+            extent = Math.max(extent, Math.abs(mesh[i]), Math.abs(mesh[i + 1]));
+        extent = extent || 1;
+        const tris = [];
+        for (let i = 0; i + 8 < mesh.length; i += 9) {
+            const v = [0, 3, 6].map(k => [mesh[i + k], mesh[i + k + 1], mesh[i + k + 2]]);
+            const a = [v[1][0] - v[0][0], v[1][1] - v[0][1], v[1][2] - v[0][2]];
+            const b = [v[2][0] - v[0][0], v[2][1] - v[0][1], v[2][2] - v[0][2]];
+            const n = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+            const l = Math.hypot(...n) || 1;
+            // same lighting as the player (game.js MODEL_VERT_SHADER)
+            const light = Math.min(1, 0.5 + 0.5 * Math.abs(n[2] / l) + 0.25 * Math.max(n[1] / l, 0));
+            tris.push({ v, z: (v[0][2] + v[1][2] + v[2][2]) / 3, light });
+        }
+        // the player's camera looks down +Z from the front: draw the far side first
+        tris.sort((p, q) => q.z - p.z);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = SIZE;
+        const ctx = canvas.getContext('2d');
+        const px = ([x, y]) => [SIZE / 2 - x / extent * SIZE / 2 * 0.96, SIZE / 2 - y / extent * SIZE / 2 * 0.96];
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 0.6;
+        for (const t of tris) {
+            const color = `rgb(${rgb.map(c => Math.round(c * t.light)).join(',')})`;
+            ctx.fillStyle = ctx.strokeStyle = color;
+            ctx.beginPath();
+            t.v.map(px).forEach(([x, y], k) => k ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
+        meshSprites.set(key, canvas);
+        return canvas;
+    }
+
     // what to draw for the custom cursor right now (null when there isn't one)
     function cursorFrame(timeMs = performance.now()) {
         const frames = state.cursorFrames;
@@ -340,5 +394,5 @@ window.SSQECustom = (function () {
     }
 
     // learned data (auto mapper, bot) is stored next to the files
-    return { ready, state, parseObj, decodeGif, cursorFrame, setImage, setNoteMesh, setCursor, get, put, remove };
+    return { ready, state, parseObj, decodeGif, cursorFrame, noteMeshSprite, setImage, setNoteMesh, setCursor, get, put, remove };
 })();

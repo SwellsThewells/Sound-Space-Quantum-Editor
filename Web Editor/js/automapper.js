@@ -321,7 +321,7 @@ window.SSQEAutoMapper = (function () {
     }
 
     // opts: { buffer (AudioBuffer), startMs, endMs, density (1 = as learned), difficulty (1..10),
-    //         styleNotes (the notes already in the map: their patterns are followed),
+    //         styleNotes (the notes already in the map: their patterns are followed), count (notes to add, 0 = auto),
     //         snap (ms => ms, optional),
     //         before: the notes just before startMs (to carry on their flow), avoid: times already used }
     async function generate(opts) {
@@ -331,9 +331,12 @@ window.SSQEAutoMapper = (function () {
         // 10 about 30 with streams down to ~15ms apart (like Tasukete maps such as RAVE GIRLS or Wall of Death).
         // What was learned decides the movement.
         const nps = 1.5 * Math.pow(20, (difficulty - 1) / 9);
-        const minGap = Math.max(12, 450 / nps);
+        const span = Math.max(1, opts.endMs - opts.startMs) / 1000;
+        // a note count that asks for more than the difficulty would allow lets notes get closer together
+        const minGap = Math.max(12, 450 / Math.max(nps, opts.count > 0 ? opts.count / span : 0));
         const found = await onsets(opts.buffer, opts.startMs, opts.endMs);
-        const target = Math.round(nps * (opts.density || 1) * (opts.endMs - opts.startMs) / 1000);
+        // an exact number of notes when one is asked for, otherwise as many as the difficulty and density ask for
+        const target = opts.count > 0 ? Math.round(opts.count) : Math.round(nps * (opts.density || 1) * (opts.endMs - opts.startMs) / 1000);
 
         const avoid = (opts.avoid || []).slice();
         const taken = [];

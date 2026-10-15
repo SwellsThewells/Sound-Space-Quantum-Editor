@@ -78,7 +78,8 @@
         editorBGOpacity: 255,
         editorBackground: 'Default', // web only, see EDITOR_BACKGROUNDS
         autoMapDensity: 100, // web only: % of the density the auto mapper learned
-        autoMapDifficulty: 5, // web only: 1..10, 5 = like the learned maps
+        autoMapDifficulty: 5, // web only: 1..10
+        autoMapCount: 0, // web only: how many notes the auto mapper adds (0 = as many as the difficulty asks for)
         gridZoom: 100, // web only: size of the 3x3 grid in %
         cursorScale: 100, // web only: size of the custom grid cursor image (customassets.js), in %
         gridOpacity: 255,

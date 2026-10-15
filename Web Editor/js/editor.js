@@ -1375,7 +1375,14 @@
             for (const d of drawn) {
                 const c = d.i % s.noteColors.length;
                 const lineWidth = mode3D ? Math.max(1, 2 * d.size / noteSize) : 2;
-                this.roundedRect(d.x, d.y, d.size, d.size, this.noteColor(c, 0.15 * d.progress), this.noteColor(c, d.progress), lineWidth);
+                // web only: a custom note mesh (Settings > Player) is shown on the grid the way the player draws it
+                const sprite = window.SSQECustom && SSQECustom.noteMeshSprite(s.noteColors[c]);
+                if (sprite) {
+                    ctx.globalAlpha = clamp(d.progress, 0, 1);
+                    ctx.drawImage(sprite, d.x, d.y, d.size, d.size);
+                    ctx.globalAlpha = 1;
+                } else
+                    this.roundedRect(d.x, d.y, d.size, d.size, this.noteColor(c, 0.15 * d.progress), this.noteColor(c, d.progress), lineWidth);
 
                 if (s.approachSquares && !mode3D) {
                     const size = 4 + noteSize + noteSize * (1 - d.progress) * 2 + 0.5;

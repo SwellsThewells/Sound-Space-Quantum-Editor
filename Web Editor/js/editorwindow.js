@@ -105,6 +105,7 @@
                     snap: hasBpm ? ms => { const b = editor.closestBeat(ms); return b >= 0 ? b : ms; } : null,
                     before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
                     styleNotes: notes.map(n => ({ x: n.x, y: n.y, ms: n.ms })),
+                    count: s.autoMapCount || 0,
                 });
                 if (!made.length)
                     editor.toast('NOTHING TO MAP HERE', 'other');
@@ -162,6 +163,8 @@
                 if (files && files.length)
                     SSQEAutoMapper.learnFiles(files, (text, error) => editor.toast(text, error ? 'error' : 'other'));
             }),
+            label(370, 480, 175, 30, 'Notes (0 = Auto):', 26, { centerMode: None }),
+            numberBox(370, 510, 140, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [0, 100000], get: () => s.autoMapCount ?? 0, set: v => { s.autoMapCount = Math.round(v); saveS(); } }),
             button(370, 430, 175, 40, 'RESET LEARNING', 27, () => {
                 app.dialogs.confirm('Forget everything the auto mapper has learned?').then(r => r === 'yes' && SSQEAutoMapper.reset());
             }),
