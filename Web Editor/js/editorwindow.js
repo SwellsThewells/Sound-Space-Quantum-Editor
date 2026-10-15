@@ -276,6 +276,8 @@
                     app.dialogs.exportSspm(editor);
                 else if (type === EXPORT_TYPES[1])
                     app.dialogs.exportSspm(editor, 'rhm');
+                else if (type === EXPORT_TYPES[3])
+                    app.hitTheRoad();
                 else
                     app.dialogs.message(`Exporting to ${s.exportType} isn't available in the web editor yet. Use Nightly (SSPM) or Rhythia (RHM).`);
             }),

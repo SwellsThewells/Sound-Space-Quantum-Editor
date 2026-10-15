@@ -206,6 +206,56 @@
                 root.setProperty(`--c${i}`, `rgb(${this.settings[`color${i}`].join(',')})`);
         }
 
+        // web only: exporting to Novastra (NPK). The editor fades to black, then the video fades in and loops for
+        // good; there's no way back short of closing the tab.
+        hitTheRoad() {
+            if (this.roadTripped)
+                return;
+            this.roadTripped = true;
+
+            // made inside the click so browsers (iOS too) let it play with sound later
+            const video = el('video', { loop: '', playsinline: '', preload: 'auto' },
+                el('source', { src: 'assets/hit_the_road.webm', type: 'video/webm' }),
+                el('source', { src: 'assets/hit_the_road.mp4', type: 'video/mp4' }));
+            video.play().then(() => video.pause()).catch(() => { });
+
+            const overlay = el('div', { id: 'hit-the-road' });
+            Object.assign(overlay.style, {
+                position: 'fixed', inset: '0', zIndex: '2147483647', background: '#000', opacity: '0',
+                transition: 'opacity 2s ease', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'default', touchAction: 'none',
+            });
+            Object.assign(video.style, { maxWidth: '100%', maxHeight: '100%', opacity: '0', transition: 'opacity 2.5s ease' });
+            overlay.append(video);
+            document.body.append(overlay);
+
+            // nothing gets through to the editor any more
+            const block = e => {
+                e.stopImmediatePropagation();
+                if (e.cancelable && !(e.type === 'keydown' && (e.ctrlKey || e.metaKey) && /^[wW]$/.test(e.key)))
+                    e.preventDefault();
+            };
+            for (const type of ['keydown', 'keyup', 'keypress', 'wheel', 'pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'touchstart', 'touchmove', 'touchend', 'paste', 'copy', 'drop', 'dragover'])
+                window.addEventListener(type, block, { capture: true, passive: false });
+
+            requestAnimationFrame(() => requestAnimationFrame(() => overlay.style.opacity = '1'));
+            setTimeout(() => {
+                if (this.editor) {
+                    this.editor.music && this.editor.music.isPlaying && this.editor.pauseMusic && this.editor.pauseMusic();
+                    this.editor.suspend && this.editor.suspend();
+                }
+                if (this.screen && this.screen.stop)
+                    this.screen.stop();
+                video.currentTime = 0;
+                video.style.opacity = '1';
+                video.play().catch(() => {
+                    // sound not allowed here: play muted rather than not at all
+                    video.muted = true;
+                    video.play().catch(() => { });
+                });
+            }, 2000);
+        }
+
         dialogOpen() {
             return this.dialogs.isModalOpen();
         }
