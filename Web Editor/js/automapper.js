@@ -785,7 +785,10 @@ window.SSQEAutoMapper = (function () {
                     continue;
                 lastF = f;
                 lastV = v;
-                raw.push({ ms: f * 10, strength: Math.min(1.5, v) * weight, kinds: [kind] });
+                // between frames: the top of a parabola through the peak and its neighbours
+                const y0 = env[f - 1], y1 = env[f], y2 = env[f + 1], dd = y0 - 2 * y1 + y2;
+                const frac = dd < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (y0 - y2) / dd)) : 0;
+                raw.push({ ms: (f + frac) * 10, strength: Math.min(1.5, v) * weight, kinds: [kind] });
             }
         }
         raw.sort((p, q) => p.ms - q.ms);
@@ -832,13 +835,59 @@ window.SSQEAutoMapper = (function () {
         const total = sections.reduce((t, s) => t + shape(s) * (s.to - s.from), 0) || 1;
         const span = sections.reduce((t, s) => t + (s.to - s.from), 0) || 1;
         sections.forEach(s => s.nps = nps * shape(s) * span / total);
+        // Where the music carries on just as busy (about as many drum hits a second), the notes carry on too: next
+        // to each other, two such sections can't differ much in how many notes they get, however their loudness
+        // changes (a build-up into a drop, or a drop that's split in two). Real changes (a breakdown, the drop
+        // kicking in) still change as much as the music does.
+        const ev = a.drumEvents || [];
+        for (const sec of sections) {
+            let w = 0;
+            for (const e of ev)
+                if (e.ms >= sec.from && e.ms < sec.to)
+                    w += Math.min(1, e.strength);
+            sec.rate = w / Math.max(0.5, (sec.to - sec.from) / 1000);
+        }
+        for (let pass = 0; pass < 3; pass++)
+            for (let i = 0; i + 1 < sections.length; i++) {
+                const p = sections[i], q = sections[i + 1];
+                const same = Math.min(p.rate, q.rate) / Math.max(p.rate, q.rate, 1e-6);
+                const allowed = 1.25 + 4 * Math.max(0, 0.85 - same);
+                const [lo, hi] = p.nps < q.nps ? [p, q] : [q, p];
+                if (hi.nps > lo.nps * allowed)
+                    lo.nps = hi.nps / allowed;
+            }
+        // (still averaging `nps` over the song)
+        const now = sections.reduce((t, s) => t + s.nps * (s.to - s.from), 0) / span;
+        if (now > 0)
+            sections.forEach(s => s.nps *= nps / now);
         const sectionAt = ms => sections.find(s => ms >= s.from && ms < s.to) || sections[sections.length - 1];
 
         const inRange = bars.filter(b => b.to > startMs && b.from < endMs);
+        // inside a section, a bar with more going on than usual there (a drum roll into a drop) gets a few more
+        // notes and a bar with less a few fewer; the section's total stays the same
+        let e1 = 0;
+        const barRate = bar => {
+            while (e1 < ev.length && ev[e1].ms < bar.from)
+                e1++;
+            let w = 0;
+            for (let q = e1; q < ev.length && ev[q].ms < bar.to; q++)
+                w += Math.min(1, ev[q].strength);
+            return w / Math.max(0.2, (bar.to - bar.from) / 1000);
+        };
         let cap = inRange.map(b => {
             const part = (Math.min(b.to, endMs) - Math.max(b.from, startMs)) / (b.to - b.from);
-            return sectionAt(b.from).nps * (b.to - b.from) / 1000 * part;
+            const sec = sectionAt(b.from);
+            const act = sec.rate > 0 ? Math.max(0.6, Math.min(1.5, 0.6 + 0.4 * barRate(b) / sec.rate)) : 1;
+            return { sec, w: sec.nps * (b.to - b.from) / 1000 * part, act };
         });
+        {
+            const plain = new Map(), weighted = new Map();
+            for (const c of cap) {
+                plain.set(c.sec, (plain.get(c.sec) || 0) + c.w);
+                weighted.set(c.sec, (weighted.get(c.sec) || 0) + c.w * c.act);
+            }
+            cap = cap.map(c => c.w * c.act * plain.get(c.sec) / (weighted.get(c.sec) || 1));
+        }
         if (opts.count > 0) {
             const sum = cap.reduce((p, q) => p + q, 0) || 1;
             cap = cap.map(w => w * opts.count / sum);
@@ -885,15 +934,18 @@ window.SSQEAutoMapper = (function () {
                     top = d;
             return top;
         };
-        // a sound counts as on a position when it's within a quarter of a step (and 20ms) of it
-        const tolerance = step => Math.min(20, 0.25 * step);
+        // a sound counts as on a position when it's within a quarter of a step of it: at least 12ms (how precisely a
+        // sound's start can be heard in the song) and at most 20ms
+        const tolerance = step => Math.min(20, Math.max(12, 0.25 * step));
         const finer = (family, d) => family[Math.min(family.length - 1, family.indexOf(d) + 1)];
 
         const sources = opts.sources && opts.sources.length ? opts.sources : DEFAULT_SOURCES;
         const events = findEvents(a, sources, opts.sensitivity ?? 0.5, startMs - 200, endMs + 200);
+
         const fill = opts.fill || 'intense';
         const avoid = opts.avoid || [];
         const out = [];
+        const heard = new Map(); // note time on the grid -> when its sound is heard
         let carry = 0;
 
         inRange.forEach((b, j) => {
@@ -940,21 +992,23 @@ window.SSQEAutoMapper = (function () {
             // difficulty) are left out rather than moved a long way from where they're heard
             const here = raw.map(e => {
                 const g = gridAt(e.ms, div);
-                return g.err <= Math.max(tolerance(g.step), Math.min(30, 0.35 * g.step))
-                    ? { ms: Math.round(g.at), score: e.strength * (0.55 + 0.45 * g.weight) } : null;
+                return g.err <= Math.max(tolerance(g.step), Math.min(25, 0.5 * g.step))
+                    ? { ms: Math.round(g.at), src: e.ms, score: e.strength * (0.55 + 0.45 * g.weight) } : null;
             }).filter(e => e && ok(e.ms));
             const picked = [];
             for (const e of here.sort((p, q) => q.score - p.score)) {
                 if (picked.length >= k)
                     break;
-                if (picked.every(t => Math.abs(t - e.ms) >= minGap))
+                if (picked.every(t => Math.abs(t - e.ms) >= minGap)) {
                     picked.push(e.ms);
+                    heard.set(e.ms, e.src);
+                }
             }
             picked.sort((p, q) => p - q);
 
             // streams between the sounds, only where the song itself is busy (two sounds a beat or more), and at
             // most one division finer than the bar's own rhythm (and the difficulty's limit)
-            const busy = here.length >= beatsIn * 2;
+            const busy = raw.length >= beatsIn * 2;
             const intense = s.level >= 0.6 || s.drop;
             if (picked.length < k && busy && (fill === 'busy' || (fill === 'intense' && intense))) {
                 const fillDiv = Math.min(topDiv(family, beatLen), finer(family, div), Math.max(div, d));
@@ -975,7 +1029,17 @@ window.SSQEAutoMapper = (function () {
             carry = Math.min(2, Math.max(-2, exact - picked.length));
             out.push(...picked);
         });
-        return [...new Set(out)].sort((p, q) => p - q);
+        // Streams and other quick runs stay exactly on the grid, so they're perfectly even. A note on its own (no
+        // other note within 200ms) goes exactly where its sound is heard: the sounds of a song never all sit on one
+        // perfect grid, and on a slow note being late or early by even 15ms is easy to feel.
+        const times = [...new Set(out)].sort((p, q) => p - q);
+        return times.map((t, i) => {
+            const src = heard.get(t);
+            if (src === undefined || Math.abs(src - t) <= 4 || src < startMs || src > endMs)
+                return t;
+            const gap = Math.min(i ? t - times[i - 1] : Infinity, i + 1 < times.length ? times[i + 1] - t : Infinity);
+            return gap >= 200 ? Math.round(src) : t;
+        });
     }
 
     // No beat to follow (the tempo drifts and the map has no timing points): the sounds themselves, at most as many as
@@ -1472,7 +1536,7 @@ window.SSQEAutoMapper = (function () {
         }
         best.notes.info = {
             bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady),
-            sections: sections.map(s => ({ from: s.from, to: s.to, level: +s.level.toFixed(2), drop: s.drop })),
+            sections: sections.map(s => ({ from: s.from, to: s.to, level: +s.level.toFixed(2), drop: s.drop, rate: s.rate && +s.rate.toFixed(1) })),
         };
         return best.notes;
     }
