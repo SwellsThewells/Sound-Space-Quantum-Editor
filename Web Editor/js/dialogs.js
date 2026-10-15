@@ -745,7 +745,34 @@
             choice('Patterns', 'autoMapPatterns', [['mixed', 'Like the learned maps'], ['streams', 'More streams (small moves)'], ['jumps', 'More jumps (big moves)']], 'mixed', 'What kind of patterns to favour');
             slider('Drop Intensity', 'autoMapDrops', 0, 200, 10, 100, pct, 'How much denser and wider the intense parts and drops are than the rest');
             slider('Variety', 'autoMapVariety', 0, 100, 5, 50, pct, 'Higher avoids repeating the same patterns; lower repeats what works');
-            choice('Sync To', 'autoMapSync', [['drums', 'Drums (not vocals)'], ['melody', 'Drums and melody'], ['all', 'Every sound']], 'drums', 'Which sounds get notes');
+            // which kinds of sound get notes (any mix of them)
+            controls.push(aLabel('Sync To', X, y, LW, 22));
+            const SOURCES = [['kick', 'Kicks'], ['snare', 'Snares & claps'], ['hat', 'Hi-hats & cymbals'], ['melody', 'Melody & vocals'], ['bass', 'Bass']];
+            const sourceBoxes = SOURCES.map(([key, text], i) => {
+                const c = aCheck(text, false, X + LW + (i % 2) * 125, y + Math.floor(i / 2) * 24, 122, 22);
+                c.input.addEventListener('change', () => {
+                    const on = sourceBoxes.filter(b => b.input.checked).map(b => b.key);
+                    if (!on.length) {
+                        c.input.checked = true;
+                        return;
+                    }
+                    s.autoMapSources = on.join(',');
+                    save();
+                });
+                controls.push(c.label);
+                return { ...c, key };
+            });
+            rows.push({
+                read: () => {
+                    const on = (s.autoMapSources || 'kick,snare,hat').split(',');
+                    sourceBoxes.forEach(b => b.input.checked = on.includes(b.key));
+                },
+                reset: () => s.autoMapSources = 'kick,snare,hat',
+            });
+            y += 78;
+            slider('Sensitivity', 'autoMapSensitivity', 0, 100, 5, 50, pct, 'How quiet a sound can be and still get a note: lower only maps clear hits');
+            choice('Fill Streams', 'autoMapFill', [['intense', 'In intense parts'], ['busy', 'Wherever the song is busy'], ['never', 'Never (only on sounds)']], 'intense', 'Whether streams are filled in between sounds where the song itself is busy');
+            slider('Calm Parts', 'autoMapCalm', 0, 100, 5, 30, pct, 'How many notes calm parts (intros, breakdowns) get: 0% leaves them nearly empty');
             y += 6;
             check('Quantum (notes off the 3x3 grid)', 'autoMapQuantum', false, 'Lets it place notes between grid cells, from quantum maps it learned');
             check('Follow this map\'s own patterns', 'autoMapUseMap', true, 'The notes already in the map are the patterns it prefers');

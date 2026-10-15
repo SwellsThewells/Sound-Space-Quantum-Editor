@@ -114,7 +114,10 @@
                     patterns: s.autoMapPatterns || 'mixed',
                     dropBoost: (s.autoMapDrops ?? 100) / 100,
                     variety: (s.autoMapVariety ?? 50) / 100,
-                    syncTo: s.autoMapSync || 'drums',
+                    sources: (s.autoMapSources || 'kick,snare,hat').split(',').filter(Boolean),
+                    sensitivity: (s.autoMapSensitivity ?? 50) / 100,
+                    fill: s.autoMapFill || 'intense',
+                    calm: (s.autoMapCalm ?? 30) / 100,
                 });
                 // no BPM yet and the song keeps a steady beat: the detected BPM becomes the map's timing point, so the
                 // beat lines match what was mapped

@@ -86,7 +86,10 @@
         autoMapPatterns: 'mixed',
         autoMapDrops: 100,
         autoMapVariety: 50,
-        autoMapSync: 'drums',
+        autoMapSources: 'kick,snare,hat', // web only: kinds of sound the auto mapper syncs to
+        autoMapSensitivity: 50,
+        autoMapFill: 'intense',
+        autoMapCalm: 30,
         autoMapUseMap: true,
         autoMapSetBpm: true,
         autoMapCount: 0, // web only: how many notes the auto mapper adds (0 = as many as the difficulty asks for)

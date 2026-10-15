@@ -266,7 +266,7 @@ window.SSQEAutoMapper = (function () {
         let prevLp = new Float32Array(B + 1), lp = new Float32Array(B + 1);
         let prevLh = new Float32Array(B + 1), lh = new Float32Array(B + 1);
         let prevLa = new Float32Array(B + 1), la = new Float32Array(B + 1);
-        const melodyRaw = new Float32Array(frames), allRaw = new Float32Array(frames);
+        const melodyRaw = new Float32Array(frames), allRaw = new Float32Array(frames), bassRaw = new Float32Array(frames);
         const low = new Float32Array(frames), mid = new Float32Array(frames), high = new Float32Array(frames);
         const rms = new Float32Array(frames), harmonic = new Float32Array(frames);
 
@@ -286,15 +286,16 @@ window.SSQEAutoMapper = (function () {
                 rms[f] = Math.sqrt(e / N);
                 fft(re, im);
                 const mag = ring[f % T];
+                // on a scale where 1 is a full-volume sine, so near-silent noise stays near 0 after the log below
                 for (let k = 1; k <= B; k++)
-                    mag[k] = Math.hypot(re[k], im[k]);
+                    mag[k] = Math.hypot(re[k], im[k]) / (N / 4);
             }
             const g = f - HALF;
             if (g < 0)
                 continue;
             const cur = ring[g % T];
             const from = Math.max(0, g - HALF), to = Math.min(frames - 1, g + HALF);
-            let l = 0, m = 0, h = 0, harm = 0, mel = 0, all = 0;
+            let l = 0, m = 0, h = 0, harm = 0, mel = 0, all = 0, bass = 0, lc = 0, mc = 0, hc = 0;
             for (let k = 1; k <= B; k++) {
                 // harmonic: median over time; percussive: median over frequency
                 let n = 0;
@@ -310,29 +311,41 @@ window.SSQEAutoMapper = (function () {
                 lh[k] = Math.log1p(100 * cur[k] * (1 - mask));
                 la[k] = Math.log1p(100 * cur[k]);
                 harm += cur[k] * (1 - mask);
-                if (k >= lowEnd && lh[k] > prevLh[k])
-                    mel += lh[k] - prevLh[k];
+                if (lh[k] > prevLh[k]) {
+                    if (k >= lowEnd)
+                        mel += lh[k] - prevLh[k];
+                    else
+                        bass += lh[k] - prevLh[k];
+                }
                 if (la[k] > prevLa[k])
                     all += la[k] - prevLa[k];
                 const d = lp[k] - prevLp[k];
                 if (d > 0) {
-                    if (k < lowEnd)
+                    // also how many frequencies jump at once: a drum hits most of its range, a wobbling voice a few
+                    const wide = d > 0.25 ? 1 : 0;
+                    if (k < lowEnd) {
                         l += d;
-                    else if (k < midEnd)
+                        lc += wide;
+                    } else if (k < midEnd) {
                         m += d;
-                    else
+                        mc += wide;
+                    } else {
                         h += d;
+                        hc += wide;
+                    }
                 }
             }
             if (g) {
-                low[g] = l;
-                mid[g] = m;
-                high[g] = h;
+                // per frequency, weighted by how much of the band jumped together
+                low[g] = l / (lowEnd - 1) * (0.4 + 0.6 * lc / (lowEnd - 1));
+                mid[g] = m / (midEnd - lowEnd) * Math.min(1, 2.5 * mc / (midEnd - lowEnd));
+                high[g] = h / (B + 1 - midEnd) * Math.min(1, 2.5 * hc / (B + 1 - midEnd));
             }
             harmonic[g] = harm;
             if (g) {
-                melodyRaw[g] = mel;
-                allRaw[g] = all;
+                melodyRaw[g] = mel / (B + 1 - lowEnd);
+                allRaw[g] = all / B;
+                bassRaw[g] = bass / (lowEnd - 1);
             }
             [prevLp, lp] = [lp, prevLp];
             [prevLh, lh] = [lh, prevLh];
@@ -343,6 +356,12 @@ window.SSQEAutoMapper = (function () {
             }
         }
 
+        // how loud each kind of sound is compared to the others (a song without hi-hats shouldn't get hi-hat notes
+        // from noise that was scaled up)
+        const rawPeak = {
+            kick: percentile(low, 0.98), snare: percentile(mid, 0.98), hat: percentile(high, 0.98),
+            melody: percentile(melodyRaw, 0.98), bass: percentile(bassRaw, 0.98),
+        };
         // each band on the same scale
         for (const a of [low, mid, high]) {
             const p = percentile(a, 0.97) || 1;
@@ -372,7 +391,19 @@ window.SSQEAutoMapper = (function () {
         const melody = peaky(melodyRaw);
         const everything = peaky(allRaw);
 
-        const result = { frames, hits, beats, low, rms, harmonic, melody, everything, tempo };
+        const bassline = peaky(bassRaw);
+        const sources = { kick: peaky(low), snare: peaky(mid), hat: peaky(high), melody, bass: bassline };
+        const loudest = Math.max(...Object.values(rawPeak), 1e-9);
+        const sourceLevel = {};
+        for (const k in rawPeak)
+            sourceLevel[k] = Math.min(1, rawPeak[k] / loudest);
+
+        // how loud the song is around each moment compared to its loud parts (0..1): a soft passage's drums count less
+        const db = smooth(rms.map(v => 20 * Math.log10(v + 1e-6)), 25);
+        const loudRef = percentile(db, 0.95);
+        const loudness = db.map(v => Math.min(1, Math.max(0, (v - (loudRef - 30)) / 24)));
+
+        const result = { frames, hits, beats, low, rms, harmonic, melody, everything, sources, sourceLevel, loudness, tempo };
         analyses.set(buffer, result);
         return result;
     }
@@ -420,12 +451,17 @@ window.SSQEAutoMapper = (function () {
                 peaks.push(lag);
         peaks.sort((a, b) => ac[b] - ac[a]);
         const candidates = [];
-        for (const lag of peaks.slice(0, 6))
+        for (const lag of peaks.slice(0, 6)) {
+            // between whole frames: the top of a parabola through the peak and its neighbours
+            const y0 = ac[lag - 1], y1 = ac[lag], y2 = ac[lag + 1];
+            const d = y0 - 2 * y1 + y2;
+            const exact = lag + (d ? 0.5 * (y0 - y2) / d : 0);
             for (const r of [1, 2, 0.5, 1.5, 2 / 3, 4 / 3, 0.75]) {
-                const bpm = 6000 / lag * r;
+                const bpm = 6000 / exact * r;
                 if (bpm >= 85 && bpm <= 280 && !candidates.some(c => Math.abs(c / bpm - 1) < 0.012))
                     candidates.push(bpm);
             }
+        }
 
         // best phase for a period: where the strongest hits gather
         const strong = [];
@@ -476,7 +512,7 @@ window.SSQEAutoMapper = (function () {
         const tuned = [];
         for (const c of candidates) {
             let top = null;
-            for (let bpm = c * 0.992; bpm <= c * 1.008; bpm += 0.01) {
+            for (let bpm = c * 0.984; bpm <= c * 1.016; bpm += 0.01) {
                 const g = gather(bpm);
                 if (!top || g > top.g)
                     top = { bpm, g };
@@ -569,7 +605,8 @@ window.SSQEAutoMapper = (function () {
             }
             shifts.push(bestShift);
         }
-        const steady = shifts.filter(s => Math.abs(s) <= 1.5).length >= shifts.length * 0.8;
+        // (quiet stretches can't tell where the beat is, so a few windows off don't count against it)
+        const steady = shifts.filter(s => Math.abs(s) <= 2).length >= shifts.length * 0.7;
 
         // swing: are the hits between beats on thirds rather than quarters?
         let thirds = 0, quarters = 0;
@@ -610,20 +647,29 @@ window.SSQEAutoMapper = (function () {
         const n = bars.length;
         if (!n)
             return [];
+        // drum hits per second matter most (how much rhythm is going on), then their strength and the loudness
+        if (!a.drumEvents)
+            a.drumEvents = findEvents(a, DEFAULT_SOURCES, 0.5, 0, a.frames * 10);
+        const ev = a.drumEvents;
+        let e = 0;
         const feat = bars.map(b => {
             const f0 = Math.max(0, Math.floor(b.from / 10)), f1 = Math.min(a.frames, Math.max(f0 + 1, Math.floor(b.to / 10)));
-            let loud = 0, hits = 0, kick = 0, harm = 0;
+            let loud = 0, hits = 0, kick = 0;
             for (let f = f0; f < f1; f++) {
                 loud += Math.log10(a.rms[f] + 1e-4);
                 hits += a.hits[f];
                 kick += a.low[f];
-                harm += a.harmonic[f];
             }
+            while (e < ev.length && ev[e].ms < b.from)
+                e++;
+            let count = 0;
+            for (let j = e; j < ev.length && ev[j].ms < b.to; j++)
+                count += Math.min(1, ev[j].strength);
             const c = f1 - f0;
-            return [loud / c, hits / c, kick / c, harm / c];
+            return [loud / c, hits / c, kick / c, count / Math.max(0.1, (b.to - b.from) / 1000)];
         });
         const R = [0, 1, 2, 3].map(j => rank(feat.map(v => v[j])));
-        const v = bars.map((_, i) => 0.3 * R[0][i] + 0.4 * R[1][i] + 0.2 * R[2][i] + 0.1 * R[3][i]);
+        const v = bars.map((_, i) => 0.2 * R[0][i] + 0.2 * R[1][i] + 0.1 * R[2][i] + 0.5 * R[3][i]);
 
         // best split into sections of at least 4 bars: least spread inside sections, plus a cost per section
         const MIN = Math.min(4, n), LAMBDA = 0.6;
@@ -680,9 +726,76 @@ window.SSQEAutoMapper = (function () {
         return 0.3;
     }
 
-    // Picks the note times. Each section gets a steady density (more in intense parts and drops, fewer in calm
-    // ones, for the chosen average), on one beat division for the whole section, and inside each bar the notes go
-    // where the drums hit (helped by where they usually hit in that section, so the rhythm keeps a pattern).
+    // ------------------------------------------------ what to put notes on
+
+    // the kinds of sound notes can sync to, and how much each counts when there's more than the difficulty allows
+    const SOURCE_WEIGHT = { kick: 1, snare: 1, hat: 0.55, melody: 0.75, bass: 0.7 };
+    const DEFAULT_SOURCES = ['kick', 'snare', 'hat'];
+
+    // The sounds worth a note: moments where one of the chosen kinds of sound starts, loud enough to count
+    // (sensitivity 0..1) and standing out from what's around it. Silence and held sounds (pads, long vocal notes)
+    // don't start anything, so they get nothing. [{ ms, strength, kinds }] in time order.
+    function findEvents(a, sources, sensitivity, fromMs, toMs) {
+        const thr = 0.34 - 0.3 * sensitivity;
+        const f0 = Math.max(2, Math.floor(fromMs / 10) - 1), f1 = Math.min(a.frames - 2, Math.ceil(toMs / 10) + 1);
+        const raw = [];
+        for (const kind of sources) {
+            const env = a.sources[kind];
+            if (!env)
+                continue;
+            // a kind of sound the song (nearly) doesn't have: its envelope is only scaled-up noise
+            if (a.sourceLevel[kind] < 0.01)
+                continue;
+            const weight = SOURCE_WEIGHT[kind];
+            const base = smooth(env, 40);
+            // low sounds ring longer: their echoes are ignored for longer
+            // low sounds ring longer, and a sung note wobbles (vibrato): their echoes are ignored for longer
+            const low = kind === 'kick' || kind === 'bass' || kind === 'melody';
+            const tail = low ? 14 : 8;
+            let lastF = -1e9, lastV = 0;
+            for (let f = f0; f < f1; f++) {
+                const v = env[f] * (0.3 + 0.7 * a.loudness[f]);
+                if (v < thr || env[f] < base[f] * 1.4)
+                    continue;
+                if (env[f] < env[f - 1] || env[f] < env[f + 1] || env[f] < env[f - 2] || env[f] <= env[f + 2])
+                    continue;
+                // not just a bump in the tail of the sound before it
+                let before = 0;
+                for (let k = Math.max(0, f - tail); k < f - 1; k++)
+                    before = Math.max(before, env[k]);
+                if (env[f] < before * 0.5)
+                    continue;
+                // the same sound again: right after a hit (a kick's pitch falling sets the lowest frequencies off a
+                // second time), or a clearly weaker one shortly after
+                const since = f - lastF;
+                if (low ? since < 9 || (since < 25 && v < lastV * 0.7) : since < 4 || (since < 10 && v < lastV * 0.4))
+                    continue;
+                lastF = f;
+                lastV = v;
+                raw.push({ ms: f * 10, strength: Math.min(1.5, v) * weight, kinds: [kind] });
+            }
+        }
+        raw.sort((p, q) => p.ms - q.ms);
+        // one moment heard in several kinds of sound (a kick and a crash together) is one stronger event
+        const out = [];
+        for (const e of raw) {
+            const last = out[out.length - 1];
+            if (last && e.ms - last.ms <= 25) {
+                if (e.strength > last.strength)
+                    last.ms = e.ms;
+                last.strength = Math.max(last.strength, e.strength) + 0.2 * Math.min(last.strength, e.strength);
+                last.kinds.push(...e.kinds);
+            } else
+                out.push(e);
+        }
+        return out.filter(e => e.ms >= fromMs && e.ms <= toMs);
+    }
+
+    // Picks the note times. Notes go on sounds the song actually makes (the chosen kinds of sound), lined up on the
+    // beat; where there's nothing, there are no notes. The difficulty sets how many of them may get a note: each
+    // section of the song is allowed more or fewer (intense parts and drops more), and when there are more sounds than
+    // that, the strongest and most on-beat ones win. Streams are only filled in between sounds where the song itself
+    // is busy (Fill Streams).
     function chooseTimes(a, opts, nps, ctx) {
         const { startMs, endMs } = opts;
         const songMs = a.frames * 10;
@@ -692,125 +805,148 @@ window.SSQEAutoMapper = (function () {
         for (let i = 0; i < beats.length; i++) {
             if (((beats[i].index % 4) + 4) % 4 !== 0 && bars.length)
                 continue;
-            const next = beats.slice(i + 1).find(b => ((b.index % 4) + 4) % 4 === 0 || b.tp !== beats[i].tp);
+            const next = beats.slice(i + 1, i + 9).find(b => ((b.index % 4) + 4) % 4 === 0 || b.tp !== beats[i].tp);
             bars.push({ from: beats[i].ms, to: next ? next.ms : Math.min(songMs, beats[i].ms + 4 * 60000 / ctx.timing[beats[i].tp].bpm), first: i });
         }
         const sections = findSections(a, bars);
         ctx.sections = sections;
 
-        // density per section, averaging `nps` over the whole song
+        // how many notes each section may have, averaging `nps` over the whole song
         const boost = opts.dropBoost ?? 1;
-        const shape = s => (0.3 + 1.6 * Math.pow(s.level, 1 + 0.5 * boost)) * (s.drop ? 1 + 0.15 * boost : 1);
+        // Calm Parts (0..1): how much the calm sections (intros, breakdowns) get compared to the intense ones
+        const floor = 0.04 + 0.5 * (opts.calm ?? 0.3);
+        const shape = s => (floor + (1.9 - floor) * Math.pow(s.level, 1 + 0.5 * boost)) * (s.drop ? 1 + 0.15 * boost : 1);
         const total = sections.reduce((t, s) => t + shape(s) * (s.to - s.from), 0) || 1;
         const span = sections.reduce((t, s) => t + (s.to - s.from), 0) || 1;
         sections.forEach(s => s.nps = nps * shape(s) * span / total);
         const sectionAt = ms => sections.find(s => ms >= s.from && ms < s.to) || sections[sections.length - 1];
 
-        // notes wanted in each bar of the range
         const inRange = bars.filter(b => b.to > startMs && b.from < endMs);
-        let want = inRange.map(b => {
-            const s = sectionAt(b.from);
+        let cap = inRange.map(b => {
             const part = (Math.min(b.to, endMs) - Math.max(b.from, startMs)) / (b.to - b.from);
-            return s.nps * (b.to - b.from) / 1000 * part;
+            return sectionAt(b.from).nps * (b.to - b.from) / 1000 * part;
         });
         if (opts.count > 0) {
-            const sum = want.reduce((p, q) => p + q, 0) || 1;
-            want = want.map(w => w * opts.count / sum);
+            const sum = cap.reduce((p, q) => p + q, 0) || 1;
+            cap = cap.map(w => w * opts.count / sum);
         }
 
-        const family = ctx.triplet ? SWUNG : STRAIGHT;
         const shiftAt = ms => {
             if (!ctx.shifts)
                 return 0;
             const i = Math.min(ctx.shifts.length - 1, Math.max(0, Math.floor(ms / 15000)));
             return ctx.shifts[i] * 10;
         };
-        // one division per section: the coarsest with room for its busiest bar
-        const divFor = new Map();
-        inRange.forEach((b, j) => {
-            const s = sectionAt(b.from);
-            const beatsIn = Math.max(1, Math.round((b.to - b.from) / (60000 / ctx.timing[beats[b.first].tp].bpm)));
-            const perBeat = want[j] / beatsIn;
-            const d = family.find(d => d >= perBeat * 1.05) || family[family.length - 1];
-            divFor.set(s, Math.max(divFor.get(s) || 1, d));
-        });
-
-        // slots in a bar: [{ ms, weight, pos }]
-        const slotsOf = b => {
-            const d = divFor.get(sectionAt(b.from)) || 1;
-            const out = [];
-            for (let i = b.first; i < beats.length && beats[i].ms < b.to - 1; i++) {
-                const t0 = beats[i].ms, t1 = i + 1 < beats.length ? beats[i + 1].ms : t0 + 60000 / ctx.timing[beats[i].tp].bpm;
-                for (let p = 0; p < d; p++) {
-                    const ms = t0 + (t1 - t0) * p / d;
-                    out.push({ ms: ms + shiftAt(ms), weight: slotWeight(p, d), pos: (i - b.first) * d + p });
-                }
+        const beatAt = ms => {
+            let lo = 0, hi = beats.length - 1;
+            while (hi - lo > 1) {
+                const m = (lo + hi) >> 1;
+                if (beats[m].ms <= ms)
+                    lo = m;
+                else
+                    hi = m;
             }
-            return out;
+            return lo;
         };
-        const env = ctx.env || a.hits;
-        const strength = ms => around(env, ms / 10, 2);
+        // lines a time up on the nearest 1/16 or 1/12 of a beat (whichever is closer): [ms, weight of that position]
+        const snap = ms => {
+            const i = beatAt(ms - shiftAt(ms));
+            const t0 = beats[i].ms + shiftAt(beats[i].ms);
+            const len = i + 1 < beats.length ? beats[i + 1].ms - beats[i].ms : 60000 / ctx.timing[beats[i].tp].bpm;
+            let best = null;
+            for (const div of ctx.triplet ? [12, 16] : [16, 12]) {
+                const p = Math.round((ms - t0) / (len / div));
+                const at = t0 + p * len / div;
+                if (!best || Math.abs(at - ms) < Math.abs(best[0] - ms) - 1)
+                    best = [at, slotWeight(((p % div) + div) % div, div)];
+            }
+            return best;
+        };
 
-        // where the drums usually hit in each section (per position in the bar)
-        const usual = new Map();
-        for (const b of bars) {
-            const s = sectionAt(b.from);
-            if (!divFor.has(s))
-                continue;
-            const map = usual.get(s) || new Map();
-            for (const slot of slotsOf(b))
-                map.set(slot.pos, (map.get(slot.pos) || 0) + strength(slot.ms) / Math.max(1, s.bars));
-            usual.set(s, map);
-        }
-
+        const family = ctx.triplet ? SWUNG : STRAIGHT;
+        const sources = opts.sources && opts.sources.length ? opts.sources : DEFAULT_SOURCES;
+        const events = findEvents(a, sources, opts.sensitivity ?? 0.5, startMs - 200, endMs + 200);
+        const fill = opts.fill || 'intense';
         const avoid = opts.avoid || [];
         const out = [];
         let carry = 0;
+
         inRange.forEach((b, j) => {
             const s = sectionAt(b.from);
-            const slots = slotsOf(b).filter(x => x.ms >= startMs && x.ms <= endMs);
-            const exact = want[j] + carry;
-            let k = Math.min(slots.length, Math.max(0, Math.round(exact)));
-            carry = exact - k;
-            if (!k || !slots.length)
-                return;
-            const minGap = slots.length > 1 ? (slots[1].ms - slots[0].ms) * 0.8 : 30;
-            const pattern = usual.get(s) || new Map();
-            const picked = k >= slots.length * 0.85 ? slots
-                : slots.map(x => ({ ...x, score: x.weight * (0.2 + 0.55 * strength(x.ms) + 0.45 * (pattern.get(x.pos) || 0)) }))
-                    .sort((p, q) => q.score - p.score).slice(0, k);
-            for (const x of picked)
-                if (avoid.every(t => Math.abs(t - x.ms) >= minGap))
-                    out.push(Math.round(x.ms));
+            const beatLen = 60000 / ctx.timing[beats[b.first].tp].bpm;
+            const beatsIn = Math.max(1, Math.round((b.to - b.from) / beatLen));
+            const exact = cap[j] + carry;
+            const k = Math.max(0, Math.round(exact));
+            // how close notes may be: the beat division this many notes needs
+            const d = family.find(d => d >= k / beatsIn * 1.05) || family[family.length - 1];
+            const minGap = beatLen / d * 0.85;
+            const ok = ms => ms >= startMs && ms <= endMs && avoid.every(t => Math.abs(t - ms) >= minGap);
+
+            const here = events.filter(e => e.ms >= b.from - 20 && e.ms < b.to - 20)
+                .map(e => {
+                    const [ms, weight] = snap(e.ms);
+                    return { ms: Math.round(ms), score: e.strength * (0.55 + 0.45 * weight) };
+                })
+                .filter(e => ok(e.ms));
+            const picked = [];
+            for (const e of here.sort((p, q) => q.score - p.score)) {
+                if (picked.length >= k)
+                    break;
+                if (picked.every(t => Math.abs(t - e.ms) >= minGap))
+                    picked.push(e.ms);
+            }
+            picked.sort((p, q) => p - q);
+
+            // streams between the sounds, only where the song itself is busy (two sounds a beat or more), and at
+            // most one step finer than the song's own rhythm there
+            const busy = here.length >= beatsIn * 2;
+            const intense = s.level >= 0.6 || s.drop;
+            if (picked.length < k && busy && (fill === 'busy' || (fill === 'intense' && intense))) {
+                const times = here.map(e => e.ms).sort((p, q) => p - q);
+                const gapsHere = times.slice(1).map((t, i) => t - times[i]).filter(g => g > 5).sort((p, q) => p - q);
+                const songStep = gapsHere.length ? gapsHere[Math.floor(gapsHere.length / 2)] : beatLen;
+                const step = Math.max(beatLen / d, songStep / 2 - 2);
+                const extra = [];
+                for (let i = 0; i + 1 < picked.length && picked.length + extra.length < k; i++) {
+                    const p0 = picked[i], p1 = picked[i + 1];
+                    if (p1 - p0 > beatLen * 1.01)
+                        continue;
+                    for (let t = p0 + step; t < p1 - minGap * 0.9 && picked.length + extra.length < k; t += step) {
+                        const ms = Math.round(snap(t)[0]);
+                        if (ok(ms) && ms - p0 >= minGap * 0.9)
+                            extra.push(ms);
+                    }
+                }
+                picked.push(...extra);
+            }
+            carry = Math.min(2, Math.max(-2, exact - picked.length));
+            out.push(...picked);
         });
         return [...new Set(out)].sort((p, q) => p - q);
     }
 
-    // No beat to follow (the tempo drifts and the map has no timing points): the drum hits themselves, then even
-    // steps between them where it's busy
-    function chooseTimesFree(a, opts, nps, env = a.hits) {
+    // No beat to follow (the tempo drifts and the map has no timing points): the sounds themselves, at most as many as
+    // the difficulty allows per couple of seconds
+    function chooseTimesFree(a, opts, nps) {
         const { startMs, endMs } = opts;
         const WINDOW = 2000;
-        const lv = smooth(env, 150);
-        const r = rank(lv);
+        const sources = opts.sources && opts.sources.length ? opts.sources : DEFAULT_SOURCES;
+        const events = findEvents(a, sources, opts.sensitivity ?? 0.5, startMs, endMs);
+        const level = rank(smooth(a.hits, 150));
         const out = [];
         for (let w = startMs; w < endMs; w += WINDOW) {
             const to = Math.min(endMs, w + WINDOW);
-            const level = r[Math.min(a.frames - 1, Math.round((w + to) / 20))] || 0;
-            let want = Math.round(nps * (0.3 + 1.4 * Math.pow(level, 1.5)) * (to - w) / 1000);
+            const lv = level[Math.min(a.frames - 1, Math.round((w + to) / 20))] || 0;
+            let k = Math.round(nps * (0.3 + 1.4 * Math.pow(lv, 1.5)) * (to - w) / 1000);
             if (opts.count > 0)
-                want = Math.round(opts.count * (to - w) / (endMs - startMs));
-            const minGap = Math.max(25, (to - w) / Math.max(1, want) * 0.55);
+                k = Math.round(opts.count * (to - w) / (endMs - startMs));
+            const minGap = Math.max(30, (to - w) / Math.max(1, k) * 0.5);
             const taken = [];
-            const cands = [];
-            for (let f = Math.max(1, Math.floor(w / 10)); f < Math.min(a.frames - 1, to / 10); f++)
-                if (env[f] > 0.08 && env[f] >= env[f - 1] && env[f] >= env[f + 1])
-                    cands.push({ ms: f * 10, score: env[f] });
-            for (const c of cands.sort((p, q) => q.score - p.score)) {
-                if (taken.length >= want)
+            for (const e of events.filter(e => e.ms >= w && e.ms < to).sort((p, q) => q.strength - p.strength)) {
+                if (taken.length >= k)
                     break;
-                if (taken.every(t => Math.abs(t - c.ms) >= minGap) && out.every(t => Math.abs(t - c.ms) >= minGap || t < c.ms - 500))
-                    taken.push(c.ms);
+                if (taken.every(t => Math.abs(t - e.ms) >= minGap) && out.every(t => Math.abs(t - e.ms) >= minGap || t < e.ms - 500))
+                    taken.push(e.ms);
             }
             out.push(...taken);
         }
@@ -1169,7 +1305,10 @@ window.SSQEAutoMapper = (function () {
     // opts: { buffer (AudioBuffer), startMs, endMs, difficulty (1..10), density (1 = normal), count (0 = by difficulty),
     //         flow (0..1: how smooth to keep the cursor's path), follow (0..1: how closely to stick to the learned maps),
     //         jumpScale (1 = like the maps), patterns ('mixed' | 'streams' | 'jumps'), dropBoost (0..2: how much harder
-    //         intense parts and drops are), variety (0..1), syncTo ('drums' | 'melody' | 'all'),
+    //         intense parts and drops are), variety (0..1), sources (kinds of sound to sync to: 'kick', 'snare',
+    //         'hat', 'melody', 'bass'), sensitivity (0..1: how quiet a sound can be and still get a note),
+    //         fill ('never' | 'intense' | 'busy': where streams may be filled in between sounds),
+    //         calm (0..1: how many notes calm parts like intros and breakdowns get),
     //         quantum (allow notes off the 3x3 grid), timing ([{ bpm, ms }] from the map, if it has any),
     //         before (the notes just before startMs), styleNotes (the map's own notes: their patterns are preferred),
     //         avoid (times already taken), progress (text => void) }
@@ -1186,10 +1325,6 @@ window.SSQEAutoMapper = (function () {
         progress('STUDYING THE SECTIONS AND DROPS');
         await tick();
         const ctx = {};
-        // what notes sync to: the drums (default), drums and melody, or every sound
-        const sync = opts.syncTo || 'drums';
-        ctx.env = sync === 'all' ? a.everything
-            : sync === 'melody' ? Float32Array.from(a.hits, (v, i) => Math.max(v, 0.8 * a.melody[i])) : a.hits;
         let detected = null;
         if (opts.timing && opts.timing.length) {
             ctx.timing = opts.timing;
@@ -1200,7 +1335,7 @@ window.SSQEAutoMapper = (function () {
             ctx.triplet = a.tempo.triplet;
             ctx.shifts = a.tempo.steady ? null : a.tempo.shifts;
         }
-        const times = ctx.timing ? chooseTimes(a, opts, nps, ctx) : chooseTimesFree(a, opts, nps, ctx.env);
+        const times = ctx.timing ? chooseTimes(a, opts, nps, ctx) : chooseTimesFree(a, opts, nps);
         if (!times.length)
             return Object.assign([], { info: { bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady) } });
 
@@ -1234,10 +1369,11 @@ window.SSQEAutoMapper = (function () {
         // how fast one move may make the cursor go: comfortable for the difficulty (about 12 cells a second at 5)
         const vmax = 4 * Math.pow(1.33, difficulty - 1);
 
-        // map it a few times and keep the most balanced
+        // map it a few times and keep the most balanced (fewer tries for long stretches, so it doesn't take ages)
         let best = null;
-        for (let t = 0; t < TRIES; t++) {
-            progress(`MAPPING (TRY ${t + 1} OF ${TRIES})`);
+        const tries = times.length < 600 ? TRIES : times.length < 1500 ? 5 : 3;
+        for (let t = 0; t < tries; t++) {
+            progress(`MAPPING (TRY ${t + 1} OF ${tries})`);
             await tick();
             const notes = place(times, lib, { ...opts, vmax, runOptions }, jumpAt);
             const score = badness(notes, jumpAt, vmax, fm, runOptions.flow);
@@ -1297,5 +1433,5 @@ window.SSQEAutoMapper = (function () {
     }
 
     load();
-    return { learn, learnFiles, stats, statsSync, reset, generate, analyse, findTempo };
+    return { learn, learnFiles, stats, statsSync, reset, generate, analyse, findTempo, findEvents };
 })();

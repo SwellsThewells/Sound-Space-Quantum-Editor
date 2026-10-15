@@ -67,7 +67,11 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
 - **Auto mapper** (Patterns tab, web only): learns from every map you import (in the editor or the map
   player) or teach it with **LEARN FROM MAPS**. **AUTO MAP** fills from the timeline's position up to the
   next note (or the end of the song) as one undo step, taking a few seconds to study the song first:
-  - It splits the song into drums and everything else (vocals, instruments) and only syncs to the drums.
+  - It splits the song into drums and everything else (vocals, instruments) and finds each sound worth a
+    note: a kick, snare or hi-hat starting (or, if chosen, a melody/vocal note or bass note), loud enough
+    and standing out from what's around it. Notes only go on those sounds, so silence, held notes and
+    sparse parts stay empty or sparse; the difficulty only decides how many of the sounds get a note.
+    Streams are filled in between sounds only where the song itself is busy.
   - It finds the song's true BPM (trying the related tempos x2, /2, x3/2, /3/2 and keeping the one whose
     beats land on the kicks and snares) and, if the map has no BPM yet and the beat is steady, sets it as
     the map's timing point. With timing points already in the map, it uses those.
@@ -85,8 +89,10 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
   **Quantum** lets it place notes off the 3x3 grid (copied from quantum maps it learned).
   **MORE OPTIONS** adds Flow (how smooth the cursor's path is kept), Follow Learned Maps (how closely the
   patterns stick to the maps), Jump Size, Patterns (like the maps / more streams / more jumps), Drop
-  Intensity, Variety, Sync To (drums / drums and melody / every sound), whether to follow the map's own
-  patterns and whether to set the detected BPM.
+  Intensity, Variety, Sync To (any mix of kicks, snares and claps, hi-hats and cymbals, melody and vocals,
+  bass), Sensitivity (how quiet a sound can be and still get a note), Fill Streams (in intense parts /
+  wherever the song is busy / never), Calm Parts (how many notes intros and breakdowns get), whether to
+  follow the map's own patterns and whether to set the detected BPM.
 - **Grid Zoom** (Graphics tab, web only): makes the 3x3 grid bigger or smaller (50-200%).
   **Note Size** (25-200%) scales the notes on the grid, custom note meshes included.
 - **Grid cursor image** (Settings > Graphics, web only): replaces the square cursor that follows the
