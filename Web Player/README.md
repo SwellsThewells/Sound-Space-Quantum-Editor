@@ -26,10 +26,11 @@ python3 -m http.server 8000   # from the repository root
 Cubic, rebuilt from Rhythia's worlds, or your own image) and loads a custom `.obj` note mesh. These
 are stored in the browser and shared with the editor's playtests.
 
-**BOT PLAY** plays the map like a person would: it moves between notes the way people do, aims a
-little off centre, shakes a little and sometimes misses, and it's judged like a player. Every
-`.sspre` replay you load (with its map) teaches it how you move, aim and miss. **Settings > Bot**
-sets its skill and can reset what it learned.
+**Realistic autoplay** (Settings > Bot): AUTOPLAY plays the map like a person would. It moves between
+notes the way people do, aims a little off centre, shakes a little and sometimes misses, and it's judged
+like a player. It learns from `.sspre` replays: every replay you load with its map, or many at once with
+**UPLOAD REPLAYS** (pick the replays and their maps together; replays are matched to their maps by name)
+or by dropping several replays on the menu. Settings > Bot also sets its skill and can reset what it learned.
 
 Settings > Visuals also has **Disable Background Effects** (backgrounds stop reacting to hits) and
 **Uncap FPS** (frames aren't limited to the screen's refresh rate).

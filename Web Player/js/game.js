@@ -1009,7 +1009,11 @@ void main()
             if (this.Replay)
                 this.loadReplay(opts.replayBuffer);
 
-            this.Bot = opts.mode === 'bot' && window.SSQEBot ? new SSQEBot.Driver(notes, s.botSkill) : null;
+            // web only: with Realistic Autoplay on, autoplay is done by the bot (bot.js)
+            const realistic = opts.mode === 'bot' || (this.Autoplay && s.realisticAutoplay);
+            this.Bot = realistic && window.SSQEBot ? new SSQEBot.Driver(notes, s.botSkill) : null;
+            if (this.Bot)
+                this.Autoplay = false;
 
             this.Camera = new Camera(this);
             this.initWindow(startIndex);
@@ -1197,7 +1201,7 @@ void main()
                 misses: this.misses,
                 maxCombo: this.maxCombo,
                 pauses: this.Pauses,
-                mode: this.Replay ? 'replay' : this.Autoplay ? 'autoplay' : this.Bot ? 'bot' : 'play',
+                mode: this.Replay ? 'replay' : this.Autoplay ? 'autoplay' : this.Bot ? 'realistic autoplay' : 'play',
             });
         }
 

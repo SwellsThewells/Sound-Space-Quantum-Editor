@@ -613,6 +613,10 @@
                 text: 'Disable Background Effects', textSize: 34, style: unc,
                 get: () => !!SSQESettings.load().disableBgEffects, set: v => playerSetting('disableBgEffects', v),
             }),
+            new G.Checkbox(700, 300, 45, 45, {
+                text: 'Realistic Autoplay', textSize: 34, style: unc,
+                get: () => !!SSQESettings.load().realisticAutoplay, set: v => playerSetting('realisticAutoplay', v),
+            }),
             lbl(0, 400, 400, 26, 'Playtest Background:'),
             new G.Dropdown(0, 430, 400, 50, {
                 options: SSQESettings.BACKGROUNDS, textSize: 30, toShow: 8,

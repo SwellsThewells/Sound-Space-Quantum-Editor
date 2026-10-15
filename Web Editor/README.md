@@ -72,8 +72,8 @@ editor's Avalonia windows, and message boxes look like the desktop editor's.
 - **Editor background** (Settings > Colors, web only): pick the default background, your own image
   (**LOAD IMAGE**) or one of the map player's worlds.
 - **Playtest background and note mesh** (Settings > Player, web only): the same 3D worlds and custom
-  `.obj` note mesh as the map player's Visuals settings, shared with it, plus Uncap Playtest FPS and
-  Disable Background Effects.
+  `.obj` note mesh as the map player's Visuals settings, shared with it, plus Uncap Playtest FPS,
+  Disable Background Effects and Realistic Autoplay (Alt + playtest uses the map player's learning bot).
 - **Playtest:** Play From Start and Play Here open the web player on top of the editor. Hold Alt
   while clicking to watch autoplay. Esc returns to the editor.
 

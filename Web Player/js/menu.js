@@ -44,7 +44,7 @@
         screen && screen.toast && screen.toast.show(text, error ? [255, 80, 80] : settings.color1);
     }
 
-    function pickFile(accept) {
+    function pickFile(accept, multiple = false) {
         return new Promise(resolve => {
             const input = document.createElement('input');
             input.type = 'file';
@@ -60,7 +60,9 @@
                 input.remove();
                 resolve(file);
             };
-            input.addEventListener('change', () => finish(input.files[0] || null));
+            if (multiple)
+                input.multiple = true;
+            input.addEventListener('change', () => finish(multiple ? [...input.files] : input.files[0] || null));
             input.addEventListener('cancel', () => finish(null));
             document.body.append(input);
             input.click();
@@ -210,6 +212,105 @@
         }
     }
 
+    // map text from a .sspm, .rhm or .txt file
+    async function mapTextFromFile(file) {
+        const name = file.name.toLowerCase();
+        if (name.endsWith('.sspm') || name.endsWith('.rhm')) {
+            const map = new SSQE.Map();
+            if (name.endsWith('.sspm'))
+                SSQE.Formats.readSspm(map, await file.arrayBuffer());
+            else
+                await SSQE.Formats.readRhm(map, await file.arrayBuffer(), file.name);
+            map.sortAll();
+            return SSQE.Formats.writeTxt(map);
+        }
+        return file.text();
+    }
+
+    // Bulk learning: every .sspre in files is matched to a map (picked alongside, or the loaded one) by its name, or
+    // failing that by which map its cursor lines up with, and the bot learns from it.
+    // report(text, isError) shows progress.
+    let bulkLearning = false;
+    async function learnFromFiles(files, report) {
+        if (bulkLearning || !window.SSQEBot)
+            return;
+        const replays = files.filter(f => /\.sspre$/i.test(f.name));
+        if (!replays.length) {
+            report('PICK .SSPRE REPLAYS, AND THEIR MAPS IF THEY AREN\'T LOADED', true);
+            return;
+        }
+        bulkLearning = true;
+        const norm = t => String(t).toLowerCase().replace(/[^a-z0-9]/g, '');
+        const maps = [];
+        try {
+            for (const f of files.filter(f => /\.(sspm|rhm|txt)$/i.test(f.name))) {
+                try {
+                    const { id, notes } = SSQEGame.parseMap(await mapTextFromFile(f), settings.noteColors);
+                    if (notes.length)
+                        maps.push({ id, notes, file: f.name });
+                } catch { /* not a map */ }
+            }
+            if (mapInfo && mapText)
+                try {
+                    maps.push({ id: mapInfo.name, notes: SSQEGame.parseMap(mapText, settings.noteColors).notes, file: '' });
+                } catch { /* ignore */ }
+
+            let learned = 0, known = 0, unmatched = 0, failed = 0;
+            for (let i = 0; i < replays.length; i++) {
+                const f = replays[i];
+                report(`LEARNING FROM REPLAY ${i + 1} OF ${replays.length}...`);
+                await new Promise(r => setTimeout(r, 30));
+                try {
+                    const buffer = await f.arrayBuffer();
+                    const r = SSQEGame.parseReplay(buffer);
+                    if (r.format !== 'sspre') {
+                        failed++;
+                        continue;
+                    }
+                    const names = [norm(r.name || ''), norm(f.name)];
+                    let candidates = maps.filter(m => {
+                        const ids = [norm(m.id), norm(m.file.replace(/\.[^.]*$/, ''))].filter(Boolean);
+                        return ids.some(id => names.some(n => n.startsWith(id)));
+                    });
+                    if (!candidates.length)
+                        candidates = maps;
+                    let best = null;
+                    for (const m of candidates) {
+                        const aligned = SSQEGame.alignReplay(r, m.notes);
+                        const q = aligned.alignment ? aligned.alignment.matched : 0;
+                        if (!best || q > best.q)
+                            best = { aligned, m, q };
+                    }
+                    if (!best || best.q < 0.5) {
+                        unmatched++;
+                        continue;
+                    }
+                    const tempo = best.aligned.tempo || 1;
+                    const id = `${f.name}|${buffer.byteLength}|${best.m.id}|${best.m.notes.length}`;
+                    learnedReplays.add(id);
+                    const ok = await SSQEBot.learn(best.aligned.cursor, best.m.notes, id, {
+                        hitWindow: (parseFloat(r.settings && r.settings.hitw) || 55) * tempo,
+                        hitbox: parseFloat(r.settings && r.settings.hbox) || 1.14,
+                    });
+                    ok ? learned++ : known++;
+                } catch (err) {
+                    console.warn(`Couldn't learn from ${f.name}`, err);
+                    failed++;
+                }
+            }
+            const parts = [`LEARNED FROM ${learned} OF ${replays.length} REPLAYS`];
+            if (known)
+                parts.push(`${known} ALREADY LEARNED`);
+            if (unmatched)
+                parts.push(`${unmatched} WITHOUT THEIR MAP`);
+            if (failed)
+                parts.push(`${failed} UNREADABLE`);
+            report(parts.join(' - '), !learned && (unmatched + failed) > 0);
+        } finally {
+            bulkLearning = false;
+        }
+    }
+
     async function pasteMap() {
         let text = '';
         try {
@@ -263,7 +364,13 @@
         e.preventDefault();
         if (game)
             return;
-        for (const file of e.dataTransfer.files) {
+        const dropped = [...e.dataTransfer.files];
+        // several replays at once: the bot learns from all of them (with the maps dropped alongside)
+        if (dropped.filter(f => /\.sspre$/i.test(f.name)).length > 1) {
+            learnFromFiles(dropped, toast);
+            return;
+        }
+        for (const file of dropped) {
             const name = file.name.toLowerCase();
             if (name.endsWith('.sspre') || name.endsWith('.qer'))
                 loadReplayFile(file);
@@ -308,7 +415,7 @@
             document.documentElement.requestFullscreen().catch(() => { });
 
         await ensureAudio();
-        if (mode === 'bot' && window.SSQEBot)
+        if ((mode === 'bot' || settings.realisticAutoplay) && window.SSQEBot)
             await SSQEBot.load();
 
         let audioElement = null;
@@ -465,14 +572,13 @@
             ].join('\n') : ''),
 
             button(1190, 180, 600, 100, 'PLAY', 54, () => start('play')),
-            button(1190, 295, 295, 100, 'AUTOPLAY', 46, () => start('autoplay')),
-            button(1495, 295, 295, 100, 'BOT PLAY', 46, () => start('bot')),
+            button(1190, 295, 600, 100, 'AUTOPLAY', 54, () => start('autoplay')),
             replayButton,
             button(1190, 525, 600, 100, 'SETTINGS', 54, () => show(settingsScreen)),
 
             dynamic(1190, 632, 600, 26, 22, () => {
                 const b = window.SSQEBot && SSQEBot.statsSync();
-                return b ? `Bot: learned from ${b.replays} replay${b.replays === 1 ? '' : 's'} (${b.notes} notes)` : '';
+                return b ? `Realistic autoplay: ${settings.realisticAutoplay ? 'on' : 'off'} - learned from ${b.replays} replay${b.replays === 1 ? '' : 's'}` : '';
             }),
             label(1190, 660, 600, 300, touch
                 ? 'Controls:\n\n> Drag anywhere to move the cursor\n> Buttons in the top right corner:\n>> Restart, pause (hold to unpause) and quit'
@@ -548,7 +654,7 @@
             const controls = [];
             let x = 0, y = 0;
             for (const item of items) {
-                const height = item.type === 'bool' ? 60 : item.type === 'colorlist' ? 130 : 100;
+                const height = item.type === 'bool' ? 60 : item.type === 'colorlist' ? 130 : item.type === 'botLearn' ? 140 : 100;
                 if (y + height > 660) {
                     x += 700;
                     y = 0;
@@ -630,6 +736,15 @@
                             }
                         }),
                         button(x + 210, y + 30, 150, 50, 'RESET', 30, () => SSQECustom.setNoteMesh(null).catch(() => { })));
+                else if (item.type === 'botLearn')
+                    controls.push(
+                        label(x, y, 700, 26, `${title}:`, 30),
+                        button(x, y + 30, 360, 50, 'UPLOAD REPLAYS', 30, async () => {
+                            const files = await pickFile('.sspre,.sspm,.rhm,.txt', true);
+                            if (files && files.length)
+                                learnFromFiles(files, (text, error) => toast.show(text, error ? [255, 80, 80] : settings.color1));
+                        }),
+                        label(x, y + 85, 700, 40, 'Pick any number of .sspre replays, plus their maps (.sspm, .rhm, .txt)\nunless the map is already loaded. You can also drop them on the menu.', 22));
                 else if (item.type === 'botInfo' || item.type === 'mapperInfo') {
                     const bot = item.type === 'botInfo';
                     const lib = () => bot ? window.SSQEBot : window.SSQEAutoMapper;

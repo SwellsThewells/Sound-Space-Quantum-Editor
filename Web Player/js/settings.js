@@ -44,6 +44,7 @@ window.SSQESettings = (function () {
         disableBgEffects: false,
         uncapFps: false,
         botSkill: 1,
+        realisticAutoplay: false,
     };
 
     const BACKGROUNDS = ['None', 'Grid', 'Vaporwave', 'Neon Tunnel', 'Space Tunnel', 'Deep Space', 'Cubic', 'Custom Image'];
@@ -85,7 +86,9 @@ window.SSQESettings = (function () {
             { key: 'uncapFps', label: 'Uncap FPS', type: 'bool' },
         ]],
         ['Bot', [
+            { key: 'realisticAutoplay', label: 'Realistic autoplay', type: 'bool' },
             { key: 'botSkill', label: 'Bot skill', type: 'range', min: 0.5, max: 3, step: 0.1, format: v => `${Math.round(v * 100)}%` },
+            { key: 'botLearn', label: 'Learn from replays', type: 'botLearn' },
             { key: 'botLearning', label: 'Bot learning', type: 'botInfo' },
             { key: 'mapperLearning', label: 'Auto mapper learning', type: 'mapperInfo' },
         ]],
