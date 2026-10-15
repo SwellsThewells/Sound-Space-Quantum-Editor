@@ -861,22 +861,34 @@ window.SSQEAutoMapper = (function () {
             }
             return lo;
         };
-        // lines a time up on the nearest 1/16 or 1/12 of a beat (whichever is closer): [ms, weight of that position]
-        const snap = ms => {
+        // where a time falls on the beat divided into `div`: the nearest position, how far off that is and how much
+        // a note there counts
+        const gridAt = (ms, div) => {
             const i = beatAt(ms - shiftAt(ms));
             const t0 = beats[i].ms + shiftAt(beats[i].ms);
             const len = i + 1 < beats.length ? beats[i + 1].ms - beats[i].ms : 60000 / ctx.timing[beats[i].tp].bpm;
-            let best = null;
-            for (const div of ctx.triplet ? [12, 16] : [16, 12]) {
-                const p = Math.round((ms - t0) / (len / div));
-                const at = t0 + p * len / div;
-                if (!best || Math.abs(at - ms) < Math.abs(best[0] - ms) - 1)
-                    best = [at, slotWeight(((p % div) + div) % div, div)];
-            }
-            return best;
+            const step = len / div;
+            const p = Math.round((ms - t0) / step);
+            const at = t0 + p * step;
+            return { at, err: Math.abs(at - ms), step, weight: slotWeight(((p % div) + div) % div, div) };
         };
+        // how close together notes may come at this difficulty: the fastest stretches get about 2.6x the average
+        // notes a second, up to about 30 a second (the hardest maps' streams)
+        const span_s = Math.max(1, (endMs - startMs) / 1000);
+        const busiest = Math.min(30 * Math.max(1, opts.density || 1), (opts.count > 0 ? Math.max(opts.count / span_s, 0.5) : nps) * 2.6);
+        const fastest = 1000 / busiest;
+        // the finest beat division allowed at a tempo: 1/1 or 1/2 for easy maps up to 1/16 for the hardest
+        const topDiv = (family, beatLen) => {
+            let top = family[0];
+            for (const d of family)
+                if (beatLen / d >= fastest * 0.95)
+                    top = d;
+            return top;
+        };
+        // a sound counts as on a position when it's within a quarter of a step (and 20ms) of it
+        const tolerance = step => Math.min(20, 0.25 * step);
+        const finer = (family, d) => family[Math.min(family.length - 1, family.indexOf(d) + 1)];
 
-        const family = ctx.triplet ? SWUNG : STRAIGHT;
         const sources = opts.sources && opts.sources.length ? opts.sources : DEFAULT_SOURCES;
         const events = findEvents(a, sources, opts.sensitivity ?? 0.5, startMs - 200, endMs + 200);
         const fill = opts.fill || 'intense';
@@ -888,19 +900,49 @@ window.SSQEAutoMapper = (function () {
             const s = sectionAt(b.from);
             const beatLen = 60000 / ctx.timing[beats[b.first].tp].bpm;
             const beatsIn = Math.max(1, Math.round((b.to - b.from) / beatLen));
+            const raw = events.filter(e => e.ms >= b.from - 20 && e.ms < b.to - 20);
+
+            // One beat division for the whole bar: the simplest one (straight 1/1, 1/2, 1/4... or triplet 1/3,
+            // 1/6...) that the bar's sounds sit on, but no finer than the difficulty allows. Every note in the bar,
+            // streams included, goes on it, so straight and triplet positions never mix and a stream stays even.
+            const fit = family => {
+                const top = topDiv(family, beatLen);
+                const total = raw.reduce((t, e) => t + e.strength, 0);
+                let share = 0;
+                for (const div of family) {
+                    if (div > top)
+                        break;
+                    let on = 0;
+                    for (const e of raw) {
+                        const g = gridAt(e.ms, div);
+                        if (g.err <= tolerance(g.step))
+                            on += e.strength;
+                    }
+                    share = total ? on / total : 1;
+                    if (share >= 0.85)
+                        return { family, div, full: true, share };
+                }
+                return { family, div: top, full: false, share };
+            };
+            const main = fit(ctx.triplet ? SWUNG : STRAIGHT), other = fit(ctx.triplet ? STRAIGHT : SWUNG);
+            const grid = (other.full && (!main.full || other.div < main.div)) ? other : main;
+            const { family, div } = grid;
+
             const exact = cap[j] + carry;
-            const k = Math.max(0, Math.round(exact));
+            // never more notes than the bar has positions at the finest division allowed
+            const k = Math.max(0, Math.min(Math.round(exact), beatsIn * topDiv(family, beatLen)));
             // how close notes may be: the beat division this many notes needs
-            const d = family.find(d => d >= k / beatsIn * 1.05) || family[family.length - 1];
-            const minGap = beatLen / d * 0.85;
+            const d = Math.min(topDiv(family, beatLen), family.find(d => d >= k / beatsIn * 1.05) || family[family.length - 1]);
+            const minGap = beatLen / Math.max(d, 1) * 0.85;
             const ok = ms => ms >= startMs && ms <= endMs && avoid.every(t => Math.abs(t - ms) >= minGap);
 
-            const here = events.filter(e => e.ms >= b.from - 20 && e.ms < b.to - 20)
-                .map(e => {
-                    const [ms, weight] = snap(e.ms);
-                    return { ms: Math.round(ms), score: e.strength * (0.55 + 0.45 * weight) };
-                })
-                .filter(e => ok(e.ms));
+            // sounds that aren't on the bar's division (a flam, a grace note, an off-beat sound at an easy
+            // difficulty) are left out rather than moved a long way from where they're heard
+            const here = raw.map(e => {
+                const g = gridAt(e.ms, div);
+                return g.err <= Math.max(tolerance(g.step), Math.min(30, 0.35 * g.step))
+                    ? { ms: Math.round(g.at), score: e.strength * (0.55 + 0.45 * g.weight) } : null;
+            }).filter(e => e && ok(e.ms));
             const picked = [];
             for (const e of here.sort((p, q) => q.score - p.score)) {
                 if (picked.length >= k)
@@ -911,22 +953,20 @@ window.SSQEAutoMapper = (function () {
             picked.sort((p, q) => p - q);
 
             // streams between the sounds, only where the song itself is busy (two sounds a beat or more), and at
-            // most one step finer than the song's own rhythm there
+            // most one division finer than the bar's own rhythm (and the difficulty's limit)
             const busy = here.length >= beatsIn * 2;
             const intense = s.level >= 0.6 || s.drop;
             if (picked.length < k && busy && (fill === 'busy' || (fill === 'intense' && intense))) {
-                const times = here.map(e => e.ms).sort((p, q) => p - q);
-                const gapsHere = times.slice(1).map((t, i) => t - times[i]).filter(g => g > 5).sort((p, q) => p - q);
-                const songStep = gapsHere.length ? gapsHere[Math.floor(gapsHere.length / 2)] : beatLen;
-                const step = Math.max(beatLen / d, songStep / 2 - 2);
+                const fillDiv = Math.min(topDiv(family, beatLen), finer(family, div), Math.max(div, d));
+                const step = beatLen / fillDiv;
                 const extra = [];
                 for (let i = 0; i + 1 < picked.length && picked.length + extra.length < k; i++) {
                     const p0 = picked[i], p1 = picked[i + 1];
                     if (p1 - p0 > beatLen * 1.01)
                         continue;
-                    for (let t = p0 + step; t < p1 - minGap * 0.9 && picked.length + extra.length < k; t += step) {
-                        const ms = Math.round(snap(t)[0]);
-                        if (ok(ms) && ms - p0 >= minGap * 0.9)
+                    for (let t = p0 + step; t < p1 - step * 0.5 && picked.length + extra.length < k; t += step) {
+                        const ms = Math.round(gridAt(t, fillDiv).at);
+                        if (ok(ms) && ms - p0 >= Math.min(minGap, step) * 0.9 && p1 - ms >= step * 0.5)
                             extra.push(ms);
                     }
                 }
