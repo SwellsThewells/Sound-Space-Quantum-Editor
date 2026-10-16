@@ -2,6 +2,14 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.17 - 10/16/2026 --
+
+- Auto mapper: a set number of notes in a quantum map now comes out exact (it could come out a few dozen short)
+- Auto mapper: no more unplayable streams above difficulty 10. Very high star targets used to unlock streams of up
+  to 50 notes a second, jumping a map from about 7 stars to 12; now the top speed stays at difficulty 10's (about 42
+  notes a second), and a target the song can't reach makes it as hard as it goes, which the message says
+
+----------------------------------
    -- Plus 3.0.16 - 10/16/2026 --
 
 - SPECTATE now shows the mapper's whole editor, exactly as they see it: their panels, timeline, grid, selection,

@@ -1131,7 +1131,9 @@ window.SSQEAutoMapper = (function () {
         const countNps = opts.count > 0 ? Math.max(opts.count / span_s, 0.5) : 0;
         const dense = (opts.density || 1) >= 1.5;
         // (the shortest gap at a difficulty: lv, with the notes a second it averages)
-        const fastestAt = lv => 1000 / Math.min(Math.max(12 * Math.pow(1.15, lv - 1) * Math.max(1, opts.density || 1), countNps * 2.6),
+        // (more Density lets it go faster, but never past difficulty 10's top speed, about 42 notes a second: beyond
+        // that a stream can't be played, and a harder map than 10 only gets more notes and bigger jumps)
+        const fastestAt = lv => 1000 / Math.min(Math.max(Math.min(12 * Math.pow(1.15, lv - 1) * Math.max(1, opts.density || 1), 12 * Math.pow(1.15, 9)), countNps * 2.6),
             (countNps || nps * Math.pow(18, (lv - level10) / 9)) * 2.6);
         const fastest = fastestAt(level10);
         // the finest beat division allowed at a tempo: 1/1 or 1/2 for easy maps up to 1/16 for the hardest
@@ -1568,7 +1570,30 @@ window.SSQEAutoMapper = (function () {
                 }
                 return order < level10 - hi ? t : divAt(lo);
             };
-            const topHere = (family, beatLen) => eased(lv => topDivAt(family, beatLen, lv));
+            // (the top division by how fast notes may come, at `speed` times what this difficulty and Density allow: it
+            // comes in over the last 15% of speed before it, so more Density brings it in as gradually as the
+            // difficulty does)
+            const topHere = (family, beatLen) => {
+                const at = speed => {
+                    let top = family[0];
+                    for (const d of family)
+                        if (beatLen / d >= fastest / speed * 0.95)
+                            top = d;
+                    return top;
+                };
+                const t = at(1), lowest = 1 / 1.15;
+                if (opts.count > 0 || at(lowest) >= t)
+                    return t;
+                let lo = lowest, hi = 1;
+                for (let q = 0; q < 10; q++) {
+                    const m = (lo + hi) / 2;
+                    if (at(m) >= t)
+                        hi = m;
+                    else
+                        lo = m;
+                }
+                return order < Math.log(1 / hi) / Math.log(1.15) ? t : at(lo);
+            };
 
             // One beat division for the whole bar: the simplest one (straight 1/1, 1/2, 1/4... or triplet 1/3,
             // 1/6...) that the bar's sounds sit on, but no finer than the difficulty allows. Every note in the bar,
@@ -4193,7 +4218,7 @@ window.SSQEAutoMapper = (function () {
         const at = u => u > 10 ? { difficulty: 10, jumpScale: js * (1 + 0.12 * (u - 10)), density: dens * (1 + 0.2 * (u - 10)) }
             : u < 1 ? { difficulty: 1, density: dens * Math.max(0.3, u) } : { difficulty: u };
         const progress = opts.progress || (() => { });
-        const SEARCH = 7, CLOSE = 0.25, LO = 0.3, HI = 15;
+        const SEARCH = 7, CLOSE = 0.25, LO = 0.3, HI = 11;
         const make = async (u, label, tries) => {
             const trace = opts.trace ? [] : undefined;
             const notes = await generateAt({ ...opts, ...at(u), trace, tries, progress: text => progress(`AIMING AT ${target.toFixed(1)} STARS (${label}) - ${text}`) });
@@ -4493,30 +4518,37 @@ window.SSQEAutoMapper = (function () {
             // as the slides add, and the slides are made a note or two longer or shorter to land on it exactly
             if (opts.count > 0 && list.length) {
                 const added = list.reduce((n, l) => n + l.n, 0);
-                times = chooseTimes(a, { ...opts, count: Math.max(2, Math.round(opts.count * times.length / (times.length + added))) }, nps, ctx);
-                list = plan(times);
-                let diff = opts.count - times.length - list.reduce((n, l) => n + l.n, 0);
-                for (let pass = 0; diff !== 0 && pass < 200; pass++) {
-                    let changed = false;
-                    for (const l of list) {
-                        if (diff > 0 && l.n < l.most) {
-                            l.n++;
-                            diff--;
-                            changed = true;
-                        } else if (diff < 0 && l.n > 3) {
-                            l.n--;
-                            diff++;
+                let want = Math.round(opts.count * times.length / (times.length + added));
+                // (and if the slides of the new times can't stretch to make up the rest, again with that many more)
+                for (let round = 0; round < 4; round++) {
+                    times = chooseTimes(a, { ...opts, count: Math.max(2, want) }, nps, ctx);
+                    list = plan(times);
+                    let diff = opts.count - times.length - list.reduce((n, l) => n + l.n, 0);
+                    for (let pass = 0; diff !== 0 && pass < 200; pass++) {
+                        let changed = false;
+                        for (const l of list) {
+                            if (diff > 0 && l.n < l.most) {
+                                l.n++;
+                                diff--;
+                                changed = true;
+                            } else if (diff < 0 && l.n > 3) {
+                                l.n--;
+                                diff++;
+                                changed = true;
+                            }
+                            if (!diff)
+                                break;
+                        }
+                        if (!changed && diff < 0 && list.length) {
+                            diff += list.splice(Math.floor(list.length / 2), 1)[0].n;
                             changed = true;
                         }
-                        if (!diff)
+                        if (!changed)
                             break;
                     }
-                    if (!changed && diff < 0 && list.length) {
-                        diff += list.splice(Math.floor(list.length / 2), 1)[0].n;
-                        changed = true;
-                    }
-                    if (!changed)
+                    if (diff <= 0)
                         break;
+                    want += diff;
                 }
             }
             const withSlides = [];

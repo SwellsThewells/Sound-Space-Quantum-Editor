@@ -142,7 +142,9 @@
                     map.notes.addObjects('AUTO MAP', made.map(n => new SSQE.Note(n.x, n.y, n.ms)));
                     window.SSQEStats && SSQEStats.add('autoMaps');
                     const short = s.autoMapCount > 0 && made.length < s.autoMapCount ? ` (ONLY ${made.length} OF ${s.autoMapCount} FIT THE SONG)` : '';
-                    const sr = info.stars > 0 ? ` - ${info.stars.toFixed(2)} STARS` : '';
+                    // (a target the song can't reach at a playable speed: as hard as it goes, said so)
+                    const aim = s.autoMapCount > 0 ? 0 : s.autoMapStars ?? 5;
+                    const sr = info.stars > 0 ? ` - ${info.stars.toFixed(2)} STARS${aim && info.stars < aim - 0.75 && info.difficulty >= 9.5 ? ' (AS HARD AS THIS SONG GOES)' : ''}` : '';
                     editor.toast(`AUTO MAPPED ${made.length} NOTES${sr}${short}${bpmText}`, 'other');
                 }
             } catch (err) {
