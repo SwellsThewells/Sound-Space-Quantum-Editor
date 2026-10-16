@@ -2,6 +2,20 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.15 - 10/16/2026 --
+
+- Accounts: LOG IN at the top of the menu. Just a username and a password, no email
+- SPECTATE (in the menu): watch people map, 5 seconds behind so it plays smoothly: their grid with the notes coming
+  in, a timeline, their map and where they are in the song (their audio isn't shared). Anyone logged in with a map
+  open shows up; turn off "Let Others Watch Me Map" (Settings, or the account window) if you'd rather not be watched
+- CREDITS moved into Settings
+- CALCULATE SR/RP is back (Export panel in the editor): the star rating and ranked points from Rhythia, as in the
+  original editor. When Rhythia's server can't be reached, the star rating is worked out here with the same formula
+- Auto mapper: the difficulty is now a target star rating (1 to 12 stars). It makes the map, rates it with Rhythia's
+  star formula and makes it again harder or easier until it lands close; the stars it reached show when it's done.
+  Takes a little longer than before. Very high targets may be out of reach on calmer songs
+
+----------------------------------
    -- Plus 3.0.14 - 10/16/2026 --
 
 Auto mapper:
