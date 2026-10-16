@@ -2608,10 +2608,12 @@ window.SSQEAutoMapper = (function () {
                 // (spins and zigzags only on notes a tenth of a second or more apart: quicker jumps sweep on in
                 // wide curves, as human quantum maps' do, rather than snapping back at speed)
                 const slowGap = gaps[q - 1] >= 100;
-                for (let c = 0; c < 32; c++) {
-                    // (an arc that would run into the edge bends harder, or the other way, rather than stopping)
+                for (let c = 0; c < 40; c++) {
+                    // (an arc that would run into the edge bends harder, or the other way, rather than stopping; a quick
+                    // jump that can't curve on turns 75-130 degrees either way before anything sharper)
                     const a2 = quick ? ang + (c < 16 ? arc * bend * (0.8 + 0.4 * Math.random()) : -arc * (0.3 + 1.1 * Math.random()))
                         : c < 24 ? ang + dir * (slowGap || shape >= 0.75 ? bendOf() : (0.22 + 0.2 * Math.random()) * Math.PI) + (Math.random() - 0.5) * 0.4
+                        : c < 32 && !slowGap ? ang + (Math.random() < 0.5 ? -1 : 1) * (0.42 + 0.3 * Math.random()) * Math.PI
                         : Math.random() * 2 * Math.PI;
                     const d = size * (quick ? 0.8 + 0.4 * Math.random() : 0.95 + 0.3 * Math.random());
                     // (a spot past the edge isn't moved onto it: that gives jumps back and forth along the edge)
@@ -2624,9 +2626,14 @@ window.SSQEAutoMapper = (function () {
                     for (let back = 2; back <= 6; back++)
                         if (q >= back && Math.hypot(cx - x[q - back], cy - y[q - back]) < 0.35)
                             score += 1;
-                    // (the turned-round arcs and any-way jumps are for when nothing else fits)
+                    // (the turned-round arcs and any-way jumps are for when nothing else fits; quick jumps turning
+                    // sharply even then are the last resort)
                     if (c >= (quick ? 16 : 24))
-                        score += 1.5;
+                        score += c >= 32 || quick || slowGap ? 1.5 : 0.8;
+                    if (!quick && !slowGap) {
+                        const turn = Math.abs(Math.atan2(Math.sin(Math.atan2(cy - y[q - 1], cx - x[q - 1]) - ang), Math.cos(Math.atan2(cy - y[q - 1], cx - x[q - 1]) - ang)));
+                        score += turn > 2.6 ? 1.5 : 0;
+                    }
                     if (!best || score < best.score)
                         best = { x: cx, y: cy, score };
                 }
@@ -3154,6 +3161,12 @@ window.SSQEAutoMapper = (function () {
                 // (and no jumping straight back where the note before came from, A to B to A, at speed)
                 if (d0 >= 1.5 && gaps[0] < 150 && Math.hypot(F0.x - prev2.x, F0.y - prev2.y) < 0.35)
                     cost += 2.5;
+                // (a stream after a jump hooks off it, about a right angle, rather than heading back the way it came)
+                if (!opts.quantum && dIn >= 1.9 && d0 > 0.05 && d0 < 1.5) {
+                    const turn = Math.acos(Math.max(-1, Math.min(1, ((prev.x - prev2.x) * (F0.x - prev.x) + (prev.y - prev2.y) * (F0.y - prev.y)) / (dIn * d0)))) * 180 / Math.PI;
+                    if (turn > 135)
+                        cost += 1 + 1.5 * (turn - 135) / 45;
+                }
             }
             if (opts.fresh && opts.lastK === k)
                 cost += 0.12;
@@ -3423,6 +3436,9 @@ window.SSQEAutoMapper = (function () {
                             cost += 0.6 * flow * (1 - (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * d0)) / 2;
                     }
                     const want = opts.sizeAt ? opts.sizeAt(i, g0) : J;
+                    // (a stream's quick notes join on a cell at a time, not with a skip of two cells)
+                    if (!opts.quantum && g0 < 70 && d0 > 1.5 * Math.max(want, 1))
+                        continue;
                     cost += Math.abs(Math.log((d0 + 0.15) / (want + 0.15)));
                 }
                 if (phrase)
@@ -4079,7 +4095,9 @@ window.SSQEAutoMapper = (function () {
                     // (at 9 and 10 a quarter of a beat is enough: the busy parts there have few longer gaps)
                     if (gap < (difficulty >= 9 ? 0.25 : 0.4) * beat || gap > 2 * beat || room < 3 * step || !slidesIn(main[q]))
                         continue;
-                    const j = barAt(main[q]), key = `${rootOf(j)}:${Math.round(main[q] - bars[j].from)}`;
+                    // (keyed by the position in the bar in 48ths of a beat, so a repeat whose bar starts a millisecond
+                    // off from the rounding still gets the same slides)
+                    const j = barAt(main[q]), key = `${rootOf(j)}:${Math.round((main[q] - bars[j].from) / (beat / 48))}`;
                     // (each slide its own length, a short flick to a long sweep; repeats of a bar keep theirs)
                     if (!decided.has(key)) {
                         let near = 0, cnt = 0;

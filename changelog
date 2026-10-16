@@ -2,6 +2,19 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.12 - 10/16/2026 --
+
+Auto mapper:
+- a bar with the same drums as the bars around it is mapped as busily as they are, even when another bass note
+  under it makes its drums come through a little weaker (an EDM drop no longer drops to five notes every fourth bar)
+- a build-up's snare roll that has more hits than the difficulty allows is thinned evenly, every other hit counting
+  back from the drop, instead of in an uneven gallop
+- Quantum: quick jumps that can't curve on (near the edge of the area) turn off at an angle instead of snapping
+  straight back; repeats of a bar get the same slides
+- streams: a copied bar no longer joins a stream with a two-cell skip, and a stream after a jump hooks off it
+  rather than heading back the way the jump came
+
+----------------------------------
    -- Plus 3.0.11 - 10/16/2026 --
 
 Auto mapper (a third round of maps at 8, 9 and 10 in every mode, reviewed against the human maps):
