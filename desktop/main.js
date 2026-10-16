@@ -384,6 +384,19 @@ function prefs() {
     }
 }
 
+// CALCULATE SR/RP: the map goes to Rhythia's star rating service, as the original editor sends it, from here rather
+// than from the page (where the browser's cross-site rules could stop the answer being read)
+ipcMain.handle('ssqe-star-rating', async (_, body) => {
+    try {
+        const res = await net.fetch('https://development.rhythia.com/api/getRawStarRating', {
+            method: 'POST', body: String(body), headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
+        return { ok: res.ok, status: res.status, text: await res.text() };
+    } catch (err) {
+        return { ok: false, status: 0, text: String(err && err.message || err) };
+    }
+});
+
 ipcMain.handle('ssqe-playtest-paths', () => {
     const p = prefs();
     return { Rhythia: p.rhythiaPath || '', Novastra: p.novaPath || '' };

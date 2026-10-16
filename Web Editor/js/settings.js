@@ -78,7 +78,8 @@
         editorBGOpacity: 255,
         editorBackground: 'Default', // web only, see EDITOR_BACKGROUNDS
         autoMapDensity: 100, // web only: % of the density the auto mapper learned
-        autoMapDifficulty: 5, // web only: 1..10
+        autoMapDifficulty: 5, // web only: 1..10 (before star targets; still read when autoMapStars isn't set)
+        autoMapStars: 5, // web only: the star rating the auto mapper aims its maps at (Rhythia's SR)
         autoMapQuantum: false, // web only: the auto mapper may place notes off the 3x3 grid
         autoMapFlow: 70, // web only: auto mapper options (dialogs.autoMapOptions)
         autoMapFollow: 75,

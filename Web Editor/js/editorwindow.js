@@ -107,6 +107,7 @@
                 const made = await SSQEAutoMapper.generate({
                     progress: text => editor.toast(text, 'other'),
                     buffer, startMs: start, endMs: end, density: (s.autoMapDensity ?? 100) / 100, difficulty: s.autoMapDifficulty ?? 5,
+                    stars: s.autoMapStars ?? 5,
                     timing,
                     quantum: !!s.autoMapQuantum,
                     before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
@@ -141,7 +142,8 @@
                     map.notes.addObjects('AUTO MAP', made.map(n => new SSQE.Note(n.x, n.y, n.ms)));
                     window.SSQEStats && SSQEStats.add('autoMaps');
                     const short = s.autoMapCount > 0 && made.length < s.autoMapCount ? ` (ONLY ${made.length} OF ${s.autoMapCount} FIT THE SONG)` : '';
-                    editor.toast(`AUTO MAPPED ${made.length} NOTES${short}${bpmText}`, 'other');
+                    const sr = info.stars > 0 ? ` - ${info.stars.toFixed(2)} STARS` : '';
+                    editor.toast(`AUTO MAPPED ${made.length} NOTES${sr}${short}${bpmText}`, 'other');
                 }
             } catch (err) {
                 app.dialogs.message(`Auto mapping failed: ${err.message}`, 'Error');
@@ -153,7 +155,7 @@
         const AutoMapDifficultyLabel = label(370, 200, 175, 30, '', 30, { centerMode: None });
         AutoMapDifficultyLabel.process = function (dt) {
             G.Label.prototype.process.call(this, dt);
-            this.text = `Difficulty: ${s.autoMapDifficulty ?? 5}/10`;
+            this.text = `Stars: ${(s.autoMapStars ?? 5).toFixed(1)}`;
         };
         const AutoMapStats = label(370, 280, 175, 90, '', 24, { centerMode: None });
         AutoMapStats.process = function (dt) {
@@ -187,7 +189,8 @@
             label(370, 110, 175, 30, 'Density %:', 30, { centerMode: None }),
             numberBox(370, 140, 120, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [10, 400], get: () => s.autoMapDensity ?? 100, set: v => { s.autoMapDensity = v; saveS(); } }),
             AutoMapDifficultyLabel,
-            slider(370, 230, 175, 32, () => (s.autoMapDifficulty ?? 5) - 1, v => { s.autoMapDifficulty = Math.round(v) + 1; saveS(); }, 9, 1, 4),
+            // (the star rating the map is aimed at, 1 to 12 in half stars)
+            slider(370, 230, 175, 32, () => ((s.autoMapStars ?? 5) - 1) * 2, v => { s.autoMapStars = 1 + Math.round(v) / 2; saveS(); }, 22, 1, 8),
             AutoMapStats,
             button(370, 380, 175, 40, 'LEARN FROM MAPS', 27, async () => {
                 const files = await app.pickFile('.sspm,.rhm,.txt,.osu', true);
@@ -295,6 +298,40 @@
         ]);
 
         // ------------------------------------------------ Export
+        // CALCULATE SR/RP (as in the original editor): the star rating and the ranked points from Rhythia's server; when
+        // it can't be reached, the star rating worked out here (the same formula, see starrating.js), without points
+        const SRLabel = label(10, 70, 190, 320, '', 28, { centerMode: None });
+        const srCache = new Map();
+        let calculating = false;
+        const calculateSR = async () => {
+            if (calculating || !window.SSQEStarRating)
+                return;
+            calculating = true;
+            SRLabel.text = 'Calculating...';
+            try {
+                const data = SSQE.Formats.writeTxt(map);
+                const key = data.slice(data.indexOf(','));
+                let res = srCache.get(key);
+                if (!res) {
+                    res = await SSQEStarRating.online(data);
+                    if (res)
+                        srCache.set(key, res);
+                }
+                if (res) {
+                    let text = `SR: ${Math.round(res.sr * 100) / 100}\n`;
+                    for (const [name, rp] of Object.entries(res.rp))
+                        text += `\n${name}: ${Math.round(+rp * 100) / 100} RP`;
+                    SRLabel.text = text;
+                } else {
+                    const sr = SSQEStarRating.rate(map.notes.items.map(n => ({ x: n.x, y: n.y, ms: n.ms })));
+                    SRLabel.text = `SR: ${Math.round(sr * 100) / 100}\n\n(worked out here:\nRhythia's server\ncouldn't be reached,\nso no RP)`;
+                }
+            } catch (err) {
+                SRLabel.text = `Failed: ${err.message}`;
+            } finally {
+                calculating = false;
+            }
+        };
         const ReplaceIDBox = new G.Textbox(275, 230, 210, 40, { textSize: 27 });
         const ExportNav = new G.Container(1365, 222, 545, 756, [
             button(275, 20, 100, 40, 'SAVE', 27, () => app.save(map)),
@@ -318,6 +355,8 @@
             button(275, 280, 210, 40, 'REPLACE', 27, () => app.replaceAudioId(map, ReplaceIDBox.text)),
             button(275, 350, 210, 40, 'CONVERT TO MP3', 27, () => app.dialogs.message('Converting audio to MP3 isn\'t available in the web editor.')),
             label(275, 190, 210, 40, 'Replace Audio ID', 30),
+            button(0, 20, 210, 40, 'CALCULATE SR/RP', 27, () => calculateSR()),
+            SRLabel,
         ]);
 
         const rightNavs = [[RNavSnapping, SnappingNav], [RNavGraphics, GraphicsNav], [RNavExport, ExportNav]];

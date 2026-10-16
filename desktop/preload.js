@@ -27,4 +27,6 @@ contextBridge.exposeInMainWorld('ssqeDesktop', {
     playtestPaths: () => ipcRenderer.invoke('ssqe-playtest-paths'),
     pickPlaytestPath: game => ipcRenderer.invoke('ssqe-pick-playtest', game),
     playtest: job => ipcRenderer.invoke('ssqe-playtest', job),
+    // CALCULATE SR/RP: Rhythia's star rating and ranked points for a map (body: the request), asked from the app
+    starRating: body => ipcRenderer.invoke('ssqe-star-rating', body),
 });

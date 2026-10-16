@@ -4138,7 +4138,77 @@ window.SSQEAutoMapper = (function () {
     //         before (the notes just before startMs), styleNotes (the map's own notes: their patterns are preferred),
     //         avoid (times already taken), progress (text => void) }
     // Resolves to the notes, with .info = { bpm, offsetMs, steady (when the BPM was detected), sections }.
+    // The star rating a map at each difficulty usually comes out at (1 to 10; Rhythia's SR, see starrating.js), for the
+    // first guess at the difficulty a star rating asks for
+    const STARS_AT = [0, 1.2, 1.7, 2.3, 2.9, 3.6, 4.3, 5.1, 6.0, 7.0, 7.9];
+    const difficultyFor = stars => {
+        if (stars <= STARS_AT[1])
+            return Math.max(0.4, stars / STARS_AT[1]);
+        for (let d = 2; d <= 10; d++)
+            if (stars <= STARS_AT[d])
+                return d - 1 + (stars - STARS_AT[d - 1]) / (STARS_AT[d] - STARS_AT[d - 1]);
+        return 10 + (stars - STARS_AT[10]) / 0.9;
+    };
+
+    // A map aimed at a star rating (opts.stars, Rhythia's SR): made at the difficulty that rating usually comes out at,
+    // rated with Rhythia's star formula, and made again harder or easier until it lands close (within a quarter of a
+    // star), keeping the closest of a few tries. One knob does it: the difficulty from 1 to 10 (in between too), past
+    // 10 bigger jumps and more notes, under 1 fewer notes. Without a target, or with a set number of notes, the map is
+    // made once and its rating noted.
     async function generate(opts) {
+        const rate = window.SSQEStarRating && window.SSQEStarRating.rate;
+        const target = +opts.stars;
+        if (!(target > 0) || !rate || opts.count > 0) {
+            const notes = await generateAt(opts);
+            if (rate && notes.info)
+                notes.info.stars = rate(notes);
+            return notes;
+        }
+        const at = u => u > 10 ? { difficulty: 10, jumpScale: (opts.jumpScale || 1) * (1 + 0.08 * (u - 10)), density: (opts.density || 1) * (1 + 0.12 * (u - 10)) }
+            : u < 1 ? { difficulty: 1, density: (opts.density || 1) * Math.max(0.3, u) } : { difficulty: u };
+        const progress = opts.progress || (() => { });
+        const ATTEMPTS = 4;
+        const tried = [];
+        let u = difficultyFor(target), best = null;
+        for (let t = 0; t < ATTEMPTS; t++) {
+            const trace = opts.trace ? [] : undefined;
+            const notes = await generateAt({ ...opts, ...at(u), trace, progress: text => progress(`AIMING AT ${target.toFixed(1)} STARS (${t + 1}/${ATTEMPTS}) - ${text}`) });
+            const sr = rate(notes);
+            tried.push([u, sr]);
+            if (!best || Math.abs(sr - target) < Math.abs(best.sr - target))
+                best = { notes, sr, trace };
+            if (Math.abs(sr - target) <= 0.25)
+                break;
+            // (the next try: between the closest tries either side of the target, or on from the last by how much the
+            // rating moved with the knob so far, about 0.9 stars a difficulty to begin with)
+            const below = tried.filter(([, r]) => r < target).sort((p, q) => q[1] - p[1])[0];
+            const above = tried.filter(([, r]) => r > target).sort((p, q) => p[1] - q[1])[0];
+            let next;
+            if (below && above)
+                next = below[0] + (above[0] - below[0]) * (target - below[1]) / Math.max(1e-6, above[1] - below[1]);
+            else {
+                let slope = 0.9;
+                if (tried.length >= 2) {
+                    const [[u1, r1], [u2, r2]] = tried.slice(-2);
+                    if (Math.abs(u2 - u1) > 0.05 && (r2 - r1) / (u2 - u1) > 0.2)
+                        slope = (r2 - r1) / (u2 - u1);
+                }
+                next = u + Math.max(-4, Math.min(4, (target - sr) / slope));
+            }
+            next = Math.max(0.3, Math.min(15, next));
+            // (no point making the same map again: the rating has gone as far as the song lets it)
+            if (tried.some(([v]) => Math.abs(v - next) < 0.1))
+                break;
+            u = next;
+        }
+        if (opts.trace && best.trace)
+            opts.trace.push(...best.trace);
+        best.notes.info.stars = best.sr;
+        best.notes.info.difficulty = tried.find(([v, r]) => r === best.sr)[0];
+        return best.notes;
+    }
+
+    async function generateAt(opts) {
         await load();
         // (a mixed map with the Streams / Jumps balance at an end is a stream map or a jump map)
         if (!opts.quantum && (!opts.patterns || opts.patterns === 'mixed') && opts.jumpShare !== undefined && (opts.jumpShare <= 0 || opts.jumpShare >= 1))
