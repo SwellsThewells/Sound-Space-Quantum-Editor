@@ -2441,7 +2441,7 @@ window.SSQEAutoMapper = (function () {
                     turn = -turn;
                 ang += turn;
                 // (curving in before the edge, a little at a time, rather than bouncing straight back off it)
-                if (Math.max(Math.abs(px + Math.cos(ang) * step - 1), Math.abs(py + Math.sin(ang) * step - 1)) > 1.6) {
+                if (Math.max(Math.abs(px + Math.cos(ang) * step - 1), Math.abs(py + Math.sin(ang) * step - 1)) > 1.3) {
                     const m = Math.atan2(1 - py, 1 - px);
                     ang += Math.max(-0.35, Math.min(0.35, Math.atan2(Math.sin(m - ang), Math.cos(m - ang))));
                 }
@@ -2459,10 +2459,17 @@ window.SSQEAutoMapper = (function () {
             const shape = Math.random();
             const bendOf = () => (shape < 0.45 ? 0.55 + 0.28 * Math.random() : shape < 0.75 ? 0.8 + 0.13 * Math.random() : 0.22 + 0.2 * Math.random()) * Math.PI;
             let arc = Math.random() < 0.5 ? 1 : -1, arcLeft = 6 + Math.floor(Math.random() * 5);
+            // (a star spins one way for a few jumps, then the other: round and round the same way for seconds is a
+            // circle, which human quantum maps break out of)
+            let spinLeft = 5 + Math.floor(Math.random() * 5);
             for (let q = 1; q < n; q++) {
                 const quick = !!(quickAt && quickAt(q - 1));
                 if (!quick && shape >= 0.45 && shape < 0.75)
                     dir = -dir;
+                else if (!quick && --spinLeft <= 0) {
+                    dir = -dir;
+                    spinLeft = 5 + Math.floor(Math.random() * 5);
+                }
                 if (quick && --arcLeft <= 0) {
                     arc = -arc;
                     arcLeft = 6 + Math.floor(Math.random() * 5);
@@ -2479,8 +2486,8 @@ window.SSQEAutoMapper = (function () {
                     const real = Math.hypot(cx - x[q - 1], cy - y[q - 1]);
                     if (cx !== clamp(cx) || cy !== clamp(cy) || !realQuantum(cx, cy) || real < Math.min(0.6, 0.5 * size))
                         continue;
-                    // (keeping to within about half a cell outside the grid, as quantum maps mostly do)
-                    let score = Math.abs(Math.log(real / size)) + 0.1 * Math.random() + 2 * Math.max(0, Math.max(Math.abs(cx - 1), Math.abs(cy - 1)) - 1.5);
+                    // (keeping to the grid and just round it, as quantum maps mostly do)
+                    let score = Math.abs(Math.log(real / size)) + 0.1 * Math.random() + 2 * Math.max(0, Math.max(Math.abs(cx - 1), Math.abs(cy - 1)) - 1.2);
                     for (let back = 2; back <= 6; back++)
                         if (q >= back && Math.hypot(cx - x[q - back], cy - y[q - back]) < 0.35)
                             score += 1;
@@ -3068,9 +3075,11 @@ window.SSQEAutoMapper = (function () {
             // (a quick note's step grows with its gap and the difficulty: about a cell for a 1/8 at 124 BPM at 9, half
             // that for a 1/16; a fixed small step made streams crawl)
             const stepSpeed = 0.7 * Math.min(32, 4 + 0.45 * (vmax || 30));
+            // (only notes under 60ms apart: from there on, human quantum maps jump on every note, their slides
+            // being the stream)
             const quickAt = q => {
                 const g = gaps[q], fast = opts.fast ? opts.fast[q] : 0;
-                return fast > 0 && g < 1.3 * fast && g < (opts.jumpGap || 70);
+                return fast > 0 && g < 1.3 * fast && g < Math.min(60, opts.jumpGap || 70);
             };
             const sizeOf = q => {
                 const g = gaps[q], fast = opts.fast ? opts.fast[q] : 0;
@@ -3078,9 +3087,11 @@ window.SSQEAutoMapper = (function () {
                     return Math.min(reach(g, fast, opts), Math.min(1.3, Math.max(0.45, stepSpeed * g / 1000)));
                 return moveFor(big * Math.min(2.5, Math.max(0.5, Math.pow(g / gm, 0.8))), g, opts, fast);
             };
-            const quick = gm < 1.6 * (opts.fast ? opts.fast[0] || 0 : 0) && gm < 55;
+            // (a made-up slide only through really quick notes: from about 45ms apart quantum maps jump on every
+            // note, and a slide there is a crawl)
+            const quick = gm < 45;
             for (let s = 0; s < 4; s++) {
-                if (!opts.slidesOn || quick)
+                if (quick)
                     consider(quantumRun('slide', start, prev2, gaps, opts.jump), 0, 0, 0, 0);
                 consider(quantumRun('jumps', start, prev2, gaps, big, sizeOf, quickAt), 0, 0, 0, 0);
             }
@@ -3352,8 +3363,8 @@ window.SSQEAutoMapper = (function () {
             // straight back (or towards the middle, turned up to 60 degrees), as human quantum maps' slides do,
             // rather than carrying on out of the jump into the wall. A few curves tried; the one kept stays in the
             // playfield (curving in before the edge rather than bouncing off it), never runs back over itself or
-            // the notes just before, keeps to the band just outside the grid (where quantum maps' slides go: not
-            // pressed against the edge of the quantum area) and never turns sharply inside the sweep
+            // the notes just before, keeps to the grid's outer ring and its edge (where quantum maps' slides go, not
+            // out past it) and never turns sharply inside the sweep
             const inX = prev2 ? start.x - prev2.x : 0, inY = prev2 ? start.y - prev2.y : 0;
             const backA = Math.hypot(inX, inY) > 0.05 ? Math.atan2(-inY, -inX) : Math.random() * 2 * Math.PI;
             const toMid = Math.atan2(1 - start.y, 1 - start.x);
@@ -3373,7 +3384,7 @@ window.SSQEAutoMapper = (function () {
                     a += turn;
                     let nx = x + Math.cos(a) * step, ny = y + Math.sin(a) * step;
                     // (curving in before the edge: turned towards the middle, a little at a time)
-                    if (rOf(nx, ny) > 1.6) {
+                    if (rOf(nx, ny) > 1.3) {
                         const m = Math.atan2(1 - y, 1 - x);
                         let d = Math.atan2(Math.sin(m - a), Math.cos(m - a));
                         a += Math.max(-0.35, Math.min(0.35, d));
@@ -3394,9 +3405,9 @@ window.SSQEAutoMapper = (function () {
                     const side = wiggle * (z % 2 ? 1 : -1);
                     const px = clamp(x - Math.sin(a) * side), py = clamp(y + Math.cos(a) * side);
                     const r = rOf(px, py);
-                    if (r >= 1 && r <= 1.5)
+                    if (r >= 0.5 && r <= 1.15)
                         edge++;
-                    out2 += Math.max(0, r - 1.6);
+                    out2 += Math.max(0, r - 1.3);
                     const pt = [Math.round(px * 100) / 100, Math.round(py * 100) / 100], last = pts.length ? pts[pts.length - 1] : [start.x, start.y];
                     // (never the same spot twice, nor back on the note two before: a hairpin inside the sweep)
                     if (Math.hypot(pt[0] - last[0], pt[1] - last[1]) < 0.02)
@@ -3815,7 +3826,8 @@ window.SSQEAutoMapper = (function () {
             // how far apart in time notes have to be to always be jumps (see moveFor)
             // (a jump map jumps wherever two cells can be played comfortably: 1/8 notes at 128 BPM at 10, not at 8)
             // (never under 65ms: no human map jumps across the grid on notes closer than that)
-            jumpGap: opts.patterns === 'jumps' ? Math.max(65, 2000 / comfort) : opts.patterns === 'streams' ? 100 : 70, jumpScale: opts.jumpScale || 1,
+            // (and in a quantum map from 60ms: its slides are the stream, every other note is a jump)
+            jumpGap: opts.quantum ? 60 : opts.patterns === 'jumps' ? Math.max(65, 2000 / comfort) : opts.patterns === 'streams' ? 100 : 70, jumpScale: opts.jumpScale || 1,
             sizeWeight: 1.5 + 3.5 * Math.abs(Math.log((opts.jumpScale || 1) * styleScale)),
             comfort,
             // how fast a jump between quick notes may go next to the quick notes' own speed: a little faster at 10

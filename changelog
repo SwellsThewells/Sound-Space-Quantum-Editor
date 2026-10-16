@@ -24,10 +24,12 @@ against human maps of the same songs):
 - Jump map: two-bar jump phrases with stream phrases between them about a third of the time, and at 9 and 10 the
   intense parts' jump phrases are jump streams; jumps out of a stream turn on like a star instead of snapping back
   onto the notes just played, and made-up streams no longer turn square corners
-- Quantum: quick notes curve along in arcs instead of scribbling on one spot, and a circle no longer goes round
-  lap after lap; slides hook back round off the jump into them and curve in before the edge instead of folding
-  back on themselves; the parts with slides are chosen from the song (the same at 8, 9 and 10), with more slides
-  the harder the map and few at the easy end; calm parts get smaller jumps; 8 is a little harder
+- Quantum: like human quantum maps, the slides are the streams and the notes between them are jumps (star jumps
+  that change which way they spin now and then), while really quick notes curve along in arcs instead of
+  scribbling on one spot, and a circle no longer goes round lap after lap; slides hook back round off the jump into
+  them, stay on the grid's edge and curve in before it instead of folding back on themselves; the parts with
+  slides are chosen from the song (the same at 8, 9 and 10), with more slides the harder the map and few at the
+  easy end; calm parts get smaller jumps; 8, 9 and 10 now step up evenly
 - a bar copied from the one just before it is turned or mirrored, never the same bar twice in a row
 
 ----------------------------------
