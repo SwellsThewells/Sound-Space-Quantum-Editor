@@ -2,6 +2,35 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.10 - 10/16/2026 --
+
+Auto mapper (a second round of maps at difficulty 8, 9 and 10 in every mode, each one checked note by note
+against human maps of the same songs):
+- streams follow the song: a stream fills in at most one step finer than the song's own sounds, and only where
+  they really sit on the beat, so a drop of eighth notes no longer becomes a wall of notes two or four times as
+  fast as anything in the music. Real rolls and fast arpeggios still get their streams
+- jumps into the beat: outside the drops, the note just before each sound on the beat is left out, so the beat
+  gets a jump into it with stream steps in between (the way human maps play a verse's groove); in drops a stream
+  runs on for a bar or so before its jump
+- a busy part that can't take every note is thinned by whole beats: the strongest beats are streams all the way
+  through and the rest keep their main sounds, instead of streams with notes missing here and there
+- timing: sounds that all come a few milliseconds early or late still count as on the beat, so a build-up's fast
+  snare roll gets every note; no stray triplet notes in straight songs; a flam (a weak hit just before a strong
+  one) is one hit; a slow note only moves off the beat when its sound really is off it
+- jump speed follows the difficulty: no more walls of big jumps at 10, and 8 and 9 no longer get faster jumps than
+  10 (a learned pattern, or a turned stretch, now stops before a jump too quick for the difficulty)
+- on fast, busy songs at 9 and 10 the calmer parts stay calmer than the drops (before, every busy part came out the
+  same); a near-silent break before a drop stays a break
+- Jump map: two-bar jump phrases with stream phrases between them about a third of the time, and at 9 and 10 the
+  intense parts' jump phrases are jump streams; jumps out of a stream turn on like a star instead of snapping back
+  onto the notes just played, and made-up streams no longer turn square corners
+- Quantum: quick notes curve along in arcs instead of scribbling on one spot, and a circle no longer goes round
+  lap after lap; slides hook back round off the jump into them and curve in before the edge instead of folding
+  back on themselves; the parts with slides are chosen from the song (the same at 8, 9 and 10), with more slides
+  the harder the map and few at the easy end; calm parts get smaller jumps; 8 is a little harder
+- a bar copied from the one just before it is turned or mirrored, never the same bar twice in a row
+
+----------------------------------
    -- Plus 3.0.9 - 10/16/2026 --
 
 Auto mapper (tested on difficulty 8, 9 and 10 in every mode against human maps of the same songs, and on a
