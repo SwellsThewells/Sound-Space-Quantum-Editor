@@ -736,7 +736,7 @@
             };
             const pct = v => `${v}%`;
 
-            slider('Difficulty', 'autoMapDifficulty', 1, 10, 1, 5, v => `${v}/10`, 'How hard: 1 is about 1.5 notes a second, 5 about 5.5, 10 about 30');
+            slider('Difficulty', 'autoMapDifficulty', 1, 10, 1, 5, v => `${v}/10`, 'How hard: 1 is about 1.5 notes a second on average, 5 about 5, 10 about 10-20 (as many as the song\'s sounds give). Higher also means faster streams, longer bursts and bigger, quicker jumps');
             slider('Density', 'autoMapDensity', 25, 300, 5, 100, pct, 'More or fewer notes than the difficulty gives');
             number('Notes to Add (0 = Auto)', 'autoMapCount', 0, 100000, 0, 'An exact number of notes instead of what the difficulty gives');
             y += 6;

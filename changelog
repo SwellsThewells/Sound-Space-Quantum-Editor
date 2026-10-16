@@ -2,6 +2,35 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.9 - 10/16/2026 --
+
+Auto mapper (tested on difficulty 8, 9 and 10 in every mode against human maps of the same songs, and on a
+made-up song where every drum hit is known):
+- time and distance: a note that comes after a longer gap than the quick notes around it is a real jump (two
+  cells or more), turning on like a star from the jump before, never a right angle or a little one-cell step.
+  Slow notes are jumps across the grid instead of creeping a cell at a time, and the quick notes of a stream
+  stay single steps in every style
+- smoother where it should be: no more notes on the same spot twice in a row, almost no lone sharp turns in a
+  flowing line, no jumping straight back and forth (A to B to A), and the joins between patterns (and where a
+  repeated part starts) turn like the rest of the map instead of snapping back
+- the rhythm follows the song: straight songs no longer flip to triplet streams every other bar, quiet parts
+  aren't filled with streams, the verse gets fewer notes than the drop, and notes sit on the song's real sounds
+  far more often
+- difficulty steps evenly: a faster kind of stream comes in at short bursts at one difficulty, runs longer at
+  the next and freely at 10, so 8, 9 and 10 are all different (before, 9 and 10 were often almost the same)
+- jumps follow the difficulty: as fast as the streams at 10, slower below
+- repeated parts come back (turned or mirrored) about as often as in human maps, even when the repeat only
+  sounds alike, but a loop-based song no longer gets the same bar again and again through a whole drop
+- Jump map makes jumps on the song's own rhythm with fewer filler streams; Stream map keeps stepping through
+  slower notes instead of turning them into jump chains
+- Quantum: no more half-cell grid snakes (a tech map's grid patterns counted as quantum before); quantum jumps
+  are as big as their timing allows, so quick notes become small quantum steps instead of full jumps at stream
+  speed; the note after a slide is always a jump; slides come in different lengths, go more often before strong
+  beats, bend back in off the edges and keep to the band just outside the grid
+- bigger moves in loud parts and drops, smaller in calm parts
+- Difficulty hint updated: 10 is about 10-20 notes a second, as many as the song's sounds give
+
+----------------------------------
    -- Plus 3.0.8 - 10/16/2026 --
 
 Auto mapper:
