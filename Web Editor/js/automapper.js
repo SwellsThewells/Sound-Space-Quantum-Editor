@@ -1798,7 +1798,7 @@ window.SSQEAutoMapper = (function () {
                         // into it)
                         const half = pos.filter((t, q) => q % 2 === 0);
                         const full = pos.length >= 4 ? pos.slice(0, -1) : pos;
-                        beatsList.push({ bi, tiers: [pulse, half.length > pulse.length ? half : pulse, full], score: own.reduce((t, x) => t + (scoreAt.get(x) ?? 0.2), 0) });
+                        beatsList.push({ bi, pos, tiers: [pulse, half.length > pulse.length ? half : pulse, full], score: own.reduce((t, x) => t + (scoreAt.get(x) ?? 0.2), 0) });
                     }
                     const budget = have.length;
                     const tier = beatsList.map(() => 1);
