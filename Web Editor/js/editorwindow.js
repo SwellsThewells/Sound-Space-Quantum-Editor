@@ -138,7 +138,8 @@
                     editor.toast(`NOTHING TO MAP HERE${bpmText}`, 'other');
                 else {
                     map.notes.addObjects('AUTO MAP', made.map(n => new SSQE.Note(n.x, n.y, n.ms)));
-                    editor.toast(`AUTO MAPPED ${made.length} NOTES${bpmText}`, 'other');
+                    const short = s.autoMapCount > 0 && made.length < s.autoMapCount ? ` (ONLY ${made.length} OF ${s.autoMapCount} FIT THE SONG)` : '';
+                    editor.toast(`AUTO MAPPED ${made.length} NOTES${short}${bpmText}`, 'other');
                 }
             } catch (err) {
                 app.dialogs.message(`Auto mapping failed: ${err.message}`, 'Error');
