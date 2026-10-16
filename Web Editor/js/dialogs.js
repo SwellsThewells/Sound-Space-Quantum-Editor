@@ -775,7 +775,7 @@
             choice('Fill Streams', 'autoMapFill', [['intense', 'In intense parts'], ['busy', 'Wherever the song is busy'], ['never', 'Never (only on sounds)']], 'intense', 'Whether streams are filled in between sounds where the song itself is busy');
             slider('Calm Parts', 'autoMapCalm', 0, 100, 5, 30, pct, 'How many notes calm parts (intros, breakdowns) get: 0% leaves them nearly empty');
             y += 6;
-            check('Quantum (notes off the 3x3 grid)', 'autoMapQuantum', false, 'Lets it place notes between grid cells, from quantum maps it learned');
+            check('Quantum (notes off the 3x3 grid)', 'autoMapQuantum', false, 'Quantum jumps and slides between and around the grid cells (from quantum maps it learned, or made to fit the song), never grid patterns moved over');
             check('Follow this map\'s own patterns', 'autoMapUseMap', true, 'The notes already in the map are the patterns it prefers');
             check('Set the detected BPM when the map has none', 'autoMapSetBpm', true, 'Adds the song\'s BPM as a timing point so the beat lines match');
             y += 8;
