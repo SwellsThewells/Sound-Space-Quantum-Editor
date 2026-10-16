@@ -7,11 +7,10 @@
 // project has "Confirm email" turned off.
 //
 // Spectating: someone logged in with a map open in the editor, and 'Let Others Watch Me Map' on (Settings, or the
-// account window), shows on a live list (a Realtime presence channel everyone online joins). Their editor sends what
-// it has twice a second on their own channel: where in the song they are and whether it's playing, and the notes
-// whenever they change (and to anyone who joins). People watching hold everything back 5 seconds and play it out
-// then, so the view runs smoothly instead of jumping with every hiccup in the connection. Watching needs no account;
-// the song's audio stays with the mapper.
+// account window), shows on a live list (a Realtime presence channel everyone online joins). While someone watches,
+// their editor sends what it shows on their own channel (see sharing below), and the watcher's screen becomes a copy
+// of their editor, mouse and all (spectator.js), held back 5 seconds and played out then, so it runs smoothly instead
+// of jumping with every hiccup in the connection. Watching needs no account; the song's audio stays with the mapper.
 window.SSQEOnline = (function () {
     // the Supabase project: its URL and public (anon) key, which are meant to be in apps
     const SUPABASE_URL = 'https://areubmqbmfxveqzzuadn.supabase.co';
@@ -19,6 +18,7 @@ window.SSQEOnline = (function () {
     const DOMAIN = 'users.ssqeplus.app';
     const DELAY = 5000;
     const SEND_EVERY = 500;
+    const SAMPLE_EVERY = 50;
     const NAME = /^[A-Za-z0-9_]{3,20}$/;
 
     let client = null, user = null, app = null;
@@ -114,17 +114,56 @@ window.SSQEOnline = (function () {
 
     // ------------------------------------------------------------ sharing (the mapper's side)
 
-    let mine = null, mineReady = false, lastKey = '', fullAsked = true, lastFull = 0, since = 0, timer = null;
+    // While someone is watching (a watcher says hello when it starts and every 10 seconds), the editor sends what
+    // it shows twice a second on its own channel: the mouse, where in the song it is and whether it's playing, 20
+    // times a second (the spectator plays them back smoothly); the zoom, divisor, panels and selection; the map
+    // whenever it changes, and the settings that change how the editor looks. Nobody watching: nothing is sent.
+    let mine = null, mineReady = false, since = 0, timer = null, sampler = null;
+    let watchedUntil = 0, fullAsked = true, lastFull = 0, lastMapKey = '', lastSelKey = '', lastSetKey = '';
+    let samples = [];
     const shareAllowed = () => !!(user && app && app.settings.allowSpectators !== false);
-
-    // the notes as text (x|y|ms,...) and a quick fingerprint of them, to send only when they change
-    const notesKey = notes => {
-        let h = notes.length;
-        for (const n of notes)
-            h = (h * 31 + Math.round(n.x * 100) * 7 + Math.round(n.y * 100) * 13 + Math.round(n.ms)) | 0;
-        return `${notes.length}:${h}`;
+    const r3 = v => Math.round(v * 1000) / 1000;
+    const hash = text => {
+        let h = 0;
+        for (let i = 0; i < text.length; i++)
+            h = (h * 31 + text.charCodeAt(i)) | 0;
+        return h;
     };
-    const notesText = notes => notes.map(n => `${+n.x.toFixed(3)}|${+n.y.toFixed(3)}|${Math.round(n.ms)}`).join(',');
+
+    // the map, sorted by time (the map itself isn't touched), as text, with the order for the selection
+    function mapText(map) {
+        const sorted = map.notes.items.map((n, i) => ({ n, i })).sort((a, b) => a.n.ms - b.n.ms || a.i - b.i).map(o => o.n);
+        const notes = sorted.map(n => `${+n.x.toFixed(3)}|${+n.y.toFixed(3)}|${Math.round(n.ms)}`).join(',');
+        const noteData = [];
+        sorted.forEach((n, i) => n.enableEasing && noteData.push([i, n.style, n.direction]));
+        const extra = JSON.stringify({
+            timings: map.timingPoints.map(t => [t.bpm, t.ms]),
+            bookmarks: map.bookmarks.map(b => [b.text, b.ms, b.endMs]),
+            vfxObjects: map.vfxObjects.items.map(o => `${o.id}|${o.toString()}`),
+            specialObjects: map.specialObjects.items.map(o => `${o.id}|${o.toString()}`),
+            noteData, exportOffset: map.props.exportOffset,
+        });
+        return { sorted, notes, extra };
+    }
+    // which of a list are selected, as ranges of their places in it ('3-7,12')
+    function ranges(list, selected) {
+        if (!selected.length)
+            return '';
+        const at = new Map(list.map((o, i) => [o, i]));
+        const idx = selected.map(o => at.get(o)).filter(i => i !== undefined).sort((a, b) => a - b);
+        const out = [];
+        for (let i = 0; i < idx.length; i++) {
+            let j = i;
+            while (j + 1 < idx.length && idx[j + 1] === idx[j] + 1)
+                j++;
+            out.push(j > i ? `${idx[i]}-${idx[j]}` : `${idx[i]}`);
+            i = j;
+        }
+        return out.join(',');
+    }
+    // the settings that change what the editor shows (not keybinds or anything private)
+    const SKIP = new Set(['keybinds', 'gridKeys', 'patterns', 'masterVolume', 'sfxVolume', 'lastRightNav', 'lastLeftNav']);
+    const shownSettings = s => Object.fromEntries(Object.entries(s).filter(([k]) => !SKIP.has(k) && !/^autoMap|^allowSpectators/.test(k)));
 
     function stopSharing() {
         if (tracked && live) {
@@ -136,6 +175,25 @@ window.SSQEOnline = (function () {
             mine = null;
             mineReady = false;
         }
+        samples = [];
+    }
+
+    // what the editor's on: 'editor', 'playtest' (the map player on top) or 'away' (another screen)
+    function screenOf(ed) {
+        if (!ed.running)
+            return 'playtest';
+        return document.body.dataset.screen === 'editor' ? 'editor' : 'away';
+    }
+
+    function sample() {
+        const ed = app && app.editor;
+        if (!ed || !mineReady || Date.now() > watchedUntil)
+            return;
+        const c = ed.canvas, w = c.clientWidth || window.innerWidth, h = c.clientHeight || window.innerHeight;
+        samples.push([Date.now(), r3(ed.mouse.x / w), r3(ed.mouse.y / h), (ed.mouse.left ? 1 : 0) | (ed.mouse.right ? 2 : 0),
+            Math.round(ed.map.currentTime * 10) / 10, ed.music && ed.music.isPlaying ? 1 : 0]);
+        if (samples.length > 40)
+            samples.shift();
     }
 
     function tick() {
@@ -154,78 +212,86 @@ window.SSQEOnline = (function () {
             live.track(tracked);
         }
         if (!mine) {
-            mine = client.channel(`ssqe-map-${user.id}`, { config: { broadcast: { self: false } } });
+            mine = client.channel(`ssqe-pov-${user.id}`, { config: { broadcast: { self: false } } });
             mine.on('broadcast', { event: 'hello' }, () => {
                 fullAsked = true;
+                watchedUntil = Date.now() + 30000;
             });
             mine.subscribe(status => {
                 mineReady = status === 'SUBSCRIBED';
             });
         }
-        if (!mineReady)
+        if (!mineReady || Date.now() > watchedUntil) {
+            samples = [];
             return;
-        const notes = map.notes.items;
-        const key = notesKey(notes);
-        const music = ed.music;
-        const state = {
-            time: Math.round(map.currentTime), playing: !!(music && music.isPlaying), rate: (music && music.tempo) || 1,
-            duration: Math.round(map.duration || 0), title, name,
-        };
-        // (the notes when they've changed, when someone has just joined, and every 20 seconds anyway)
-        if (key !== lastKey || fullAsked || Date.now() - lastFull > 20000) {
-            state.notes = notesText(notes);
-            lastKey = key;
-            fullAsked = false;
-            lastFull = Date.now();
         }
-        mine.send({ type: 'broadcast', event: 'state', payload: state });
+        const now = Date.now();
+        const out = {
+            st: now, name, title, dur: Math.round(map.duration || 0),
+            s: samples.map(x => [x[0] - now, ...x.slice(1)]),
+            v: {
+                zoom: map.zoom, div: map.beatDivisor, tempo: map.tempoSlider, rm: map.renderMode, om: map.objectMode,
+                sel: ed.selecting ? Math.round(ed.selectMsStart) : null, scr: screenOf(ed), dlg: !!(app.dialogOpen && app.dialogOpen()),
+                rate: (ed.music && ed.music.tempo) || 1,
+            },
+        };
+        samples = [];
+        const full = fullAsked || now - lastFull > 20000;
+        // (the map: when it changes, notes moved or added, or anything else; the selection with it)
+        const t = mapText(map);
+        const mapKey = `${t.notes.length}:${hash(t.notes)}:${hash(t.extra)}`;
+        if (full || mapKey !== lastMapKey) {
+            out.map = { notes: t.notes, extra: t.extra };
+            lastMapKey = mapKey;
+        }
+        const sel = `${ranges(t.sorted, map.notes.selected)}/${ranges(map.specialObjects.items, map.specialObjects.selected)}/${ranges(map.vfxObjects.items, map.vfxObjects.selected)}`;
+        if (full || out.map || sel !== lastSelKey) {
+            out.sel = sel;
+            lastSelKey = sel;
+        }
+        const shown = shownSettings(app.settings);
+        shown.leftNav = app.settings.lastLeftNav;
+        shown.rightNav = app.settings.lastRightNav;
+        const setKey = JSON.stringify(shown);
+        if (full || setKey !== lastSetKey) {
+            out.set = shown;
+            lastSetKey = setKey;
+        }
+        if (full) {
+            fullAsked = false;
+            lastFull = now;
+        }
+        mine.send({ type: 'broadcast', event: 'pov', payload: out });
     }
 
     // ------------------------------------------------------------ watching (the spectator's side)
 
-    // watch(id): what that mapper did 5 seconds ago, as { name, title, notes, time, playing, duration } (view())
+    // watch(id, onPayload): everything that mapper's editor sends, as it comes in (spectator.js plays it back 5
+    // seconds later), with the time it came in
     let watching = null;
-    function watch(id) {
+    function watch(id, onPayload) {
         unwatch();
         if (!sb())
             return;
-        const ch = client.channel(`ssqe-map-${id}`, { config: { broadcast: { self: false } } });
-        watching = { id, ch, queue: [], shown: null, notes: [], at: 0, lastHeard: 0 };
-        const w = watching;
-        ch.on('broadcast', { event: 'state' }, ({ payload }) => {
-            w.queue.push({ due: performance.now() + DELAY, p: payload });
-            w.lastHeard = performance.now();
-        });
+        const ch = client.channel(`ssqe-pov-${id}`, { config: { broadcast: { self: false } } });
+        const hello = () => ch.send({ type: 'broadcast', event: 'hello', payload: {} });
+        watching = { id, ch, timer: null };
+        ch.on('broadcast', { event: 'pov' }, ({ payload }) => onPayload(payload, Date.now()));
         ch.subscribe(status => {
-            if (status === 'SUBSCRIBED')
-                ch.send({ type: 'broadcast', event: 'hello', payload: {} });
+            if (status === 'SUBSCRIBED' && watching && watching.ch === ch) {
+                hello();
+                clearInterval(watching.timer);
+                watching.timer = setInterval(hello, 10000);
+            }
         });
     }
     function unwatch() {
-        if (watching && client)
-            client.removeChannel(watching.ch);
-        watching = null;
-    }
-    function view() {
-        const w = watching;
-        if (!w)
-            return null;
-        const now = performance.now();
-        while (w.queue.length && w.queue[0].due <= now) {
-            const { due, p } = w.queue.shift();
-            if (p.notes !== undefined)
-                w.notes = p.notes ? p.notes.split(',').map(s => {
-                    const [x, y, ms] = s.split('|');
-                    return { x: +x, y: +y, ms: +ms };
-                }) : [];
-            w.shown = p;
-            w.at = due;
+        if (watching) {
+            clearInterval(watching.timer);
+            if (client)
+                client.removeChannel(watching.ch);
         }
-        const s = w.shown;
-        if (!s)
-            return { waiting: true, quiet: now - (w.lastHeard || now) };
-        const time = s.playing ? s.time + (now - w.at) * (s.rate || 1) : s.time;
-        return { name: s.name, title: s.title, notes: w.notes, time: Math.min(time, s.duration || Infinity), playing: s.playing, duration: s.duration, quiet: now - w.lastHeard };
+        watching = null;
     }
 
     // ------------------------------------------------------------ start
@@ -241,10 +307,17 @@ window.SSQEOnline = (function () {
                 tick();
             } catch { /* never in the way of mapping */ }
         }, SEND_EVERY);
+        clearInterval(sampler);
+        sampler = setInterval(() => {
+            try {
+                sample();
+            } catch { /* never in the way of mapping */ }
+        }, SAMPLE_EVERY);
     }
 
     return {
-        attach, configured, signUp, logIn, logOut, joinLive, liveMappers, watch, unwatch, view,
-        username: () => nameOf(user), loggedIn: () => !!user, sharing: () => !!(tracked && mineReady), DELAY,
+        attach, configured, signUp, logIn, logOut, joinLive, liveMappers, watch, unwatch,
+        username: () => nameOf(user), loggedIn: () => !!user, sharing: () => !!(tracked && mineReady),
+        watched: () => Date.now() < watchedUntil, DELAY,
     };
 })();

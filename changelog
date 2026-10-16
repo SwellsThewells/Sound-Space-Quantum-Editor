@@ -2,6 +2,17 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.16 - 10/16/2026 --
+
+- SPECTATE now shows the mapper's whole editor, exactly as they see it: their panels, timeline, grid, selection,
+  zoom and settings, scrolling and playing as they do, with their mouse moving over it (and a ring when they click).
+  Still 5 seconds behind so it runs smoothly. STOP WATCHING (or Escape) takes you back to the list. Their editor
+  only sends while someone is watching
+- Auto mapper: star targets land closer (about a quarter of a star off on average, was up to a star). A faster
+  stream speed a harder difficulty unlocks now comes in a few bars at a time instead of turning every drop into a
+  twice-as-fast stream at once, and the other things that change at 8, 9 and 10 change gradually in between
+
+----------------------------------
    -- Plus 3.0.15 - 10/16/2026 --
 
 - Accounts: LOG IN at the top of the menu. Just a username and a password, no email

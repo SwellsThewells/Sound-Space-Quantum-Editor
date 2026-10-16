@@ -911,93 +911,28 @@
 
     // ---------------------------------------------------------------- spectate (web only, see online.js)
 
-    // what the watched mapper had on screen 5 seconds ago: the grid with the notes coming in (as the editor shows
-    // them), and a strip of the notes a few seconds either side
-    class LiveView extends G.Control {
-        draw(ctx) {
-            const v = window.SSQEOnline && SSQEOnline.view();
-            if (!v || v.waiting)
-                return;
-            const r = this.rect, k = this.textScale;
-            const size = Math.min(r.h - 140 * k, r.w * 0.55), cell = size / 3;
-            const gx = r.x + (r.w - size) / 2, gy = r.y;
-            ctx.globalAlpha = 1;
-            ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-            ctx.lineWidth = Math.max(1, 2 * k);
-            for (let i = 0; i <= 3; i++) {
-                ctx.beginPath();
-                ctx.moveTo(gx + i * cell, gy);
-                ctx.lineTo(gx + i * cell, gy + size);
-                ctx.moveTo(gx, gy + i * cell);
-                ctx.lineTo(gx + size, gy + i * cell);
-                ctx.stroke();
-            }
-            const t = v.time, AHEAD = 1000;
-            const px = x => gx + (x + 0.5) * cell, py = y => gy + (y + 0.5) * cell;
-            // (the notes coming up, the furthest faintest and largest, as they close in on the grid)
-            for (let i = v.notes.length - 1; i >= 0; i--) {
-                const n = v.notes[i];
-                if (n.ms < t - 120 || n.ms > t + AHEAD)
-                    continue;
-                const p = Math.max(0, (n.ms - t) / AHEAD), hit = n.ms <= t;
-                const w = cell * 0.7 * (1 + 0.8 * p);
-                ctx.globalAlpha = hit ? 0.9 * (1 - (t - n.ms) / 120) : 1 - 0.75 * p;
-                ctx.strokeStyle = hit ? '#ffffff' : '#ff8ad8';
-                ctx.lineWidth = Math.max(1, 4 * k);
-                ctx.strokeRect(px(n.x) - w / 2, py(n.y) - w / 2, w, w);
-            }
-            // the timeline: 3 seconds either side, the notes as ticks, now in the middle
-            const ty = gy + size + 40 * k, th = 60 * k, SPAN = 3000;
-            ctx.globalAlpha = 1;
-            ctx.fillStyle = 'rgba(0,0,0,0.35)';
-            ctx.fillRect(r.x, ty, r.w, th);
-            ctx.fillStyle = '#ff8ad8';
-            for (const n of v.notes) {
-                const d = n.ms - t;
-                if (d < -SPAN || d > SPAN)
-                    continue;
-                ctx.fillRect(r.x + r.w / 2 + d / SPAN * r.w / 2 - 1.5 * k, ty + 8 * k, 3 * k, th - 16 * k);
-            }
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(r.x + r.w / 2 - 1.5 * k, ty, 3 * k, th);
-        }
-    }
-
+    // the people mapping right now, to pick one to watch (spectator.js: their editor, as they see it)
     function spectate(app) {
         const O = window.SSQEOnline;
-        const time = ms => {
-            const s = Math.max(0, ms / 1000);
-            return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
-        };
-        let selected = null;
         const picks = [];
-        for (let i = 0; i < 10; i++)
-            picks.push(new G.Button(60, 230 + i * 68, 520, 58, {
+        for (let i = 0; i < 12; i++)
+            picks.push(new G.Button(560, 230 + i * 62, 800, 54, {
                 text: '', textSize: 30, onLeftClick: () => {
                     const m = picks[i].mapper;
-                    if (!m)
-                        return;
-                    selected = m.id;
-                    O.watch(m.id);
+                    if (m)
+                        SSQE.Spectator.start(app, m);
                 },
             }));
-        const header = new G.Label(640, 180, 1220, 40, { text: '', textSize: 40, centerMode: None });
-        const status = new G.Label(640, 950, 1220, 40, { text: '', textSize: 30, centerMode: None });
-        const listInfo = new G.Label(60, 180, 520, 40, { text: 'MAPPING NOW', textSize: 36, centerMode: None });
-        const empty = new G.Label(60, 240, 520, 300, { text: '', textSize: 28, centerMode: None });
+        const empty = new G.Label(560, 400, 800, 300, { text: '', textSize: 34 });
         const controls = [
             background(),
             new Picture(35, 4, 160, 130, { name: 'logo', align: 'left' }),
             new G.Label(215, 22, 700, 100, { text: 'SPECTATE', textSize: 96, font: 'square', centerMode: None }),
-            new G.Square(35, 170, 570, 800, { color: [0, 0, 0, 40] }),
-            listInfo, empty, ...picks, header, status,
-            new LiveView(640, 240, 1220, 700),
-            new G.Button(1300, 990, 560, 70, {
-                text: 'BACK TO MENU', textSize: 44, onLeftClick: () => {
-                    O && O.unwatch();
-                    app.showMenu();
-                },
-            }),
+            new G.Label(560, 160, 800, 50, { text: 'MAPPING NOW - PICK SOMEONE TO WATCH', textSize: 36 }),
+            new G.Square(530, 215, 860, 770, { color: [0, 0, 0, 40] }),
+            empty, ...picks,
+            new G.Label(560, 990, 800, 40, { text: `You see their whole editor and their mouse, ${O ? O.DELAY / 1000 : 5} seconds behind.`, textSize: 26 }),
+            new G.Button(1300, 990, 560, 70, { text: 'BACK TO MENU', textSize: 44, onLeftClick: () => app.showMenu() }),
         ];
         const screen = new Screen(app, controls);
         screen.update = () => {
@@ -1013,25 +948,9 @@
                 b.mapper = m;
                 b.visible = !!m;
                 if (m)
-                    b.text = `${m.id === selected ? '> ' : ''}${m.name} - ${m.map}`.slice(0, 40);
+                    b.text = `${m.name} - ${m.map}`.slice(0, 50);
             });
-            empty.text = list.length ? '' : 'Nobody is mapping\nright now (or they\'ve\nturned watching off).';
-            const v = O.view();
-            if (!selected) {
-                header.text = 'Pick someone to watch';
-                status.text = `What they do shows here ${O.DELAY / 1000} seconds later.`;
-            } else if (!v || v.waiting) {
-                header.text = 'Connecting...';
-                status.text = '';
-            } else {
-                header.text = `${v.name} - ${v.title}`;
-                status.text = `${time(v.time)} / ${time(v.duration)}  ${v.playing ? 'PLAYING' : 'PAUSED'}  -  ${v.notes.length} notes  -  ${O.DELAY / 1000} s behind${v.quiet > 8000 ? '  -  (they\'ve gone quiet)' : ''}`;
-            }
-        };
-        const stop = screen.stop.bind(screen);
-        screen.stop = () => {
-            O && O.unwatch();
-            stop();
+            empty.text = list.length ? '' : 'Nobody is mapping right now\n(or they\'ve turned watching off).';
         };
         return screen;
     }

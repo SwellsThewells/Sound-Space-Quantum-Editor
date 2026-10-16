@@ -175,6 +175,9 @@
     }
 
     function save(s) {
+        // (a spectator's copy of someone else's settings is never saved over the user's own)
+        if (s && s.mirror)
+            return;
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
         } catch { /* storage unavailable */ }
