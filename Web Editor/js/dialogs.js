@@ -675,6 +675,54 @@
 
         // ------------------------------------------------------------ auto mapper options (web only)
 
+        // web only: logging in (a username and a password: see online.js), and whether people may watch you map
+        account() {
+            const O = window.SSQEOnline, s = this.app.settings;
+            const W = 360, controls = [];
+            if (!O || !O.configured()) {
+                controls.push(aLabel('Accounts and spectating aren\'t set up in this version yet.', 16, 16, W - 32, 60));
+                return this.floating('account', 'Account', W, 100, controls);
+            }
+            const status = aLabel('', 16, 0, W - 32, 44);
+            const watch = aCheck('Let others watch me map', s.allowSpectators !== false, 16, 0, W - 32, 22);
+            watch.input.addEventListener('change', () => {
+                s.allowSpectators = watch.input.checked;
+                SSQE.Settings.save(s);
+            });
+            const reopen = () => this.account();
+            if (O.loggedIn()) {
+                controls.push(aLabel(`Logged in as ${O.username()}`, 16, 16, W - 32, 26));
+                controls.push(at(watch.label, 16, 56, W - 32, 22));
+                controls.push(aLabel('While you have a map open, people can watch it from SPECTATE (5 seconds behind). Your song\'s audio isn\'t shared.', 16, 86, W - 32, 60));
+                controls.push(aButton('Log Out', async () => {
+                    await O.logOut();
+                    reopen();
+                }, 16, 156, 120, 30));
+                return this.floating('account', 'Account', W, 200, controls);
+            }
+            const name = aBox(120, 16, W - 136, 26);
+            const pass = aBox(120, 52, W - 136, 26);
+            pass.type = 'password';
+            name.autocomplete = 'username';
+            pass.autocomplete = 'current-password';
+            const go = make => async () => {
+                status.textContent = make ? 'Making the account...' : 'Logging in...';
+                try {
+                    const who = make ? await O.signUp(name.value.trim(), pass.value) : await O.logIn(name.value.trim(), pass.value);
+                    this.app.dialogs.message(`${make ? 'Account made. ' : ''}Logged in as ${who}.`);
+                    reopen();
+                } catch (e) {
+                    status.textContent = e.message;
+                }
+            };
+            pass.addEventListener('keydown', e => e.key === 'Enter' && go(false)());
+            controls.push(aLabel('Username', 16, 16, 100, 26), name, aLabel('Password', 16, 52, 100, 26), pass,
+                aButton('Log In', go(false), 16, 92, 150, 30), aButton('Make Account', go(true), W - 166, 92, 150, 30),
+                at(status, 16, 132, W - 32, 44), at(watch.label, 16, 182, W - 32, 22),
+                aLabel('Just a username and a password: no email.', 16, 212, W - 32, 22));
+            return this.floating('account', 'Account', W, 246, controls);
+        }
+
         autoMapOptions(editor) {
             const s = editor.settings;
             const save = () => editor.settingsChanged();

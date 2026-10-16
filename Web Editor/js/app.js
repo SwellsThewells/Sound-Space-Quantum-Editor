@@ -1146,6 +1146,8 @@
     window.addEventListener('DOMContentLoaded', () => {
         const app = new App();
         window.ssqeApp = app;
+        // web only: accounts and spectating (online.js)
+        window.SSQEOnline && SSQEOnline.attach(app);
         app.init();
     });
 })();

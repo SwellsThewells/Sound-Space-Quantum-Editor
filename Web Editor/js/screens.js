@@ -263,6 +263,12 @@
         const autosaved = button(1190, 845, 600, 85, 'AUTOSAVED MAP', 48, () => app.openAutosaved());
         const lastMap = button(1190, 845, 600, 85, 'EDIT LAST MAP', 48, () => app.openLastMap());
 
+        // (web only: logging in, for spectating; the button shows who's logged in)
+        const accountButton = button(1590, 132, 200, 40, 'LOG IN', 22, () => app.dialogs.account());
+        accountButton.process = function (dt) {
+            G.Button.prototype.process.call(this, dt);
+            this.text = window.SSQEOnline && SSQEOnline.loggedIn() ? SSQEOnline.username() : 'LOG IN';
+        };
         const navLeft = button(0, 1040, 40, 40, '<', 34, () => { app.mapIndex--; });
         const navRight = button(1880, 1040, 40, 40, '>', 34, () => { app.mapIndex++; });
         const selects = [], closes = [];
@@ -289,10 +295,11 @@
             button(1190, 275, 600, 85, 'LOAD MAP', 48, () => app.loadMapDialog()),
             button(1190, 370, 600, 85, 'PASTE MAP', 48, () => app.pasteMap()),
             button(1190, 465, 600, 85, 'SETTINGS', 48, () => app.openSettings()),
-            // web only: the map player, opened on top of the editor; stats and credits
+            // web only: the map player, opened on top of the editor; stats (credits are in Settings)
             button(1190, 560, 600, 85, 'MAP PLAYER', 48, () => app.openPlayer()),
             button(1190, 655, 600, 85, 'STATS', 48, () => app.showScreen('stats')),
-            button(1190, 750, 600, 85, 'CREDITS', 48, () => app.showScreen('credits')),
+            button(1190, 750, 600, 85, 'SPECTATE', 48, () => app.showScreen('spectate')),
+            accountButton,
             autosaved, lastMap, navLeft, navRight,
             ...selects, ...closes,
             button(262, 132, 100, 40, 'Feedback?', 20, () => window.open('https://forms.gle/Rh4RXKT9KyttJ9Dc6', '_blank', 'noopener')),
@@ -725,6 +732,9 @@
             resetButton,
             btn(700, 810, 500, 50, 'OPEN EDITOR FOLDER', 30, () => app.dialogs.message('The web editor keeps its maps and audio in your browser, so there is no editor folder to open.')),
             btn(700, 755, 500, 50, 'CHANGE KEYBINDS', 30, () => app.openKeybinds()),
+            btn(1270, 755, 500, 50, 'CREDITS', 30, () => { save(); app.showScreen('credits'); }),
+            // web only: whether people can watch you map (SPECTATE in the menu) while you're logged in
+            chk(150, 955, 'Let Others Watch Me Map', 'allowSpectators'),
             // web only: the whole setup (editor and map player settings, background, cursor, note mesh) in one file
             btn(1270, 810, 500, 50, 'EXPORT SETUP (.SSQES)', 30, () => { save(); app.exportSetup(); }),
             btn(1270, 865, 500, 50, 'IMPORT SETUP (.SSQES)', 30, () => app.importSetup()),
@@ -824,7 +834,7 @@
             new G.Label(215, 22, 500, 100, { text: 'CREDITS', textSize: 96, font: 'square', centerMode: None }),
             new Picture(660, 170, 600, 600, { name: 'credits' }),
             new G.Label(160, 790, 1600, 100, { text: 'MADE BY MRBRECKEN AND DJ #FAWOREEOUT', textSize: 64, font: 'square' }),
-            new G.Button(660, 930, 600, 100, { text: 'BACK TO MENU', textSize: 52, onLeftClick: () => app.showMenu() }),
+            new G.Button(660, 930, 600, 100, { text: 'BACK TO SETTINGS', textSize: 52, onLeftClick: () => app.openSettings() }),
         ];
         return new Screen(app, controls);
     }
@@ -899,5 +909,132 @@
         return screen;
     }
 
-    SSQE.Screens = { Screen, Picture, menu, create, settings, keybinds, stats, credits, wrapText };
+    // ---------------------------------------------------------------- spectate (web only, see online.js)
+
+    // what the watched mapper had on screen 5 seconds ago: the grid with the notes coming in (as the editor shows
+    // them), and a strip of the notes a few seconds either side
+    class LiveView extends G.Control {
+        draw(ctx) {
+            const v = window.SSQEOnline && SSQEOnline.view();
+            if (!v || v.waiting)
+                return;
+            const r = this.rect, k = this.textScale;
+            const size = Math.min(r.h - 140 * k, r.w * 0.55), cell = size / 3;
+            const gx = r.x + (r.w - size) / 2, gy = r.y;
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+            ctx.lineWidth = Math.max(1, 2 * k);
+            for (let i = 0; i <= 3; i++) {
+                ctx.beginPath();
+                ctx.moveTo(gx + i * cell, gy);
+                ctx.lineTo(gx + i * cell, gy + size);
+                ctx.moveTo(gx, gy + i * cell);
+                ctx.lineTo(gx + size, gy + i * cell);
+                ctx.stroke();
+            }
+            const t = v.time, AHEAD = 1000;
+            const px = x => gx + (x + 0.5) * cell, py = y => gy + (y + 0.5) * cell;
+            // (the notes coming up, the furthest faintest and largest, as they close in on the grid)
+            for (let i = v.notes.length - 1; i >= 0; i--) {
+                const n = v.notes[i];
+                if (n.ms < t - 120 || n.ms > t + AHEAD)
+                    continue;
+                const p = Math.max(0, (n.ms - t) / AHEAD), hit = n.ms <= t;
+                const w = cell * 0.7 * (1 + 0.8 * p);
+                ctx.globalAlpha = hit ? 0.9 * (1 - (t - n.ms) / 120) : 1 - 0.75 * p;
+                ctx.strokeStyle = hit ? '#ffffff' : '#ff8ad8';
+                ctx.lineWidth = Math.max(1, 4 * k);
+                ctx.strokeRect(px(n.x) - w / 2, py(n.y) - w / 2, w, w);
+            }
+            // the timeline: 3 seconds either side, the notes as ticks, now in the middle
+            const ty = gy + size + 40 * k, th = 60 * k, SPAN = 3000;
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            ctx.fillRect(r.x, ty, r.w, th);
+            ctx.fillStyle = '#ff8ad8';
+            for (const n of v.notes) {
+                const d = n.ms - t;
+                if (d < -SPAN || d > SPAN)
+                    continue;
+                ctx.fillRect(r.x + r.w / 2 + d / SPAN * r.w / 2 - 1.5 * k, ty + 8 * k, 3 * k, th - 16 * k);
+            }
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(r.x + r.w / 2 - 1.5 * k, ty, 3 * k, th);
+        }
+    }
+
+    function spectate(app) {
+        const O = window.SSQEOnline;
+        const time = ms => {
+            const s = Math.max(0, ms / 1000);
+            return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
+        };
+        let selected = null;
+        const picks = [];
+        for (let i = 0; i < 10; i++)
+            picks.push(new G.Button(60, 230 + i * 68, 520, 58, {
+                text: '', textSize: 30, onLeftClick: () => {
+                    const m = picks[i].mapper;
+                    if (!m)
+                        return;
+                    selected = m.id;
+                    O.watch(m.id);
+                },
+            }));
+        const header = new G.Label(640, 180, 1220, 40, { text: '', textSize: 40, centerMode: None });
+        const status = new G.Label(640, 950, 1220, 40, { text: '', textSize: 30, centerMode: None });
+        const listInfo = new G.Label(60, 180, 520, 40, { text: 'MAPPING NOW', textSize: 36, centerMode: None });
+        const empty = new G.Label(60, 240, 520, 300, { text: '', textSize: 28, centerMode: None });
+        const controls = [
+            background(),
+            new Picture(35, 4, 160, 130, { name: 'logo', align: 'left' }),
+            new G.Label(215, 22, 700, 100, { text: 'SPECTATE', textSize: 96, font: 'square', centerMode: None }),
+            new G.Square(35, 170, 570, 800, { color: [0, 0, 0, 40] }),
+            listInfo, empty, ...picks, header, status,
+            new LiveView(640, 240, 1220, 700),
+            new G.Button(1300, 990, 560, 70, {
+                text: 'BACK TO MENU', textSize: 44, onLeftClick: () => {
+                    O && O.unwatch();
+                    app.showMenu();
+                },
+            }),
+        ];
+        const screen = new Screen(app, controls);
+        screen.update = () => {
+            if (!O || !O.configured()) {
+                picks.forEach(b => b.visible = false);
+                empty.text = 'Spectating isn\'t set up\nin this version yet.';
+                return;
+            }
+            O.joinLive();
+            const list = O.liveMappers();
+            picks.forEach((b, i) => {
+                const m = list[i];
+                b.mapper = m;
+                b.visible = !!m;
+                if (m)
+                    b.text = `${m.id === selected ? '> ' : ''}${m.name} - ${m.map}`.slice(0, 40);
+            });
+            empty.text = list.length ? '' : 'Nobody is mapping\nright now (or they\'ve\nturned watching off).';
+            const v = O.view();
+            if (!selected) {
+                header.text = 'Pick someone to watch';
+                status.text = `What they do shows here ${O.DELAY / 1000} seconds later.`;
+            } else if (!v || v.waiting) {
+                header.text = 'Connecting...';
+                status.text = '';
+            } else {
+                header.text = `${v.name} - ${v.title}`;
+                status.text = `${time(v.time)} / ${time(v.duration)}  ${v.playing ? 'PLAYING' : 'PAUSED'}  -  ${v.notes.length} notes  -  ${O.DELAY / 1000} s behind${v.quiet > 8000 ? '  -  (they\'ve gone quiet)' : ''}`;
+            }
+        };
+        const stop = screen.stop.bind(screen);
+        screen.stop = () => {
+            O && O.unwatch();
+            stop();
+        };
+        return screen;
+    }
+
+    SSQE.Screens = { Screen, Picture, menu, create, settings, keybinds, stats, credits, spectate, wrapText };
 })();

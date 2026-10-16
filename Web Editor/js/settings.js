@@ -93,6 +93,7 @@
         autoMapFill: 'intense',
         autoMapCalm: 30,
         autoMapUseMap: true,
+        allowSpectators: true, // web only: when logged in, people can watch you map (SPECTATE)
         autoMapSetBpm: true,
         autoMapCount: 0, // web only: how many notes the auto mapper adds (0 = as many as the difficulty asks for)
         gridZoom: 100, // web only: size of the 3x3 grid in %

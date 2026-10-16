@@ -4150,11 +4150,13 @@ window.SSQEAutoMapper = (function () {
         return 10 + (stars - STARS_AT[10]) / 0.9;
     };
 
-    // A map aimed at a star rating (opts.stars, Rhythia's SR): made at the difficulty that rating usually comes out at,
-    // rated with Rhythia's star formula, and made again harder or easier until it lands close (within a quarter of a
-    // star), keeping the closest of a few tries. One knob does it: the difficulty from 1 to 10 (in between too), past
-    // 10 bigger jumps and more notes, under 1 fewer notes. Without a target, or with a set number of notes, the map is
-    // made once and its rating noted.
+    // A map aimed at a star rating (opts.stars, Rhythia's SR): one knob for how hard (the difficulty from 1 to 10, in
+    // between too; past 10 bigger jumps and more notes, under 1 fewer notes), started where that rating usually comes
+    // out, then searched: quick maps (one pass each) rated with Rhythia's star formula until two tries either side of
+    // the target close in on it (each next try between them, never right next to either, as the rating of a made map
+    // isn't exact from one try to the next), or one lands within a quarter of a star. Then the map is made properly at
+    // the best setting, and the closer of that and the best quick one is kept. Without a target, or with a set number
+    // of notes, the map is made once and its rating noted.
     async function generate(opts) {
         const rate = window.SSQEStarRating && window.SSQEStarRating.rate;
         const target = +opts.stars;
@@ -4164,48 +4166,52 @@ window.SSQEAutoMapper = (function () {
                 notes.info.stars = rate(notes);
             return notes;
         }
-        const at = u => u > 10 ? { difficulty: 10, jumpScale: (opts.jumpScale || 1) * (1 + 0.08 * (u - 10)), density: (opts.density || 1) * (1 + 0.12 * (u - 10)) }
-            : u < 1 ? { difficulty: 1, density: (opts.density || 1) * Math.max(0.3, u) } : { difficulty: u };
+        const js = opts.jumpScale || 1, dens = opts.density || 1;
+        const at = u => u > 10 ? { difficulty: 10, jumpScale: js * (1 + 0.12 * (u - 10)), density: dens * (1 + 0.2 * (u - 10)) }
+            : u < 1 ? { difficulty: 1, density: dens * Math.max(0.3, u) } : { difficulty: u };
         const progress = opts.progress || (() => { });
-        const ATTEMPTS = 4;
-        const tried = [];
-        let u = difficultyFor(target), best = null;
-        for (let t = 0; t < ATTEMPTS; t++) {
+        const SEARCH = 7, CLOSE = 0.25, LO = 0.3, HI = 15;
+        const make = async (u, label, tries) => {
             const trace = opts.trace ? [] : undefined;
-            const notes = await generateAt({ ...opts, ...at(u), trace, progress: text => progress(`AIMING AT ${target.toFixed(1)} STARS (${t + 1}/${ATTEMPTS}) - ${text}`) });
-            const sr = rate(notes);
-            tried.push([u, sr]);
-            if (!best || Math.abs(sr - target) < Math.abs(best.sr - target))
-                best = { notes, sr, trace };
-            if (Math.abs(sr - target) <= 0.25)
+            const notes = await generateAt({ ...opts, ...at(u), trace, tries, progress: text => progress(`AIMING AT ${target.toFixed(1)} STARS (${label}) - ${text}`) });
+            return { u, notes, sr: rate(notes), trace };
+        };
+        const tried = [];
+        let u = Math.max(LO, Math.min(HI, difficultyFor(target))), best = null;
+        for (let t = 0; t < SEARCH; t++) {
+            const r = await make(u, `TRY ${t + 1}`, 1);
+            tried.push(r);
+            if (!best || Math.abs(r.sr - target) < Math.abs(best.sr - target))
+                best = r;
+            if (Math.abs(r.sr - target) <= CLOSE)
                 break;
-            // (the next try: between the closest tries either side of the target, or on from the last by how much the
-            // rating moved with the knob so far, about 0.9 stars a difficulty to begin with)
-            const below = tried.filter(([, r]) => r < target).sort((p, q) => q[1] - p[1])[0];
-            const above = tried.filter(([, r]) => r > target).sort((p, q) => p[1] - q[1])[0];
+            const below = tried.filter(x => x.sr < target).sort((p, q) => q.u - p.u)[0];
+            const above = tried.filter(x => x.sr > target).sort((p, q) => p.u - q.u)[0];
             let next;
-            if (below && above)
-                next = below[0] + (above[0] - below[0]) * (target - below[1]) / Math.max(1e-6, above[1] - below[1]);
-            else {
-                let slope = 0.9;
-                if (tried.length >= 2) {
-                    const [[u1, r1], [u2, r2]] = tried.slice(-2);
-                    if (Math.abs(u2 - u1) > 0.05 && (r2 - r1) / (u2 - u1) > 0.2)
-                        slope = (r2 - r1) / (u2 - u1);
-                }
-                next = u + Math.max(-4, Math.min(4, (target - sr) / slope));
+            if (below && above && below.u < above.u) {
+                // (between the closest tries either side, by where the target falls between their ratings, kept off
+                // both ends; done when they're too close together to tell apart)
+                if (above.u - below.u < 0.15)
+                    break;
+                const f = Math.min(0.8, Math.max(0.2, (target - below.sr) / Math.max(1e-6, above.sr - below.sr)));
+                next = below.u + (above.u - below.u) * f;
+            } else {
+                // (no try on the other side yet: on from the last by how far the rating has to go, about 0.9 stars a
+                // step of the knob, at most 3 steps; out of room: as hard or as easy as it goes)
+                if ((r.sr < target && u >= HI) || (r.sr > target && u <= LO))
+                    break;
+                next = Math.max(LO, Math.min(HI, u + Math.max(-3, Math.min(3, (target - r.sr) / 0.9))));
             }
-            next = Math.max(0.3, Math.min(15, next));
-            // (no point making the same map again: the rating has gone as far as the song lets it)
-            if (tried.some(([v]) => Math.abs(v - next) < 0.1))
-                break;
             u = next;
         }
-        if (opts.trace && best.trace)
-            opts.trace.push(...best.trace);
-        best.notes.info.stars = best.sr;
-        best.notes.info.difficulty = tried.find(([v, r]) => r === best.sr)[0];
-        return best.notes;
+        // made properly at the best setting (several passes, the most balanced kept, as without a target)
+        const full = await make(best.u, 'FINISHING', undefined);
+        const keep = Math.abs(full.sr - target) <= Math.max(CLOSE, Math.abs(best.sr - target) + 0.1) ? full : best;
+        if (opts.trace && keep.trace)
+            opts.trace.push(...keep.trace);
+        keep.notes.info.stars = keep.sr;
+        keep.notes.info.difficulty = keep.u;
+        return keep.notes;
     }
 
     async function generateAt(opts) {
@@ -4520,7 +4526,7 @@ window.SSQEAutoMapper = (function () {
         // (it hands the page back every few milliseconds so the editor never freezes, and stops trying once it has
         // spent about 20 seconds)
         let best = null;
-        let tries = times.length < 600 ? TRIES : times.length < 1500 ? 5 : 3;
+        let tries = opts.tries || (times.length < 600 ? TRIES : times.length < 1500 ? 5 : 3);
         const started = performance.now();
         for (let t = 0; t < tries; t++) {
             const label = `MAPPING (TRY ${t + 1} OF ${tries})`;
