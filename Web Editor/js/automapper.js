@@ -1473,12 +1473,15 @@ window.SSQEAutoMapper = (function () {
         };
         // (a break: a near-silent section between louder ones, the intro and the end aside, where the music stops
         // for a moment before a drop; and how strong a sound has to be to count there, half again its usual one)
+        // (and a quiet lead-in or fade-out: a quiet part next to one three times as loud, a riser before the drop
+        // or the song dying away, which human maps leave nearly empty; the intro is the song's start, mapped)
         const isBreak = sec => {
             const q = sections.indexOf(sec);
-            if (q <= 0 || q >= sections.length - 1 || sec.level >= 0.1)
+            if (q <= 0 || sec.level >= 0.15)
                 return false;
-            const lo = Math.min(sections[q - 1].level, sections[q + 1].level), hi = Math.max(sections[q - 1].level, sections[q + 1].level);
-            return lo >= 1.5 * sec.level && hi >= 3 * sec.level;
+            const next = q + 1 < sections.length ? sections[q + 1].level : 0;
+            const lo = Math.min(sections[q - 1].level, next), hi = Math.max(sections[q - 1].level, next);
+            return hi >= 3 * sec.level && (sec.level < 0.1 && lo >= 1.5 * sec.level || hi >= 0.3);
         };
         const faint = new Map();
         const faintIn = sec => {
@@ -1489,12 +1492,18 @@ window.SSQEAutoMapper = (function () {
             return faint.get(sec);
         };
         // (in a jump map, whether a bar is in a stream phrase: decided per two-bar phrase, the same for every bar
-        // that repeats it, more often in intense parts)
+        // that repeats it. Human jump maps take turns, a jump phrase then a stream phrase, through their intense
+        // parts (about half their busy phrases have streams), every third phrase in medium ones and now and then
+        // in calm ones; never a wall of jumps for a minute)
         const isStreamBar = j => {
             if (opts.patterns !== 'jumps')
                 return true;
-            const top = sectionAt(inRange[j].from).level / Math.max(0.05, topLevel);
-            return ((Math.imul((rootOf(j) >> 1) + 1, 2654435761) >>> 0) % 1000) / 1000 < 0.1 + 0.25 * top;
+            const sec = sectionAt(inRange[j].from), top = sec.level / Math.max(0.05, topLevel), ph = rootOf(j) >> 1;
+            if (top >= 0.8 || sec.drop)
+                return ph % 2 === 1;
+            if (top >= 0.55)
+                return ph % 3 === 2;
+            return ((Math.imul(ph + 1, 2654435761) >>> 0) % 1000) / 1000 < 0.1 + 0.25 * top;
         };
         const mapBars = (scale, push = { mult: 1, stage: 0 }) => {
         out = [];
@@ -1599,8 +1608,11 @@ window.SSQEAutoMapper = (function () {
                 const stepAt = lv => Math.max(65, 2000 / (0.55 * 4 * Math.pow(1.36, lv - 1)));
                 // (the same rule the jumps are placed by, jumpGap: a finer division would be timed for jumps and then
                 // played as steps)
-                const jumpStep = (top >= 0.8 || s.drop) && (root >> 1) % 2 === 0 ? stepAt(level10) : stepAt(level10 - 1);
-                const coarse = family.filter(d => beatLen / d >= jumpStep).pop() || family[0];
+                // (every other jump phrase of an intense part at the quickest jumps the difficulty takes, the rest one
+                // division coarser: at 10 in the medium parts too)
+                const onDiv = family.filter(d => beatLen / d >= stepAt(level10)).pop() || family[0];
+                const offDiv = family.filter(d => d < onDiv).pop() || onDiv;
+                const coarse = (top >= (level10 >= 10 ? 0.55 : 0.8) || s.drop) && (root >> 2) % 2 === 0 ? onDiv : offDiv;
                 div = Math.min(div, coarse);
             }
 
@@ -1725,9 +1737,21 @@ window.SSQEAutoMapper = (function () {
             const jumpIns = new Set();
             // (and a jump map's jump phrases at 9 and 10, in the intense parts: a jump on every position of their
             // division, not only on the sounds, so the hardest jump maps are jump streams, as human ones are)
-            const jumpFill = !streamBar && level10 >= 9 && intense && fill !== 'never' && !(opts.count > 0) && push.stage === 0
+            const jumpFill = !streamBar && level10 >= 10 && (s.drop || top >= 0.85) && fullFit && fill !== 'never' && !(opts.count > 0) && push.stage === 0
                 && raw.length >= beatsIn;
             const streamFill = (busy && streamBar || jumpFill) && (fill === 'busy' || (fill === 'intense' && intense));
+            // (how much sound the bar has at its positions, on average)
+            let barHitV = -1;
+            const barHit = () => {
+                if (barHitV < 0) {
+                    let t = 0, c = 0;
+                    for (let bi = 0; bi < beatsIn; bi++)
+                        for (let q = 0; q < div; q++, c++)
+                            t += hitAt(b.from + bi * beatLen + q * beatLen / div);
+                    barHitV = c ? t / c : 0;
+                }
+                return barHitV;
+            };
             // (streams follow the song's rhythm rather than running at twice or four times anything in it: see
             // finest above)
             const fillDiv = jumpFill ? div : Math.min(topDiv(family, beatLen), finest, Math.max(div, d));
@@ -1748,7 +1772,8 @@ window.SSQEAutoMapper = (function () {
                     const list = [];
                     for (let t = p0 + step; t < p1 - step * 0.5; t += step) {
                         const ms = Math.round(gridAt(t, fillDiv).at);
-                        if (ok(ms) && ms - p0 >= Math.min(minGap, step) * 0.9 && p1 - ms >= step * 0.5)
+                        // (a jump stream only where something sounds, a hat or a ripple: not on silence)
+                        if (ok(ms) && ms - p0 >= Math.min(minGap, step) * 0.9 && p1 - ms >= step * 0.5 && (!jumpFill || hitAt(ms) >= 0.3 * barHit()))
                             list.push(ms);
                     }
                     if (list.length)
@@ -1770,6 +1795,9 @@ window.SSQEAutoMapper = (function () {
             // strongest beats, two at a time where they can, are streams all through, and the others keep only
             // their main sounds, the one on the beat and the strongest other: a stream, then jumps, as human maps
             // thin a busy part. (The same number of notes; repeated bars keep it.)
+            // (a strong sound: clearly louder than the bar's usual one, a snare or a crash over the hats)
+            const strs = here.map(e => e.str).sort((p, q) => p - q), usualStr = strs.length ? strs[strs.length >> 1] : 0;
+            const strongAt = t => here.some(e => Math.abs(e.ms - t) <= 3 && e.str >= 1.25 * usualStr);
             if (streamFill && push.stage === 0 && !(opts.count > 0) && picked.length + extra.length >= beatsIn * fillDiv * 0.5) {
                 const have = [...new Set(picked.concat(extra))].sort((p, q) => p - q);
                 let holes = 0;
@@ -1833,12 +1861,16 @@ window.SSQEAutoMapper = (function () {
                         if (cost() > budget + 1)
                             tier[q] = was;
                     }
+                    // (two stream beats in a row run on into each other, one longer stream, unless the second starts
+                    // on a strong sound: human maps' streams run for a beat or several and break before the accents)
+                    const runOn = q => tier[q] === 2 && q + 1 < beatsList.length && tier[q + 1] === 2 && beatsList[q + 1].pos.length > 0
+                        && !strongAt(beatsList[q + 1].pos[0]);
                     const made = [];
-                    beatsList.forEach((x, q) => made.push(...x.tiers[tier[q]]));
+                    beatsList.forEach((x, q) => made.push(...(runOn(q) ? x.pos : x.tiers[tier[q]])));
                     // (a stream beat's last note is left out for the jump into the next beat: that beat's note is a
                     // jump-in, so the hole isn't filled again below)
                     beatsList.forEach((x, q) => {
-                        if (tier[q] === 2 && x.pos.length >= 4 && q + 1 < beatsList.length && beatsList[q + 1].pos.length)
+                        if (tier[q] === 2 && !runOn(q) && x.pos.length >= 4 && q + 1 < beatsList.length && beatsList[q + 1].pos.length)
                             jumpIns.add(beatsList[q + 1].pos[0]);
                     });
                     picked.length = 0;
@@ -1854,10 +1886,18 @@ window.SSQEAutoMapper = (function () {
                 const all = picked.concat(extra);
                 const into = [];
                 const groove = !s.drop && top < 0.9 && opts.patterns !== 'streams';
-                if (groove)
-                    for (const t of all)
-                        if (gridAt(t, 1).err <= 3)
-                            into.push(t);
+                // (into the strong sounds on the beat, and at least the strongest one in every two beats: a jump
+                // into every beat makes every stream the same seven notes)
+                if (groove) {
+                    const onBeat = all.filter(t => gridAt(t, 1).err <= 3 && t > b.from + 3);
+                    for (let h = 0; h < beatsIn; h += 2) {
+                        const t0 = b.from + h * beatLen, t1 = t0 + 2 * beatLen;
+                        const these = onBeat.filter(t => t >= t0 - 3 && t < t1 - 3);
+                        const strong = these.filter(strongAt);
+                        const str = t => (here.find(e => Math.abs(e.ms - t) <= 3) || { str: 0 }).str;
+                        into.push(...(strong.length ? strong : these.filter(t => heard.has(t)).sort((p, q) => str(q) - str(p)).slice(0, 1)));
+                    }
+                }
                 // (a stream map's drop at its fastest: a jump into every beat at 10, every other at 9, the way human
                 // stream maps break their walls)
                 if (opts.patterns === 'streams' && (s.drop || top >= 0.9) && (fillDiv >= 12 || step <= 45) && level10 >= 9)
@@ -2114,8 +2154,10 @@ window.SSQEAutoMapper = (function () {
             const src = heard.get(t);
             if (src === undefined || Math.abs(src - lag - t) <= 6 || src < startMs || src > endMs)
                 return t;
+            // (only a note a beat or so from the others: a steady run of half-beat notes stays on the grid, or each
+            // jump would need a different speed)
             const gap = Math.min(i ? t - times[i - 1] : Infinity, i + 1 < times.length ? times[i + 1] - t : Infinity);
-            return gap >= 200 ? Math.round(src - lag) : t;
+            return gap >= Math.max(200, 0.9 * 60000 / ctx.timing[beats[beatAt(t)].tp].bpm) ? Math.round(src - lag) : t;
         });
     }
 
@@ -2492,6 +2534,13 @@ window.SSQEAutoMapper = (function () {
                     // hook) rather than snapping back the way it came; after a jump, the next one doesn't land back
                     // where that one started (A to B to A); and the turn is never harder than can be played
                     const N0 = { x: x0, y: y0, ms: notes[s0].ms };
+                    // (and never straight back at speed where it joins on, at either end, see thereAndBack)
+                    const turned = q => { const [tx, ty] = SYM[k](notes[q].x, notes[q].y); return { x: tx, y: ty, ms: notes[q].ms }; };
+                    const after = q => q < s1 ? turned(q) : notes[q];
+                    if (thereAndBack(prev2, prev, N0) || (s0 + 1 < notes.length && thereAndBack(prev, N0, after(s0 + 1)))
+                        || (s1 < notes.length && s1 - 2 >= s0 && thereAndBack(turned(s1 - 2), turned(s1 - 1), notes[s1]))
+                        || (s1 + 1 < notes.length && thereAndBack(turned(s1 - 1), notes[s1], notes[s1 + 1])))
+                        continue;
                     // (nor back onto one of the notes just played: a stream's end, the hub it went round)
                     for (let back = 2; back <= 5 && s0 - back >= 0; back++)
                         if (Math.hypot(x0 - notes[s0 - back].x, y0 - notes[s0 - back].y) < 0.35)
@@ -2850,7 +2899,7 @@ window.SSQEAutoMapper = (function () {
         let best = null;
         for (const [x, y] of spots) {
             const dist = Math.hypot(x - prev.x, y - prev.y);
-            if (dist < 0.05 || (prev2 && Math.hypot(x - prev2.x, y - prev2.y) < 0.05))
+            if (dist < 0.05 || (prev2 && Math.hypot(x - prev2.x, y - prev2.y) < 0.05) || thereAndBack(prev2, prev, { x, y, ms }))
                 continue;
             const speed = dist / Math.max(1, ms - prev.ms) * 1000;
             const score = Math.abs(Math.log((dist + 0.15) / (J + 0.15))) + (speed > opts.speedCap ? 5 + speed / opts.speedCap : 0) + 0.2 * Math.random();
@@ -2887,6 +2936,13 @@ window.SSQEAutoMapper = (function () {
     // the quick notes' own speed allow.
     // (prevGap: the gap before this one, if known: a stream map jumps only where the rhythm slows, and steps on
     // through a steady run of slower notes after that)
+    // A to B and straight back to A at stream or jump speed (both moves under 100ms): a jerk no human map has, so
+    // nothing is placed that way (a learned run's turn played faster than in its own map, a join, a turned stretch)
+    function thereAndBack(a, b, c) {
+        return !!a && !!b && !!c && c.ms - b.ms < 100 && b.ms - a.ms < 100 && Math.hypot(c.x - a.x, c.y - a.y) < 0.35
+            && Math.hypot(b.x - a.x, b.y - a.y) > 0.5;
+    }
+
     function moveFor(size, gap, opts, fast = 0, prevGap = 0) {
         const g = opts.jumpGap || 100;
         // (in a mixed map, notes closer than jumpGap too: a run of 1/8 notes next to 1/16 bursts isn't a chain of
@@ -3002,6 +3058,10 @@ window.SSQEAutoMapper = (function () {
                 // map's stacked notes, the same spot twice a moment apart, end the run before them)
                 const last = recent[recent.length - 1];
                 if (last && Math.hypot(last[0] - x - ox, last[1] - y - oy) < 0.05)
+                    break;
+                // (nor straight back where it was two notes ago, at speed, see thereAndBack)
+                const back = recent[recent.length - 2];
+                if (back && lastGap > 0 && thereAndBack({ x: back[0], y: back[1], ms: 0 }, { x: last[0], y: last[1], ms: lastGap }, { x: x + ox, y: y + oy, ms: lastGap + gg }))
                     break;
                 logSum += r;
                 cost += dev;
@@ -3509,6 +3569,8 @@ window.SSQEAutoMapper = (function () {
                 // doing just that (a zigzag of jumps)
                 if (prev && pos.length >= 2) {
                     const P0 = { x: pos[0][0], y: pos[0][1], ms: times[i] }, P1 = { x: pos[1][0], y: pos[1][1], ms: times[i + 1] };
+                    if (thereAndBack(prev2, prev, P0) || thereAndBack(prev, P0, P1))
+                        continue;
                     const t1 = (P0.ms - prev.ms) / 1000, t2 = (P1.ms - P0.ms) / 1000;
                     if (t1 > 0 && t2 > 0) {
                         const ax = (P1.x - P0.x) / t2 - (P0.x - prev.x) / t1, ay = (P1.y - P0.y) / t2 - (P0.y - prev.y) / t1;
