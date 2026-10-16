@@ -1375,7 +1375,22 @@ window.SSQEAutoMapper = (function () {
             // (the other kind, triplets in a straight song or the other way round, only where they clearly fit
             // better, at a division songs really play: a triplet fill, not a bar of noise that half fits anything)
             const grid = other.full && other.div <= 6 && other.sure >= main.sure + 0.2 ? other : main;
-            const { family, div } = grid;
+            const { family } = grid;
+            let { div } = grid;
+            // A jump map has whole phrases (two bars) of jumps on the song's own rhythm, and stream phrases between
+            // them, more of those the more intense the part is (decided once for a bar and every bar that repeats
+            // it). A jump phrase keeps to a division whose notes are far enough apart to jump between (a quarter of a
+            // beat at 180 BPM): its notes go on the strongest sounds there, and the quicker sounds are left to the
+            // stream phrases.
+            const top = s.level / Math.max(0.05, topLevel);
+            const root = rootOf(j);
+            const streamBar = opts.patterns !== 'jumps' || push.stage >= 1
+                || ((Math.imul((root >> 1) + 1, 2654435761) >>> 0) % 1000) / 1000 < 0.15 + 0.4 * top;
+            if (!streamBar) {
+                const jumpStep = Math.max(45, 2000 / (0.55 * 4 * Math.pow(1.36, level10 - 1)));
+                const coarse = family.filter(d => beatLen / d >= jumpStep).pop() || family[0];
+                div = Math.min(div, coarse);
+            }
 
             const sc = scale.get(s);
             const exact = (sc === undefined || firstCount[j] === undefined ? cap[j] * push.mult : Math.min(cap[j], firstCount[j]) * sc * push.mult) + carry;
@@ -1455,36 +1470,52 @@ window.SSQEAutoMapper = (function () {
             // a burst; intense next to the song's own most intense parts)
             const busy = (push.stage >= 2 ? raw.length : raw.reduce((t, e) => t + Math.min(1, e.strength / 0.6), 0))
                 >= (push.stage >= 3 ? 1 : beatsIn * (push.stage >= 2 ? 1 : dense ? 1.5 : 2));
-            const top = s.level / Math.max(0.05, topLevel);
             const intense = top >= 0.8 || s.drop || (hard && top >= 0.7) || (dense && top >= 0.3) || push.stage >= 1;
-            // A jump map has whole bars of jumps on the song's own rhythm, and stream bars between them, more of them
-            // the more intense the part is (decided once for a bar and every bar that repeats it)
-            const root = rootOf(j);
-            const streamBar = opts.patterns !== 'jumps' || push.stage >= 1
-                || ((Math.imul(root + 1, 2654435761) >>> 0) % 1000) / 1000 < 0.2 + 0.5 * top;
             if (picked.length < k && busy && streamBar && (fill === 'busy' || (fill === 'intense' && intense))) {
+                // (one division finer than the bar's own sounds: streams follow the song's rhythm rather than running
+                // at twice or four times anything in it. Another only in the drops at 9 and 10, as bursts (see
+                // burstAt); more with more Density, or to reach a set number of notes)
                 let finest = finer(family, div);
-                // (the extra division at 8 and up only in the drops and the parts as intense, and never in a jump map:
-                // jump maps jump on the song's own rhythm and stream only a division finer)
-                for (let q = (hard && (s.drop || top >= 0.9) && opts.patterns !== 'jumps' ? 1 : 0) + (dense ? 1 : 0) + Math.min(2, Math.max(0, push.stage - 1)); q > 0; q--)
+                const climax = (s.drop || top >= 0.9) && level10 >= 9;
+                for (let q = (climax ? 1 : 0) + (dense ? 1 : 0) + Math.min(2, Math.max(0, push.stage - 1)); q > 0; q--)
                     finest = finer(family, finest);
                 const fillDiv = Math.min(topDiv(family, beatLen), finest, Math.max(div, d));
                 const step = beatLen / fillDiv;
-                const extra = [];
-                for (let i = 0; i + 1 < picked.length && picked.length + extra.length < k; i++) {
-                    const p0 = picked[i], p1 = picked[i + 1];
+                // The stretches between sounds that get a stream, whole: first the ones leading into the strongest
+                // sounds, the next bar's downbeat among them (so a stream runs on into it rather than stopping short
+                // of it), until the bar has its notes
+                picked.sort((p, q) => p - q);
+                const strengthAt = new Map(here.map(e => [e.ms, e.score]));
+                const spans = [];
+                const ends = picked.concat(b.to < endMs && b.to - picked[picked.length - 1] <= beatLen * 1.01 ? [Math.round(b.to)] : []);
+                for (let i = 0; i + 1 < ends.length; i++) {
+                    const p0 = ends[i], p1 = ends[i + 1];
                     if (p1 - p0 > beatLen * (push.stage >= 3 ? 4.01 : push.stage >= 2 ? 2.01 : 1.01))
                         continue;
-                    for (let t = p0 + step; t < p1 - step * 0.5 && picked.length + extra.length < k; t += step) {
+                    const list = [];
+                    for (let t = p0 + step; t < p1 - step * 0.5; t += step) {
                         const ms = Math.round(gridAt(t, fillDiv).at);
                         if (ok(ms) && ms - p0 >= Math.min(minGap, step) * 0.9 && p1 - ms >= step * 0.5)
-                            extra.push(ms);
+                            list.push(ms);
                     }
+                    if (list.length)
+                        spans.push({ list, into: i + 1 < picked.length ? strengthAt.get(p1) ?? 0 : 1.5 });
+                }
+                spans.sort((p, q) => q.into - p.into);
+                const extra = [];
+                // (a stretch is streamed whole or not at all: a stream with a note missing in it is worse than one
+                // note too many or a stretch left as it is)
+                for (const sp of spans) {
+                    const room = k - picked.length - extra.length;
+                    if (room <= 0)
+                        break;
+                    if (sp.list.length <= room + 2)
+                        extra.push(...sp.list);
                 }
                 // Some of the strongest sounds (a kick, a snare) keep the gap before them, so they stay jumps in a
                 // stream rather than one more step: more of them the higher the difficulty (decided the same way
                 // every time, so repeated bars keep it)
-                if (extra.length && !(opts.count > 0) && push.stage === 0) {
+                if (extra.length && !(opts.count > 0) && push.stage === 0 && opts.patterns !== 'streams') {
                     const scores = here.map(e => e.score).sort((p, q) => q - p);
                     const strong = scores[Math.floor(scores.length * 0.3)] ?? Infinity;
                     const share = Math.min(0.45, Math.max(0.1, 0.1 + 0.075 * (level10 - 6)));
@@ -1523,6 +1554,20 @@ window.SSQEAutoMapper = (function () {
                 }
                 picked.length = 0;
                 picked.push(...keep);
+            }
+            // (and no lone note missing in the middle of a stream: one more note there rather than a hole)
+            if (!(opts.count > 0) && picked.length >= 4) {
+                picked.sort((p, q) => p - q);
+                const fills = [];
+                for (let q = 1; q + 2 < picked.length; q++) {
+                    const g0 = picked[q] - picked[q - 1], g1 = picked[q + 1] - picked[q], g2 = picked[q + 2] - picked[q + 1];
+                    if (g0 < 70 && Math.abs(g1 - 2 * g0) < 4 && Math.abs(g2 - g0) < 4 && burst === Infinity) {
+                        const ms = Math.round(picked[q] + g0);
+                        if (ok(ms))
+                            fills.push(ms);
+                    }
+                }
+                picked.push(...fills);
             }
             carry = Math.min(2, Math.max(-2, exact - picked.length));
             if (firstPass)
@@ -2019,7 +2064,7 @@ window.SSQEAutoMapper = (function () {
                 let far = reach(dt, fast[s0], { ...ro, comfort: ro.comfort && ro.comfort * (opts.levelAt ? opts.levelAt(times[s0]) : 1) });
                 if (afterSlide(s0))
                     far = Math.max(far, 2.2);
-                const want = Math.min(opts.quantum ? 3.2 : 2.83, Math.max(2, dt / fast[s0]), far);
+                const want = Math.min(opts.quantum ? 3.2 : 2.83, Math.max(2, dt / fast[s0]) * (opts.calmAt && !afterSlide(s0) ? opts.calmAt(times[s0]) : 1), far);
                 const before = prev2 && Math.hypot(prev.x - prev2.x, prev.y - prev2.y) >= 1.9
                     ? [prev.x - prev2.x, prev.y - prev2.y] : null;
                 let best = null;
@@ -2034,7 +2079,7 @@ window.SSQEAutoMapper = (function () {
                         if (Math.hypot(xe - notes[s1].x, ye - notes[s1].y) < 0.05)
                             continue;
                     }
-                    let cost = 2 * Math.abs(Math.log(Math.max(d0, 0.05) / want)) + (d0 < Math.min(1.45, 0.75 * far) ? 3 : 0) + (k ? 0.1 : 0);
+                    let cost = 2 * Math.abs(Math.log(Math.max(d0, 0.05) / want)) + (d0 < Math.min(1.45, 0.75 * want) ? 3 : 0) + (k ? 0.1 : 0);
                     if (before && d0 >= 1.9) {
                         const cross = before[0] * (y0 - prev.y) - before[1] * (x0 - prev.x);
                         const turn = Math.abs(Math.atan2(cross, before[0] * (x0 - prev.x) + before[1] * (y0 - prev.y))) * 180 / Math.PI;
@@ -2045,6 +2090,10 @@ window.SSQEAutoMapper = (function () {
                     // hook) rather than snapping back the way it came; after a jump, the next one doesn't land back
                     // where that one started (A to B to A); and the turn is never harder than can be played
                     const N0 = { x: x0, y: y0, ms: notes[s0].ms };
+                    // (nor back onto one of the notes just played: a stream's end, the hub it went round)
+                    for (let back = 3; back <= 5 && s0 - back >= 0; back++)
+                        if (Math.hypot(x0 - notes[s0 - back].x, y0 - notes[s0 - back].y) < 0.35)
+                            cost += 1.2;
                     if (prev2) {
                         const ix = prev.x - prev2.x, iy = prev.y - prev2.y, li = Math.hypot(ix, iy);
                         if (li > 0.05) {
@@ -2372,13 +2421,15 @@ window.SSQEAutoMapper = (function () {
     // across the grid (2+ cells) on jump-timed notes, ones half again as far apart as the quick notes around them
     // (`fast`, ms): the cursor goes about as fast as in the quick notes, twice the time and twice the distance. And
     // on any notes far enough apart in time, whatever their style (jump maps from where two cells can be played
-    // comfortably, stream maps from about 120ms; opts.jumpGap). Never faster than the difficulty's comfortable speed (opts.comfort, cells a second) or
+    // comfortably, stream maps from about 100ms; opts.jumpGap). Never faster than the difficulty's comfortable speed (opts.comfort, cells a second) or
     // the quick notes' own speed allow.
-    function moveFor(size, gap, opts, fast = 0) {
+    // (prevGap: the gap before this one, if known: a stream map jumps only where the rhythm slows, and steps on
+    // through a steady run of slower notes after that)
+    function moveFor(size, gap, opts, fast = 0, prevGap = 0) {
         const g = opts.jumpGap || 100;
-        const timed = fast > 0 && gap >= 1.6 * fast;
-        // (smaller with a small Jump Size)
-        const want = Math.max(size, (gap >= 1.6 * g ? 2.24 : gap >= g || timed ? 2 : 0) * Math.min(1, opts.jumpScale || 1));
+        const timed = fast > 0 && gap >= 1.6 * fast && (opts.patterns !== 'streams' || !prevGap || gap >= 1.4 * prevGap);
+        // (smaller with a small Jump Size, and in calm parts: an intro's slow notes are small jumps, a drop's big ones)
+        const want = Math.max(size, (gap >= 1.6 * g ? 2.24 : gap >= g || timed ? 2 : 0) * Math.min(1, opts.jumpScale || 1) * (opts.calm ?? 1));
         // (and the quick notes themselves, a stream, step a cell at a time in every style, as long as they're quick:
         // a steady run of slower notes, where there's time, is the style's own)
         if (fast > 0 && gap < 1.3 * fast && gap < g && !opts.quantum)
@@ -2492,7 +2543,7 @@ window.SSQEAutoMapper = (function () {
                 // (each move about as big as its own gap allows: a note after a longer gap a bigger move, one after a
                 // shorter gap a smaller one, so the cursor keeps about the same speed through rhythm changes; and
                 // notes far enough apart in time are jumps across the grid, as in every human map, see moveFor)
-                const want = moveFor(J * Math.min(2.5, Math.max(0.5, Math.pow(gg / gm, opts.beta ?? 0.8))), gg, opts, opts.fast ? opts.fast[q] : 0);
+                const want = moveFor(J * Math.min(2.5, Math.max(0.5, Math.pow(gg / gm, opts.beta ?? 0.8))), gg, opts, opts.fast ? opts.fast[q] : 0, q ? gaps[q - 1] : prev && prev2 ? prev.ms - prev2.ms : 0);
                 sized += Math.abs(Math.log((move + 0.15) / (want + 0.15)));
                 wanted += want;
                 if (move > Math.max(1.5, 2.1 * want) || move / Math.max(gg, 1) * 1000 > vmax)
@@ -2854,7 +2905,8 @@ window.SSQEAutoMapper = (function () {
                 let run = 0;
                 while (run < j && copyFrom[j - 1 - run] >= 0 && copyFrom[j - 1 - run] === p - 1 - run)
                     run++;
-                const phrase = run > 0 && run < 4;
+                // (a bar copied from the one just before it is a one-bar loop going round, not a phrase coming back)
+                const phrase = run > 0 && run < 4 && p < j - 1;
                 let again = 0, before = 0;
                 for (let q = Math.max(0, j - 3); q < j; q++)
                     if (copyFrom[q] === p)
@@ -3133,6 +3185,7 @@ window.SSQEAutoMapper = (function () {
                 ...opts.runOptions, quantum: !!opts.quantum, jump: jumpAt(times[i]), vmax: opts.vmax, history,
                 // (the comfortable speed goes up and down with the sections too)
                 comfort: opts.runOptions && opts.runOptions.comfort ? opts.runOptions.comfort * (opts.levelAt ? opts.levelAt(times[i]) : 1) : undefined,
+                calm: opts.calmAt ? opts.calmAt(times[i]) : 1,
                 speedCap: opts.speedCap, accelCap: opts.accelCap, recentSpeed: recentSpeed(), recentMoves: recentMoves(), fresh,
                 lastEntry: lastRun && lastRun.e, lastEnd: lastRun ? lastRun.i + lastRun.len : 0, lastK: lastRun && lastRun.k,
                 lastName: lastRun && lastRun.e.name, slidesOn: slides.size > 0,
@@ -3418,6 +3471,8 @@ window.SSQEAutoMapper = (function () {
             return 0.8 + 0.4 * level * (0.5 + 0.5 * boost) + (s && s.drop ? 0.1 * boost : 0);
         };
         const jumpAt = ms => base * levelAt(ms);
+        // (how big the jumps on slow notes are by how intense the part is: 0.6 of a full jump in the calmest parts)
+        const calmAt = ms => Math.min(1, Math.max(0.6, (levelAt(ms) - 0.8) / 0.25));
         // the speed big moves are comfortable at (cells a second): about 19 at 8, 25 at 9 and 35 at 10 (human jump
         // maps at those levels jump at 25-35, whatever their style: a jump map's jumps are bigger where there's time
         // for them, not faster); Jump Size scales it too
@@ -3428,7 +3483,7 @@ window.SSQEAutoMapper = (function () {
             beta: opts.patterns === 'jumps' ? 0.5 : 0.8,
             // how far apart in time notes have to be to always be jumps (see moveFor)
             // (a jump map jumps wherever two cells can be played comfortably: 1/8 notes at 128 BPM at 10, not at 8)
-            jumpGap: opts.patterns === 'jumps' ? Math.max(45, 2000 / comfort) : opts.patterns === 'streams' ? 120 : 70, jumpScale: opts.jumpScale || 1,
+            jumpGap: opts.patterns === 'jumps' ? Math.max(45, 2000 / comfort) : opts.patterns === 'streams' ? 100 : 70, jumpScale: opts.jumpScale || 1,
             sizeWeight: 1.5 + 3.5 * Math.abs(Math.log((opts.jumpScale || 1) * styleScale)),
             comfort,
             // how fast a jump between quick notes may go next to the quick notes' own speed: a little faster at 10
@@ -3576,7 +3631,7 @@ window.SSQEAutoMapper = (function () {
             for (let z = 1; z <= n && q + z < times.length; z++)
                 inSlide[q + z] = 1;
         const fastAt = localFast(times, inSlide);
-        const sizeAt = (i, gap) => moveFor(jumpAt(times[i]), gap, { ...runOptions, comfort: runOptions.comfort * levelAt(times[i]) }, fastAt[i]);
+        const sizeAt = (i, gap) => moveFor(jumpAt(times[i]), gap, { ...runOptions, comfort: runOptions.comfort * levelAt(times[i]), calm: calmAt(times[i]) }, fastAt[i], i >= 2 ? times[i - 1] - times[i - 2] : 0);
         // how strong the sound at each note is (the kick and snare most): bigger moves go on the stronger ones
         const accents = Float32Array.from(times, ms => {
             let m = 0;
@@ -3604,7 +3659,7 @@ window.SSQEAutoMapper = (function () {
                 last = performance.now();
             };
             const trace = opts.trace ? [] : null;
-            const notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, yieldNow, trace, bars: ctx.bars, slides, slideSpeed, accents, levelAt, sizeAt, fastAt }, jumpAt);
+            const notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, yieldNow, trace, bars: ctx.bars, slides, slideSpeed, accents, levelAt, calmAt, sizeAt, fastAt }, jumpAt);
             const score = badness(notes, sizeAt, vmax, fm, runOptions.flow, !!opts.quantum, runOptions);
             if (!best || score < best.score)
                 best = { notes, score, trace };
