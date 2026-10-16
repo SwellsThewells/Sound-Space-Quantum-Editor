@@ -13,7 +13,16 @@ contextBridge.exposeInMainWorld('ssqeDesktop', {
     },
     // looks for a new release (when 'Check For Updates' is on); cb(text) shows how the update is going, null when done
     checkForUpdates: enabled => ipcRenderer.send('ssqe-check-updates', enabled),
+    checkForUpdatesNow: () => ipcRenderer.send('ssqe-check-updates-now'),
     onUpdateProgress: cb => ipcRenderer.on('ssqe-update-progress', (_, text) => cb(text)),
+    // before the app closes for an update: cb() saves what the editor has, then the app goes on
+    onSaveForUpdate: cb => ipcRenderer.on('ssqe-save-for-update', async () => {
+        try {
+            await cb();
+        } finally {
+            ipcRenderer.send('ssqe-saved-for-update');
+        }
+    }),
     // playtesting in Rhythia: { Rhythia, Novastra } paths, choosing one, and starting a playtest
     playtestPaths: () => ipcRenderer.invoke('ssqe-playtest-paths'),
     pickPlaytestPath: game => ipcRenderer.invoke('ssqe-pick-playtest', game),

@@ -11,7 +11,7 @@ const NAME = 'Sound Space Quantum Editor Plus';
 const REPO = 'iloverhythia/Sound-Space-Quantum-Editor-Plus';
 // Discord: the application whose name Discord shows, and the picture for the presence (a link, so it can be changed
 // without uploading anything to Discord)
-const DISCORD_CLIENT_ID = '1067849747710345346';
+const DISCORD_CLIENT_ID = '1560459200541364264';
 const DISCORD_IMAGE = 'https://iloverhythia.github.io/Sound-Space-Quantum-Editor-Plus/discord.png';
 
 // the web editor, map player and changelog: next to this folder while developing, in resources/app when installed
@@ -147,11 +147,16 @@ ipcMain.on('ssqe-presence', (_, next) => {
 });
 
 ipcMain.on('ssqe-version', e => { e.returnValue = app.getVersion(); });
+let startupChecked = false;
 // the editor asks for the update check once it's open (it has the 'Check For Updates' setting)
 ipcMain.on('ssqe-check-updates', (_, enabled) => {
-    if (enabled !== false)
-        setTimeout(checkForUpdate, 1500);
+    if (enabled !== false && !startupChecked) {
+        startupChecked = true;
+        setTimeout(() => checkForUpdate(false), 1500);
+    }
 });
+// the CHECK FOR UPDATES button
+ipcMain.on('ssqe-check-updates-now', () => checkForUpdate(true));
 ipcMain.on('ssqe-ready', () => {
     pageReady = true;
     const paths = pending;
@@ -170,34 +175,48 @@ function newer(a, b) {
     return false;
 }
 
-// Auto update (Windows): the new release's zip is downloaded, then a little PowerShell script waits for the app to
-// close, puts the new files over the old ones and starts it again. Settings and maps are kept (they live in the
-// user's app data, not next to the .exe). Where the app's folder can't be written to, the download page opens instead.
-let checked = false;
-async function checkForUpdate() {
-    if (!app.isPackaged || checked)
+// Auto update (Windows): the new release's zip is downloaded, the editor saves what it has, the app closes, and a
+// little PowerShell script waits until every copy of it has gone, puts the new files over the old ones and starts it
+// again. Settings and maps are kept (they live in the user's app data, not next to the .exe). How it went is written
+// to update-result.json in the app data and shown on the next start. Where the app's folder can't be written to, the
+// download page opens instead.
+const resultFile = () => path.join(app.getPath('userData'), 'update-result.json');
+let updating = false;
+
+async function latestRelease() {
+    const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': `${NAME.replace(/ /g, '-')}/${app.getVersion()}` },
+    });
+    if (!res.ok)
+        throw new Error(`GitHub answered ${res.status}`);
+    return res.json();
+}
+
+// manual: from the CHECK FOR UPDATES button, which also says when there's nothing new (or the check failed)
+async function checkForUpdate(manual = false) {
+    if ((!app.isPackaged && !manual) || updating)
         return;
-    checked = true;
+    const tell = (message, type = 'info') => manual && dialog.showMessageBox(win, { type, title: NAME, message, buttons: ['OK'] });
     let release;
     try {
-        const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' } });
-        if (!res.ok)
-            return;
-        release = await res.json();
-    } catch {
-        return; // offline: try next time
-    }
-    if (!release.tag_name || !newer(release.tag_name, app.getVersion()))
+        release = await latestRelease();
+    } catch (e) {
+        tell(`Couldn't check for updates: ${e.message}`, 'error');
         return;
+    }
+    if (!release.tag_name || !newer(release.tag_name, app.getVersion())) {
+        tell(`You have the latest version (${app.getVersion()}).`);
+        return;
+    }
     const version = release.tag_name.replace(/^v/, '');
     const asset = (release.assets || []).find(a => /^SSQEPlus.*\.zip$/i.test(a.name));
     const installDir = path.dirname(process.execPath);
-    const canInstall = process.platform === 'win32' && asset && writable(installDir);
+    const canInstall = app.isPackaged && process.platform === 'win32' && asset && writable(installDir);
     const { response } = await dialog.showMessageBox(win, {
         type: 'info',
         title: NAME,
         message: `${NAME} ${version} is out (you have ${app.getVersion()}).`,
-        detail: `${String(release.body || '').split('\n---')[0].slice(0, 900)}${canInstall ? '' : '\n\n(The new version opens in your browser to download.)'}`,
+        detail: `${String(release.body || '').split('\n---')[0].slice(0, 900)}${canInstall ? '' : `\n\n(The new version opens in your browser to download${asset && process.platform === 'win32' && app.isPackaged ? `: the app's folder (${installDir}) can't be written to` : ''}.)`}`,
         buttons: [canInstall ? 'Update Now' : 'Download', 'Later'],
         defaultId: 0,
         cancelId: 1,
@@ -209,8 +228,10 @@ async function checkForUpdate() {
         return;
     }
     try {
+        updating = true;
         await installUpdate(asset, installDir, version);
     } catch (e) {
+        updating = false;
         progress(null);
         const again = await dialog.showMessageBox(win, {
             type: 'error', title: NAME, message: `The update couldn't be installed: ${e.message}`,
@@ -219,6 +240,30 @@ async function checkForUpdate() {
         if (again.response === 0)
             shell.openExternal(release.html_url);
     }
+}
+
+// what the last update did, told once on the next start
+async function reportUpdate() {
+    let result;
+    try {
+        result = JSON.parse(fs.readFileSync(resultFile(), 'utf8').replace(/^﻿/, ''));
+        fs.unlinkSync(resultFile());
+    } catch {
+        return;
+    }
+    if (result.ok && result.version === app.getVersion()) {
+        progress(`UPDATED TO ${app.getVersion()}`);
+        setTimeout(() => progress(null), 2500);
+        return;
+    }
+    const { response } = await dialog.showMessageBox(win, {
+        type: 'error', title: NAME,
+        message: `The update to ${result.version || 'the new version'} didn't finish.`,
+        detail: `${result.error || `The app is still ${app.getVersion()}.`}\n\nYou can download the new version and unzip it over this one.`,
+        buttons: ['Open Download Page', 'Close'], defaultId: 0, cancelId: 1,
+    });
+    if (response === 0)
+        shell.openExternal(`https://github.com/${REPO}/releases/latest`);
 }
 
 function writable(dir) {
@@ -238,6 +283,45 @@ function progress(text, fraction = -1) {
         return;
     win.setProgressBar(text === null ? -1 : fraction < 0 ? 2 : fraction);
     win.webContents.send('ssqe-update-progress', text);
+}
+
+// The PowerShell script that swaps the files. Paths are single-quoted ('' inside), and the file gets a byte order mark
+// so Windows PowerShell reads paths with accents in them right.
+function updateScript({ zip, files, installDir, exe, result, version }) {
+    const q = p => `'${String(p).replace(/'/g, "''")}'`;
+    const name = path.basename(exe, path.extname(exe));
+    return '﻿' + [
+        '$ErrorActionPreference = "Stop"',
+        `$result = ${q(result)}`,
+        `$version = ${q(version)}`,
+        'function Save($ok, $err) {',
+        '    $o = [ordered]@{ ok = $ok; version = $version; error = $err }',
+        '    ($o | ConvertTo-Json -Compress) | Out-File -FilePath $result -Encoding utf8',
+        '}',
+        'try {',
+        // every copy of the app (the window and its helper processes) has to be gone before its files can be replaced
+        '    $deadline = (Get-Date).AddSeconds(60)',
+        `    while ((Get-Process -Name ${q(name)} -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) { Start-Sleep -Milliseconds 300 }`,
+        `    if (Get-Process -Name ${q(name)} -ErrorAction SilentlyContinue) { throw "the app didn't close" }`,
+        `    if (Test-Path -LiteralPath ${q(files)}) { Remove-Item -LiteralPath ${q(files)} -Recurse -Force }`,
+        `    New-Item -ItemType Directory -Force -Path ${q(files)} | Out-Null`,
+        // Windows' own tar unpacks zips quickly; Expand-Archive if it isn't there
+        '    $unpacked = $false',
+        '    $tar = if ($env:SystemRoot) { Join-Path $env:SystemRoot "System32\\tar.exe" } else { "" }',
+        `    if ($tar -and (Test-Path -LiteralPath $tar)) { try { & $tar -xf ${q(zip)} -C ${q(files)}; $unpacked = ($LASTEXITCODE -eq 0) } catch { } }`,
+        `    if (-not $unpacked) { Expand-Archive -LiteralPath ${q(zip)} -DestinationPath ${q(files)} -Force }`,
+        `    if (-not (Test-Path -LiteralPath (Join-Path ${q(files)} ${q(path.basename(exe))}))) { throw "the update's zip doesn't have the app in it" }`,
+        // the old app's files can stay locked for a moment after it closes
+        '    for ($i = 0; $i -lt 15; $i++) {',
+        `        try { Copy-Item -Path (Join-Path ${q(files)} '*') -Destination ${q(installDir)} -Recurse -Force; break }`,
+        '        catch { if ($i -eq 14) { throw }; Start-Sleep -Seconds 1 }',
+        '    }',
+        '    Save $true $null',
+        '} catch {',
+        '    Save $false ($_.Exception.Message)',
+        '}',
+        `Start-Process -FilePath ${q(exe)}`,
+    ].join('\r\n');
 }
 
 async function installUpdate(asset, installDir, version) {
@@ -267,34 +351,11 @@ async function installUpdate(asset, installDir, version) {
     if (total && done < total)
         throw new Error('the download was cut off');
 
-    progress('INSTALLING UPDATE...');
-    const q = p => `'${p.replace(/'/g, "''")}'`;
-    const exe = path.join(installDir, path.basename(process.execPath));
+    progress('INSTALLING UPDATE - THE APP WILL RESTART');
     const script = path.join(dir, 'update.ps1');
-    const files = path.join(dir, 'files');
-    // (a byte order mark, so Windows PowerShell reads paths with accents in them right)
-    fs.writeFileSync(script, '\ufeff' + [
-        '$ErrorActionPreference = "Stop"',
-        `$log = ${q(path.join(dir, 'update.log'))}`,
-        'try {',
-        `    Wait-Process -Id ${process.pid} -Timeout 60 -ErrorAction SilentlyContinue`,
-        '    Start-Sleep -Milliseconds 800',
-        `    New-Item -ItemType Directory -Force -Path ${q(files)} | Out-Null`,
-        // Windows' own tar unpacks zips quickly; Expand-Archive if it isn't there
-        '    $unpacked = $false',
-        `    try { & "$env:SystemRoot\\System32\\tar.exe" -xf ${q(zip)} -C ${q(files)}; $unpacked = ($LASTEXITCODE -eq 0) } catch { }`,
-        `    if (-not $unpacked) { Expand-Archive -LiteralPath ${q(zip)} -DestinationPath ${q(files)} -Force }`,
-        // the old app's helper processes can take a moment to let go of its files
-        '    for ($i = 0; $i -lt 10; $i++) {',
-        `        try { Copy-Item -Path (Join-Path ${q(files)} '*') -Destination ${q(installDir)} -Recurse -Force; break }`,
-        '        catch { if ($i -eq 9) { throw }; Start-Sleep -Seconds 1 }',
-        '    }',
-        '    "updated" | Out-File $log',
-        '} catch {',
-        '    $_ | Out-File $log',
-        '}',
-        `Start-Process -FilePath ${q(exe)}`,
-    ].join('\r\n'), 'utf8');
+    fs.writeFileSync(script, updateScript({
+        zip, files: path.join(dir, 'files'), installDir, exe: process.execPath, result: resultFile(), version,
+    }), 'utf8');
     await new Promise((resolve, reject) => {
         const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script], {
             detached: true, stdio: 'ignore', windowsHide: true,
@@ -305,6 +366,23 @@ async function installUpdate(asset, installDir, version) {
             resolve();
         });
     });
+    await quitForUpdate();
+}
+
+// The editor saves what it has, then the app closes for real: an open map's 'save before closing?' guard mustn't
+// keep it open (its files couldn't be replaced while it runs)
+async function quitForUpdate() {
+    if (win && !win.isDestroyed()) {
+        win.webContents.on('will-prevent-unload', e => e.preventDefault());
+        await Promise.race([
+            new Promise(resolve => {
+                ipcMain.once('ssqe-saved-for-update', resolve);
+                win.webContents.send('ssqe-save-for-update');
+            }),
+            new Promise(resolve => setTimeout(resolve, 3000)),
+        ]);
+    }
+    setTimeout(() => app.exit(0), 4000);
     app.quit();
 }
 
@@ -433,6 +511,7 @@ else {
         protocol.handle('ssqe', serve);
         createWindow();
         startDiscord();
+        win.webContents.once('did-finish-load', () => setTimeout(reportUpdate, 1200));
         app.on('activate', () => {
             if (!BrowserWindow.getAllWindows().length)
                 createWindow();
