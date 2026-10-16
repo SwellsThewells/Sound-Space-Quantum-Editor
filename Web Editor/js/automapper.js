@@ -1219,11 +1219,12 @@ window.SSQEAutoMapper = (function () {
         };
         const topDiv = (family, beatLen) => topDivAt(family, beatLen, level10);
         // Difficulty in steps rather than jumps: the finest division comes in at a difficulty in short bursts (a beat),
-        // the next difficulty up lets it run a bar, and from the one after (or at 10) as long as the music goes.
-        // (Otherwise a tempo's 1/16 streams would come in all at once at one difficulty and nothing would change at
-        // the next.) How many beats a run of notes at the finest division may last:
+        // the next difficulty up lets it run a bar, and from the one after as long as the music goes. (Otherwise a
+        // tempo's 1/16 streams would come in all at once at one difficulty and nothing would change at the next; and
+        // in Rhythia a long one-cell stream is easier than bursts with jumps between them.) How many beats a run of
+        // notes at the finest division may last:
         const burstAt = (family, beatLen) => {
-            if (level10 >= 10 || opts.count > 0)
+            if (opts.count > 0)
                 return Infinity;
             const top = topDiv(family, beatLen);
             return top > topDivAt(family, beatLen, level10 - 1) ? 1 : top > topDivAt(family, beatLen, level10 - 2) ? 4 : Infinity;
@@ -2466,7 +2467,7 @@ window.SSQEAutoMapper = (function () {
                 // notes on the same spot twice and little 2x2 circles are what make auto maps feel wrong (a learned
                 // map's stacked notes, the same spot twice a moment apart, end the run before them)
                 const last = recent[recent.length - 1];
-                if (last && Math.abs(last[0] - x - ox) < 1e-3 && Math.abs(last[1] - y - oy) < 1e-3)
+                if (last && Math.hypot(last[0] - x - ox, last[1] - y - oy) < 0.05)
                     break;
                 logSum += r;
                 cost += dev;
