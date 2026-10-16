@@ -1362,6 +1362,49 @@ window.SSQEAutoMapper = (function () {
                 dot += p.on[i] * q.on[i];
             return dot / (p.norm * q.norm) * Math.exp(-Math.hypot(p.band[0] - q.band[0], p.band[1] - q.band[1], p.band[2] - q.band[2]) / 1.5);
         };
+        // (and by its drums alone, to tell how busy a bar is: the same drums under another bass note are as busy)
+        const drumLike = inRange.map((b, j) => {
+            const kinds = ['kick', 'snare', 'hat'].map(k => a.sources[k]).filter(Boolean);
+            if (!kinds.length || !j)
+                return -1;
+            const sec = sectionAt(b.from);
+            const print = bb => {
+                const beatLen = 60000 / ctx.timing[beats[bb.first].tp].bpm;
+                const n = Math.max(1, Math.round((bb.to - bb.from) / beatLen)) * 8, step = (bb.to - bb.from) / n;
+                const v = new Float32Array(n * kinds.length);
+                for (let q = 0; q < n; q++) {
+                    const f0 = Math.max(0, Math.floor((bb.from + (q - 0.5) * step) / 10)), f1 = Math.min(a.frames, Math.ceil((bb.from + (q + 0.5) * step) / 10));
+                    kinds.forEach((env, k) => {
+                        let m = 0;
+                        for (let f = f0; f < f1; f++)
+                            m = Math.max(m, env[f]);
+                        v[q * kinds.length + k] = m;
+                    });
+                }
+                return v;
+            };
+            const mine = print(b);
+            let best = -1, top = ALIKE_SOUND;
+            for (let i = Math.max(0, j - 8); i < j; i++) {
+                if (sectionAt(inRange[i].from) !== sec)
+                    continue;
+                const o = print(inRange[i]);
+                if (o.length !== mine.length)
+                    continue;
+                let dot = 0, na = 0, nb = 0;
+                for (let q = 0; q < o.length; q++) {
+                    dot += o[q] * mine[q];
+                    na += o[q] * o[q];
+                    nb += mine[q] * mine[q];
+                }
+                const v = na && nb ? dot / Math.sqrt(na * nb) : 0;
+                if (v >= top) {
+                    top = v;
+                    best = i;
+                }
+            }
+            return best;
+        });
         const like = inRange.map(() => -1);
         const proto = inRange.map((b, j) => {
             let best = -1, top = ALIKE_SOUND;
@@ -1457,8 +1500,8 @@ window.SSQEAutoMapper = (function () {
         const firstPass = !firstCount.length;
         // each bar's notes, as times from the bar's start (for the bars that repeat it)
         const rel = [];
-        // (and whether each bar is a stream or a jump phrase, in a jump map)
-        const kindOf = [];
+        // (and whether each bar is a stream or a jump phrase, in a jump map, and whether it was busy)
+        const kindOf = [], busyOf = [];
         inRange.forEach((b, j) => {
             const s = sectionAt(b.from);
             const beatLen = 60000 / ctx.timing[beats[b.first].tp].bpm;
@@ -1589,7 +1632,7 @@ window.SSQEAutoMapper = (function () {
                 const g = heardOn(e.ms, div);
                 const was = lk && lk.some(dt => Math.abs(b.from + dt - g.at) <= 3);
                 return g.err <= Math.max(tolerance(g.step), Math.min(25, 0.5 * g.step))
-                    ? { ms: Math.round(g.at), src: e.ms, score: e.strength * (0.55 + 0.45 * g.weight) * (was ? 1.8 : 1) } : null;
+                    ? { ms: Math.round(g.at), src: e.ms, str: e.strength, score: e.strength * (0.55 + 0.45 * g.weight) * (was ? 1.8 : 1) } : null;
             }).filter(e => e && ok(e.ms));
             // a bar that sounds like one before it: the same notes, moved along
             if (proto[j] >= 0 && rel[proto[j]]) {
@@ -1622,8 +1665,24 @@ window.SSQEAutoMapper = (function () {
                         heard.set(e.ms, e.src);
                     }
                 }
+            // A roll (hits about as strong as each other on nearly every position of the bar's division: a snare roll
+            // in a build-up, a tom fill) with more hits than the bar may have is thinned evenly, every second or
+            // third hit counting back from the downbeat it leads into, not by which hits came out a little louder
+            const uniq = [...new Map(here.map(e => [e.ms, e])).values()].sort((p, q) => p.ms - q.ms);
+            const mean = uniq.reduce((t, e) => t + e.str, 0) / Math.max(1, uniq.length);
+            const sd = Math.sqrt(uniq.reduce((t, e) => t + (e.str - mean) ** 2, 0) / Math.max(1, uniq.length));
+            const roll = grid.full && div >= 4 && uniq.length >= 0.7 * beatsIn * div && sd <= 0.35 * mean && uniq.length >= 1.5 * k;
+            if (roll) {
+                const every = Math.ceil(uniq.length / Math.max(1, k));
+                const to = uniq.length - 1 + Math.round((b.to - uniq[uniq.length - 1].ms) / (beatLen / div));
+                for (let q = 0; q < uniq.length; q++)
+                    if ((to - q) % every === 0 && ok(uniq[q].ms)) {
+                        picked.push(uniq[q].ms);
+                        heard.set(uniq[q].ms, uniq[q].src);
+                    }
+            }
             const spread = Math.max(minGap, 0.55 * (b.to - b.from) / Math.max(1, k));
-            for (const gap of [spread, minGap])
+            for (const gap of roll ? [] : [spread, minGap])
                 for (const e of here.sort((p, q) => q.score - p.score)) {
                     if (picked.length >= k)
                         break;
@@ -1640,8 +1699,11 @@ window.SSQEAutoMapper = (function () {
             // parts too, not only the drops.
             // (busy by how strong its sounds are, so a pad's slow wobble that only just counts as sounds doesn't make
             // a burst; intense next to the song's own most intense parts)
+            // (or as busy as a bar of the same section with the same drums: under another bass note they can come
+            // through a little weaker)
             const busy = (push.stage >= 2 ? raw.length : raw.reduce((t, e) => t + Math.min(1, e.strength / 0.6), 0))
-                >= (push.stage >= 3 ? 1 : beatsIn * (push.stage >= 2 ? 1 : dense ? 1.5 : 2));
+                >= (push.stage >= 3 ? 1 : beatsIn * (push.stage >= 2 ? 1 : dense ? 1.5 : 2)) || (drumLike[j] >= 0 && !!busyOf[drumLike[j]]);
+            busyOf[j] = busy;
             const intense = top >= 0.8 || s.drop || (hard && top >= 0.7) || (dense && top >= 0.3) || push.stage >= 1;
             // (the sounds a stream jumps into, with the gap before them kept)
             const jumpIns = new Set();
