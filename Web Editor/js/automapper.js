@@ -1636,7 +1636,8 @@ window.SSQEAutoMapper = (function () {
                 // played as steps)
                 // (every other jump phrase of an intense part at the quickest jumps the difficulty takes, the rest one
                 // division coarser: at 10 in the medium parts too)
-                const onDiv = family.filter(d => beatLen / d >= stepAt(level10)).pop() || family[0];
+                // (a few percent of leeway, so a tempo just over a step doesn't drop a whole difficulty to half speed)
+                const onDiv = family.filter(d => beatLen / d >= 0.95 * stepAt(level10)).pop() || family[0];
                 const offDiv = family.filter(d => d < onDiv).pop() || onDiv;
                 const coarse = (top >= (level10 >= 10 ? 0.55 : 0.8) || s.drop) && (root >> 2) % 2 === 0 ? onDiv : offDiv;
                 div = Math.min(div, coarse);

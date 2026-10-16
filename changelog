@@ -2,6 +2,23 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.14 - 10/16/2026 --
+
+Auto mapper:
+- streams flow: no more sudden flicks against the way a stream is going (a sharp turn back, or one note kinking the
+  other way), and a stream spins one way for a while before it turns round. Its turns land on the song's strong
+  sounds
+- streams hop like prom night's: where a note is left out, one block over at about a right angle, and on the stream
+  goes; never further, never back the way it came
+- Stream map: only streams. Jump map: only jumps, on the song's own rhythm, filling the jump rhythm wherever the
+  song is busy
+- new option Streams / Jumps (for mixed maps, 50% by default): the calmer parts of the song are jumps and the
+  intense parts and drops are streams, with jumps wherever the music slows down. 0% makes a stream map, 100% a
+  jump map
+- Quantum: slides sweep in one smooth curve (no more snaking from side to side), and quick quantum runs curve on
+  and then the other way instead of kinking back
+
+----------------------------------
    -- Plus 3.0.13 - 10/16/2026 --
 
 Auto mapper (a fourth round of maps at 8, 9 and 10 in every mode, reviewed against the human maps):
