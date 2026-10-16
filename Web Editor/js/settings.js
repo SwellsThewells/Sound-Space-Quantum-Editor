@@ -84,6 +84,7 @@
         autoMapFollow: 75,
         autoMapJump: 100,
         autoMapPatterns: 'mixed',
+        autoMapJumpShare: 50, // web only: in a mixed auto map, how much of the song (its calmer parts) is jumps
         autoMapDrops: 100,
         autoMapVariety: 50,
         autoMapSources: 'kick,snare,hat', // web only: kinds of sound the auto mapper syncs to

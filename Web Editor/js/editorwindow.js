@@ -116,6 +116,7 @@
                     follow: (s.autoMapFollow ?? 75) / 100,
                     jumpScale: (s.autoMapJump ?? 100) / 100,
                     patterns: s.autoMapPatterns || 'mixed',
+                    jumpShare: (s.autoMapJumpShare ?? 50) / 100,
                     dropBoost: (s.autoMapDrops ?? 100) / 100,
                     variety: (s.autoMapVariety ?? 50) / 100,
                     sources: (s.autoMapSources || 'kick,snare,hat').split(',').filter(Boolean),
