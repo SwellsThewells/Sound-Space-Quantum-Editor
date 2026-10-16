@@ -1,4 +1,5 @@
-// The bridge between the editor (a web page) and the desktop app: Discord presence and files opened with the app.
+// The bridge between the editor (a web page) and the desktop app: Discord presence, files opened with the app,
+// updates and playtesting in Rhythia.
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('ssqeDesktop', {
@@ -10,4 +11,11 @@ contextBridge.exposeInMainWorld('ssqeDesktop', {
         ipcRenderer.on('ssqe-open-files', (_, files) => cb(files));
         ipcRenderer.send('ssqe-ready');
     },
+    // looks for a new release (when 'Check For Updates' is on); cb(text) shows how the update is going, null when done
+    checkForUpdates: enabled => ipcRenderer.send('ssqe-check-updates', enabled),
+    onUpdateProgress: cb => ipcRenderer.on('ssqe-update-progress', (_, text) => cb(text)),
+    // playtesting in Rhythia: { Rhythia, Novastra } paths, choosing one, and starting a playtest
+    playtestPaths: () => ipcRenderer.invoke('ssqe-playtest-paths'),
+    pickPlaytestPath: game => ipcRenderer.invoke('ssqe-pick-playtest', game),
+    playtest: job => ipcRenderer.invoke('ssqe-playtest', job),
 });

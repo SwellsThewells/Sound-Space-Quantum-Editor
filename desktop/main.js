@@ -4,7 +4,8 @@
 const { app, BrowserWindow, protocol, net, ipcMain, shell, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { pathToFileURL } = require('url');
+const { spawn } = require('child_process');
+const { Readable } = require('stream');
 
 const NAME = 'Sound Space Quantum Editor Plus';
 const REPO = 'iloverhythia/Sound-Space-Quantum-Editor';
@@ -29,19 +30,45 @@ protocol.registerSchemesAsPrivileged([{
     privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true },
 }]);
 
+const TYPES = {
+    '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.txt': 'text/plain',
+    '.md': 'text/plain', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+    '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.ttf': 'font/ttf', '.woff': 'font/woff',
+    '.woff2': 'font/woff2', '.webm': 'video/webm', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg',
+    '.wav': 'audio/wav', '.obj': 'text/plain', '.wasm': 'application/wasm', '': 'text/plain',
+};
+
+// Files are sent in the parts asked for (byte ranges): videos and long songs need that to load and seek
 function serve(request) {
     const url = new URL(request.url);
     let file = path.normalize(path.join(ROOT, decodeURIComponent(url.pathname)));
     // nothing outside the app's own files
     if (file !== ROOT && !file.startsWith(ROOT + path.sep))
         return new Response('Not found', { status: 404 });
+    let stat;
     try {
-        if (fs.statSync(file).isDirectory())
+        stat = fs.statSync(file);
+        if (stat.isDirectory()) {
             file = path.join(file, 'index.html');
+            stat = fs.statSync(file);
+        }
     } catch {
         return new Response('Not found', { status: 404 });
     }
-    return net.fetch(pathToFileURL(file).toString());
+    const size = stat.size;
+    const headers = { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Accept-Ranges': 'bytes' };
+    const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') || '');
+    if (range && size > 0) {
+        let start = range[1] === '' ? Math.max(0, size - Number(range[2])) : Number(range[1]);
+        let end = range[1] !== '' && range[2] !== '' ? Math.min(Number(range[2]), size - 1) : size - 1;
+        if (start > end || start >= size)
+            return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
+        return new Response(Readable.toWeb(fs.createReadStream(file, { start, end })), {
+            status: 206,
+            headers: { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(end - start + 1) },
+        });
+    }
+    return new Response(Readable.toWeb(fs.createReadStream(file)), { status: 200, headers: { ...headers, 'Content-Length': String(size) } });
 }
 
 // ------------------------------------------------ files opened with the app
@@ -120,6 +147,11 @@ ipcMain.on('ssqe-presence', (_, next) => {
 });
 
 ipcMain.on('ssqe-version', e => { e.returnValue = app.getVersion(); });
+// the editor asks for the update check once it's open (it has the 'Check For Updates' setting)
+ipcMain.on('ssqe-check-updates', (_, enabled) => {
+    if (enabled !== false)
+        setTimeout(checkForUpdate, 1500);
+});
 ipcMain.on('ssqe-ready', () => {
     pageReady = true;
     const paths = pending;
@@ -138,29 +170,201 @@ function newer(a, b) {
     return false;
 }
 
+// Auto update (Windows): the new release's zip is downloaded, then a little PowerShell script waits for the app to
+// close, puts the new files over the old ones and starts it again. Settings and maps are kept (they live in the
+// user's app data, not next to the .exe). Where the app's folder can't be written to, the download page opens instead.
+let checked = false;
 async function checkForUpdate() {
-    if (!app.isPackaged)
+    if (!app.isPackaged || checked)
         return;
+    checked = true;
+    let release;
     try {
         const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' } });
         if (!res.ok)
             return;
-        const release = await res.json();
-        if (!release.tag_name || !newer(release.tag_name, app.getVersion()))
-            return;
-        const { response } = await dialog.showMessageBox(win, {
-            type: 'info',
-            title: NAME,
-            message: `${NAME} ${release.tag_name.replace(/^v/, '')} is out (you have ${app.getVersion()}).`,
-            detail: String(release.body || '').slice(0, 900),
-            buttons: ['Download', 'Later'],
-            defaultId: 0,
-            cancelId: 1,
+        release = await res.json();
+    } catch {
+        return; // offline: try next time
+    }
+    if (!release.tag_name || !newer(release.tag_name, app.getVersion()))
+        return;
+    const version = release.tag_name.replace(/^v/, '');
+    const asset = (release.assets || []).find(a => /^SSQEPlus.*\.zip$/i.test(a.name));
+    const installDir = path.dirname(process.execPath);
+    const canInstall = process.platform === 'win32' && asset && writable(installDir);
+    const { response } = await dialog.showMessageBox(win, {
+        type: 'info',
+        title: NAME,
+        message: `${NAME} ${version} is out (you have ${app.getVersion()}).`,
+        detail: `${String(release.body || '').split('\n---')[0].slice(0, 900)}${canInstall ? '' : '\n\n(The new version opens in your browser to download.)'}`,
+        buttons: [canInstall ? 'Update Now' : 'Download', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+    });
+    if (response !== 0)
+        return;
+    if (!canInstall) {
+        shell.openExternal(release.html_url);
+        return;
+    }
+    try {
+        await installUpdate(asset, installDir, version);
+    } catch (e) {
+        progress(null);
+        const again = await dialog.showMessageBox(win, {
+            type: 'error', title: NAME, message: `The update couldn't be installed: ${e.message}`,
+            buttons: ['Open Download Page', 'Close'], defaultId: 0, cancelId: 1,
         });
-        if (response === 0)
+        if (again.response === 0)
             shell.openExternal(release.html_url);
-    } catch { /* offline: try next time */ }
+    }
 }
+
+function writable(dir) {
+    try {
+        const probe = path.join(dir, `.ssqe-write-test-${process.pid}`);
+        fs.writeFileSync(probe, '');
+        fs.unlinkSync(probe);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+// shows the download in the window (and on the taskbar button); null hides it
+function progress(text, fraction = -1) {
+    if (!win)
+        return;
+    win.setProgressBar(text === null ? -1 : fraction < 0 ? 2 : fraction);
+    win.webContents.send('ssqe-update-progress', text);
+}
+
+async function installUpdate(asset, installDir, version) {
+    const dir = path.join(app.getPath('temp'), 'ssqe-plus-update');
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    const zip = path.join(dir, 'update.zip');
+
+    progress('DOWNLOADING UPDATE...', 0);
+    const res = await net.fetch(asset.browser_download_url);
+    if (!res.ok || !res.body)
+        throw new Error(`the download failed (${res.status})`);
+    const total = Number(res.headers.get('content-length')) || asset.size || 0;
+    const out = fs.createWriteStream(zip);
+    let done = 0, shown = -1;
+    for await (const chunk of res.body) {
+        done += chunk.length;
+        if (!out.write(chunk))
+            await new Promise(r => out.once('drain', r));
+        const pct = total ? Math.floor(done / total * 100) : -1;
+        if (pct !== shown) {
+            shown = pct;
+            progress(`DOWNLOADING UPDATE ${version}${pct >= 0 ? ` - ${pct}%` : '...'}`, total ? done / total : -1);
+        }
+    }
+    await new Promise((resolve, reject) => out.end(err => err ? reject(err) : resolve()));
+    if (total && done < total)
+        throw new Error('the download was cut off');
+
+    progress('INSTALLING UPDATE...');
+    const q = p => `'${p.replace(/'/g, "''")}'`;
+    const exe = path.join(installDir, path.basename(process.execPath));
+    const script = path.join(dir, 'update.ps1');
+    const files = path.join(dir, 'files');
+    // (a byte order mark, so Windows PowerShell reads paths with accents in them right)
+    fs.writeFileSync(script, '\ufeff' + [
+        '$ErrorActionPreference = "Stop"',
+        `$log = ${q(path.join(dir, 'update.log'))}`,
+        'try {',
+        `    Wait-Process -Id ${process.pid} -Timeout 60 -ErrorAction SilentlyContinue`,
+        '    Start-Sleep -Milliseconds 800',
+        `    New-Item -ItemType Directory -Force -Path ${q(files)} | Out-Null`,
+        // Windows' own tar unpacks zips quickly; Expand-Archive if it isn't there
+        '    $unpacked = $false',
+        `    try { & "$env:SystemRoot\\System32\\tar.exe" -xf ${q(zip)} -C ${q(files)}; $unpacked = ($LASTEXITCODE -eq 0) } catch { }`,
+        `    if (-not $unpacked) { Expand-Archive -LiteralPath ${q(zip)} -DestinationPath ${q(files)} -Force }`,
+        // the old app's helper processes can take a moment to let go of its files
+        '    for ($i = 0; $i -lt 10; $i++) {',
+        `        try { Copy-Item -Path (Join-Path ${q(files)} '*') -Destination ${q(installDir)} -Recurse -Force; break }`,
+        '        catch { if ($i -eq 9) { throw }; Start-Sleep -Seconds 1 }',
+        '    }',
+        '    "updated" | Out-File $log',
+        '} catch {',
+        '    $_ | Out-File $log',
+        '}',
+        `Start-Process -FilePath ${q(exe)}`,
+    ].join('\r\n'), 'utf8');
+    await new Promise((resolve, reject) => {
+        const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script], {
+            detached: true, stdio: 'ignore', windowsHide: true,
+        });
+        child.once('error', reject);
+        child.once('spawn', () => {
+            child.unref();
+            resolve();
+        });
+    });
+    app.quit();
+}
+
+// ------------------------------------------------ playtesting in Rhythia
+
+// The games' paths are kept here, chosen with the file picker, never taken from the editor's settings (so a shared
+// setup file can't make PLAYTEST start some other program)
+const prefsFile = () => path.join(app.getPath('userData'), 'desktop-settings.json');
+function prefs() {
+    try {
+        return JSON.parse(fs.readFileSync(prefsFile(), 'utf8'));
+    } catch {
+        return {};
+    }
+}
+
+ipcMain.handle('ssqe-playtest-paths', () => {
+    const p = prefs();
+    return { Rhythia: p.rhythiaPath || '', Novastra: p.novaPath || '' };
+});
+
+ipcMain.handle('ssqe-pick-playtest', async (_, game) => {
+    const key = game === 'Novastra' ? 'novaPath' : 'rhythiaPath';
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        title: `Choose ${game === 'Novastra' ? 'Novastra' : 'Rhythia'}`,
+        properties: ['openFile'],
+        filters: process.platform === 'win32' ? [{ name: 'Programs', extensions: ['exe'] }, { name: 'All Files', extensions: ['*'] }] : [],
+    });
+    if (canceled || !filePaths.length)
+        return null;
+    const p = prefs();
+    p[key] = filePaths[0];
+    fs.mkdirSync(path.dirname(prefsFile()), { recursive: true });
+    fs.writeFileSync(prefsFile(), JSON.stringify(p, null, 2));
+    return filePaths[0];
+});
+
+// Like the original editor: the map as a .txt and the song next to it in a temp folder, and Rhythia started with
+// --a=<audio> --t=<map> --sp=<speed> --sf=<start ms>
+ipcMain.handle('ssqe-playtest', async (_, job) => {
+    try {
+        if (!job || job.game !== 'Rhythia')
+            return { error: 'Only Rhythia playtests are supported.' };
+        const exe = prefs().rhythiaPath;
+        if (!exe || !fs.existsSync(exe))
+            return { error: 'INVALID RHYTHIA PATH [MENU > SETTINGS > PLAYER]' };
+        const dir = path.join(app.getPath('temp'), 'ssqe-plus-playtest');
+        fs.mkdirSync(dir, { recursive: true });
+        const ext = /^(mp3|ogg|wav|flac|m4a)$/.test(job.audioExt) ? job.audioExt : 'mp3';
+        const audio = path.join(dir, `tempaudio.${ext}`), txt = path.join(dir, 'tempmap.txt');
+        fs.writeFileSync(audio, Buffer.from(job.audio));
+        fs.writeFileSync(txt, String(job.txt));
+        const slash = p => p.replace(/\\/g, '/');
+        const args = [`--a=${slash(audio)}`, `--t=${slash(txt)}`, `--sp=${Number(job.tempo) || 1}`, `--sf=${Math.max(0, Math.floor(Number(job.startMs) || 0))}`];
+        spawn(exe, args, { cwd: path.dirname(exe), detached: true, stdio: 'ignore' }).unref();
+        return { ok: true };
+    } catch (e) {
+        return { error: `FAILED TO START RHYTHIA (${e.message})` };
+    }
+});
 
 // ------------------------------------------------ the window
 
@@ -229,7 +433,6 @@ else {
         protocol.handle('ssqe', serve);
         createWindow();
         startDiscord();
-        setTimeout(checkForUpdate, 4000);
         app.on('activate', () => {
             if (!BrowserWindow.getAllWindows().length)
                 createWindow();

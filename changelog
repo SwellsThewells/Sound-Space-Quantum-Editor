@@ -2,6 +2,19 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.2 - 10/16/2026 --
+
+- the desktop app now comes as a zip like the original editor: unzip it anywhere and run
+  'Sound Space Quantum Editor Plus.exe'
+- the app updates itself: when a new version is out it asks, downloads it and restarts into it
+  (turn this off with SETTINGS > OTHER > Check For Updates)
+- playtesting in Rhythia is back in the desktop app: SETTINGS > PLAYER > Rhythia, choose RHYTHIA PATH, then PLAYTEST
+- fixed the video not showing when exporting to NOVASTRA (NPK) in the desktop app
+- sharper desktop icon
+
+IF YOU HAVE 3.0.1: download this version's zip by hand once; updates are automatic from then on
+
+----------------------------------
    -- Plus 3.0 - 10/16/2026 --
 
 Sound Space Quantum Editor is now SOUND SPACE QUANTUM EDITOR PLUS!

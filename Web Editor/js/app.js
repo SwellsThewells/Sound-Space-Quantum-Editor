@@ -173,6 +173,11 @@
             if (window.ssqeDesktop) {
                 setInterval(() => this.updatePresence(), 5000);
                 this.updatePresence();
+                // new releases: downloaded and installed by the app, with the progress shown here
+                this.desktopPaths = { Rhythia: '', Novastra: '' };
+                window.ssqeDesktop.playtestPaths().then(p => this.desktopPaths = p).catch(() => { });
+                window.ssqeDesktop.onUpdateProgress(text => text ? this.loading(true, text) : this.loading(false));
+                window.ssqeDesktop.checkForUpdates(this.settings.checkUpdates !== false);
                 window.ssqeDesktop.onOpenFiles(files => {
                     if (files && files.length)
                         this.loadFiles(files.map(f => new File([f.bytes], f.name)));
@@ -257,13 +262,24 @@
                 }
                 if (this.screen && this.screen.stop)
                     this.screen.stop();
-                video.currentTime = 0;
-                video.style.opacity = '1';
-                video.play().catch(() => {
-                    // sound not allowed here: play muted rather than not at all
-                    video.muted = true;
-                    video.play().catch(() => { });
-                });
+                const start = () => {
+                    video.currentTime = 0;
+                    video.style.opacity = '1';
+                    video.play().catch(() => {
+                        // sound not allowed here: play muted rather than not at all
+                        video.muted = true;
+                        video.play().catch(() => { });
+                    });
+                };
+                if (video.readyState >= 2)
+                    start();
+                else
+                    // not loaded (some players can't stream it from the app's files): the whole file, from memory
+                    fetch('assets/hit_the_road.webm').then(r => r.blob()).then(blob => {
+                        video.src = URL.createObjectURL(blob);
+                        video.load();
+                        video.addEventListener('canplay', start, { once: true });
+                    }).catch(start);
             }, 2000);
         }
 
@@ -301,6 +317,33 @@
                 state = map.fileId || '';
             }
             window.ssqeDesktop.setPresence({ details, state });
+        }
+
+        // Desktop app: the map and its song go to Rhythia (--a/--t/--sp/--sf, like the original editor)
+        async playtestRhythia(editor, fromStart) {
+            if (editor.music.isPlaying)
+                editor.pauseMusic();
+            const map = editor.map;
+            if (!(this.desktopPaths && this.desktopPaths.Rhythia)) {
+                this.dialogs.message('Choose where Rhythia is first: SETTINGS > PLAYER > RHYTHIA PATH.');
+                return;
+            }
+            const audio = await this.storage.getAudio(map.soundId);
+            if (!audio) {
+                this.dialogs.message(`No audio found for ID '${map.soundId}'.`);
+                return;
+            }
+            const bytes = new Uint8Array(await audio.arrayBuffer());
+            const audioExt = { 'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/flac': 'flac', 'audio/mp4': 'm4a' }[sniffAudio(bytes)] || 'mp3';
+            SSQE.Settings.save(this.settings);
+            const result = await window.ssqeDesktop.playtest({
+                game: 'Rhythia', audio: bytes, audioExt, txt: Formats.writeTxt(map),
+                tempo: SSQESettings.tempoFromSlider(map.tempoSlider), startMs: fromStart ? 0 : Math.floor(editor.currentTime),
+            });
+            if (result && result.error)
+                editor.toast(result.error, 'warn');
+            else
+                editor.toast('STARTED RHYTHIA', 'other');
         }
 
         // the new screen fades and settles in
@@ -996,6 +1039,14 @@
         // ------------------------------------------------------------ playtest (GuiWindowEditor.Playtest + the web player)
 
         async playtest(editor, fromStart, autoplay) {
+            // the desktop app plays in Rhythia, like the original editor, when that's the playtest game
+            const game = this.settings.playtestGame || 'SSQE Player';
+            if (window.ssqeDesktop && game === 'Rhythia')
+                return this.playtestRhythia(editor, fromStart);
+            if (window.ssqeDesktop && game === 'Novastra') {
+                this.dialogs.message('Playtesting in Novastra isn\'t supported in Plus yet. Choose Rhythia or the SSQE Player in SETTINGS > PLAYER.');
+                return;
+            }
             if (!window.SSQEGame) {
                 this.dialogs.message('The web player could not be loaded. Make sure the "Web Player" folder sits next to the "Web Editor" folder.');
                 return;

@@ -1,8 +1,9 @@
 name: Desktop release
 
 # Every update to master that changes the editor, the map player, the desktop app or the changelog builds the Windows
-# desktop app (Sound Space Quantum Editor Plus) and publishes it as a new GitHub release: an installer and a portable
-# .exe, with the newest changelog entry as the release notes. Versions are <major.minor from desktop/package.json>.<run>.
+# desktop app (Sound Space Quantum Editor Plus) and publishes it as a new GitHub release: SSQEPlus<version>.zip with
+# 'Sound Space Quantum Editor Plus.exe' inside (the app updates itself from these), and the newest changelog entry as
+# the release notes. Versions are <major.minor from desktop/package.json>.<run>.
 
 on:
   push:
@@ -63,4 +64,4 @@ jobs:
           body_path: release-notes.md
           make_latest: true
           files: |
-            desktop/dist/*.exe
+            desktop/dist/*.zip

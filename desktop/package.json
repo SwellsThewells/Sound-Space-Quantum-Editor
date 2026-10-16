@@ -50,46 +50,17 @@
         "to": "app/changelog"
       }
     ],
-    "fileAssociations": [
-      {
-        "ext": "ssqes",
-        "name": "Sound Space Quantum Editor Settings",
-        "description": "Sound Space Quantum Editor Plus setup",
-        "icon": "build/icon.ico"
-      },
-      {
-        "ext": "sspm",
-        "name": "Sound Space Map",
-        "description": "Sound Space map",
-        "icon": "build/icon.ico"
-      }
-    ],
     "win": {
       "icon": "build/icon.ico",
       "target": [
         {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
+          "target": "zip",
           "arch": [
             "x64"
           ]
         }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "Sound Space Quantum Editor Plus",
-      "artifactName": "Sound-Space-Quantum-Editor-Plus-Setup-${version}.${ext}"
-    },
-    "portable": {
-      "artifactName": "Sound-Space-Quantum-Editor-Plus-Portable-${version}.${ext}"
+      ],
+      "artifactName": "SSQEPlus${version}.${ext}"
     },
     "linux": {
       "icon": "build/icon.png",
@@ -98,6 +69,10 @@
       ],
       "category": "Game"
     },
-    "publish": null
+    "publish": null,
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US"
+    ]
   }
 }

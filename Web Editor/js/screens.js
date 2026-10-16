@@ -619,15 +619,32 @@
         ]);
 
         const games = ['Rhythia', 'Novastra', 'SSQE Player'];
+        // the desktop app playtests in Rhythia (its path chosen here); the web editor always uses the web player
+        const desktop = !!window.ssqeDesktop;
         const notOnWeb = () => app.dialogs.message('Playtesting in Rhythia or Novastra isn\'t available in the web editor. Playtests always use the web player.');
+        const noNova = () => app.dialogs.message('Playtesting in Novastra isn\'t supported in Plus yet. Choose Rhythia or the SSQE Player.');
+        const pickRhythia = async () => {
+            const chosen = await window.ssqeDesktop.pickPlaytestPath('Rhythia');
+            if (chosen)
+                app.desktopPaths = { ...(app.desktopPaths || {}), Rhythia: chosen };
+        };
         const PlayerNav = new G.Container(320, 0, 1220, 700, [
             ...games.map((g, i) => new G.Checkbox(0, i * 60, 45, 45, {
                 text: g, textSize: 34, style: unc,
                 get: () => (s.playtestGame || 'SSQE Player') === g,
-                set: () => { s.playtestGame = g; save(); if (g !== 'SSQE Player') notOnWeb(); },
+                set: () => {
+                    s.playtestGame = g;
+                    save();
+                    if (!desktop && g !== 'SSQE Player')
+                        notOnWeb();
+                    else if (desktop && g === 'Novastra')
+                        noNova();
+                    else if (desktop && g === 'Rhythia' && !(app.desktopPaths && app.desktopPaths.Rhythia))
+                        pickRhythia();
+                },
             })),
-            pathBox(300, 0, 750, 50, 'RHYTHIA PATH', 30, () => '', notOnWeb),
-            pathBox(300, 60, 750, 50, 'NOVASTRA PATH', 30, () => '', notOnWeb),
+            pathBox(300, 0, 750, 50, 'RHYTHIA PATH', 30, () => desktop ? (app.desktopPaths && app.desktopPaths.Rhythia) || '' : '', desktop ? pickRhythia : notOnWeb),
+            pathBox(300, 60, 750, 50, 'NOVASTRA PATH', 30, () => '', desktop ? noNova : notOnWeb),
             new G.Checkbox(0, 180, 45, 45, {
                 text: 'Open SSQE Player in Fullscreen', textSize: 34, style: unc,
                 get: () => SSQESettings.load().fullscreenPlayer, set: v => { const ps = SSQESettings.load(); ps.fullscreenPlayer = v; SSQESettings.save(ps); },
