@@ -961,6 +961,7 @@ void main()
         constructor(opts) {
             this.opts = opts;
             this.settings = opts.settings;
+            this.statsStart = performance.now();
             const s = this.settings;
 
             this.Replay = opts.mode === 'replay' && !!opts.replayBuffer;
@@ -1195,6 +1196,13 @@ void main()
             if (document.pointerLockElement)
                 document.exitPointerLock();
 
+            // (for the STATS page)
+            if (window.SSQEStats)
+                SSQEStats.recordPlay({
+                    hits: this.hits, misses: this.misses, maxCombo: this.maxCombo,
+                    mode: this.Replay ? 'replay' : this.Autoplay ? 'autoplay' : this.Bot ? 'realistic autoplay' : 'play',
+                    seconds: (performance.now() - this.statsStart) / 1000,
+                });
             this.opts.onExit && this.opts.onExit({
                 accuracy: this.calculateAccuracy(),
                 hits: this.hits,

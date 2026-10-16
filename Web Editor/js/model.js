@@ -556,11 +556,18 @@ const SSQE = window.SSQE = window.SSQE || {};
         }
 
         addObjects(label, toAdd) {
-            this.replace(label, [], Array.isArray(toAdd) ? toAdd : [toAdd]);
+            const list = Array.isArray(toAdd) ? toAdd : [toAdd];
+            this.replace(label, [], list);
+            // (for the STATS page: notes placed by hand and by the auto mapper)
+            if (window.SSQEStats && list.length && list[0] instanceof Note)
+                SSQEStats.add(label === 'AUTO MAP' ? 'notesAutoMapped' : 'notesPlaced', list.length);
         }
 
         removeObjects(label, toRemove) {
-            this.replace(label, toRemove === undefined ? this._selected : Array.isArray(toRemove) ? toRemove : [toRemove], []);
+            const list = toRemove === undefined ? this._selected : Array.isArray(toRemove) ? toRemove : [toRemove];
+            if (window.SSQEStats && list.length && list[0] instanceof Note)
+                SSQEStats.add('notesDeleted', list.length);
+            this.replace(label, list, []);
         }
     }
 

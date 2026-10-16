@@ -652,6 +652,7 @@
                     bytes = SSQE.Formats.writeSspm(map, meta, new Uint8Array(await audio.arrayBuffer()), cover);
 
                 this.app.download(new Blob([bytes], { type: 'application/octet-stream' }), `${id}.${format}`);
+                window.SSQEStats && SSQEStats.add('mapsExported');
                 win.close();
                 editor.toast(`EXPORTED ${format.toUpperCase()}`);
             };

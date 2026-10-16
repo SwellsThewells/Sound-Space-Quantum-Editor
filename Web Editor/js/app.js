@@ -167,6 +167,12 @@
             this.loadChangelog();
             this.showMenu();
             this.startAutosaving();
+            // the STATS page: a session, and time in the app and in the editor
+            if (window.SSQEStats) {
+                SSQEStats.session();
+                SSQEStats.tick(() => document.body.dataset.screen === 'editor'
+                    && !(this.playerFrame && this.playerFrame.style.display !== 'none' && !this.playerFrame.classList.contains('hidden')));
+            }
 
             // the desktop app: what you're doing goes to Discord, and files opened with the app (a .ssqes setup, a
             // .sspm map) are loaded like LOAD MAP
@@ -295,6 +301,7 @@
 
         // the menu, create, settings and keybinds windows are canvas screens (screens.js); the editor runs its own loop
         showScreen(name) {
+            SSQE.GUI.crossfade(document.getElementById('editor-canvas'));
             if (this.screen) {
                 this.screen.stop();
                 this.screen = null;
@@ -305,7 +312,6 @@
                 this.screen.start();
             }
             this.loading(false);
-            this.animateIn();
             this.updatePresence();
         }
 
@@ -352,14 +358,9 @@
                 editor.toast('STARTED RHYTHIA', 'other');
         }
 
-        // the new screen fades and settles in
+        // the screen fades and settles in (back from the map player)
         animateIn() {
-            const canvas = document.getElementById('editor-canvas');
-            if (!canvas)
-                return;
-            canvas.classList.remove('ssqe-enter');
-            void canvas.offsetWidth;
-            canvas.classList.add('ssqe-enter');
+            SSQE.GUI.crossfade(document.getElementById('editor-canvas'), { snapshot: false });
         }
 
         // Covers the screen with a 'LOADING...' overlay (or takes it away) and resolves once it's on screen, so a
@@ -533,6 +534,7 @@
             try {
                 const blob = await SSQECustom.exportSetup({ learned: answer === 'yes' });
                 await this.download(blob, 'my-setup.ssqes');
+                window.SSQEStats && SSQEStats.add('setupsShared');
             } catch (e) {
                 this.dialogs.message(`Failed to export the setup: ${e.message}`, 'Error');
             }
@@ -823,6 +825,7 @@
 
             map.duration = this.music.duration * 1000;
             map.currentTime = Math.min(map.currentTime, map.duration);
+            window.SSQEStats && SSQEStats.add('mapsOpened');
             map.sortAll();
 
             try {
@@ -1045,6 +1048,7 @@
         // ------------------------------------------------------------ playtest (GuiWindowEditor.Playtest + the web player)
 
         async playtest(editor, fromStart, autoplay) {
+            window.SSQEStats && SSQEStats.add('playtests');
             // the desktop app plays in Rhythia, like the original editor, when that's the playtest game
             const game = this.settings.playtestGame || 'SSQE Player';
             if (window.ssqeDesktop && game === 'Rhythia')
@@ -1098,6 +1102,7 @@
             };
 
             try {
+                SSQE.GUI.fadeIn(document.getElementById('game'), document.getElementById('overlay'));
                 const game = new SSQEGame.Game({
                     canvas: document.getElementById('game'),
                     overlay: document.getElementById('overlay'),
