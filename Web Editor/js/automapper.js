@@ -11,9 +11,16 @@
 // up on the beat (the map's BPM, or one it works out), with more notes and bigger moves where the song is intense
 // (drops) and fewer where it's calm.
 //
-// With the Quantum option, the notes are quantum jumps and quantum slides: the quantum parts of the learned maps, or
-// ones made for the spot and rhythm (quantumRun). Grid patterns are only ever moved by whole cells, never by part of
-// one: a grid pattern sitting off the grid isn't quantum mapping.
+// It maps like a plan: bars that sound the same (a loop coming round again, a chorus coming back) get the same rhythm,
+// and mostly the same pattern again, turned or mirrored; parts that sound different get new patterns.
+//
+// It also comes with example maps (automapperexamples.js): jump maps, stream maps and a quantum map, which lead when a
+// jump map, a stream map or quantum is asked for, and fill in while it has learned few maps.
+//
+// With the Quantum option, the notes are quantum jumps and quantum slides (notes so close together they play as one
+// sweep): the quantum parts of the example and learned maps, or ones made for the spot and rhythm (quantumRun). Grid
+// patterns are only ever moved by whole cells, never by part of one: a grid pattern sitting off the grid isn't quantum
+// mapping.
 //
 // What it learns is stored in the browser (IndexedDB, see customassets.js).
 window.SSQEAutoMapper = (function () {
@@ -21,7 +28,8 @@ window.SSQEAutoMapper = (function () {
     const VERSION = 2;
     const MAX_NOTES = 250000;
     const GRID = [0, 2];
-    const QUANTUM = [-0.5, 2.5];
+    // (as far as the editor lets quantum notes go)
+    const QUANTUM = [-0.85, 2.85];
 
     // the 8 ways to turn or mirror the 3x3 grid around its middle (1, 1); INV[k] undoes SYM[k]
     const SYM = [
@@ -80,6 +88,45 @@ window.SSQEAutoMapper = (function () {
             t: Float64Array.from(list, n => Math.round(n.ms)),
             quantum: list.some(n => !isWhole(n.x) || !isWhole(n.y) || n.x < 0 || n.x > 2 || n.y < 0 || n.y > 2),
         };
+    }
+
+    // The example maps that come with it (automapperexamples.js), unpacked the first time they're needed: library
+    // entries with their kind ('jumps', 'streams' or 'quantum')
+    let examples = null;
+    function exampleEntries() {
+        if (examples)
+            return examples;
+        examples = [];
+        for (const ex of window.SSQEAutoMapperExamples || []) {
+            try {
+                const bytes = Uint8Array.from(atob(ex.data), c => c.charCodeAt(0));
+                let p = 0;
+                const next = () => {
+                    let v = 0, mul = 1, b;
+                    do {
+                        b = bytes[p++];
+                        v += (b & 0x7f) * mul;
+                        mul *= 128;
+                    } while (b & 0x80);
+                    return v;
+                };
+                const unzig = v => v % 2 ? -(v + 1) / 2 : v / 2;
+                const notes = [];
+                let x = 0, y = 0, ms = 0;
+                while (p < bytes.length) {
+                    x += unzig(next());
+                    y += unzig(next());
+                    ms += next();
+                    notes.push({ x: x / 100, y: y / 100, ms });
+                }
+                const entry = toEntry(notes, `${ex.song} (${ex.mapper})`);
+                entry.kind = ex.kind;
+                examples.push(entry);
+            } catch (err) {
+                console.warn(`Couldn't unpack the example map ${ex.song}`, err);
+            }
+        }
+        return examples;
     }
 
     // notes: [{ x, y, ms }] in editor coordinates (0..2). Returns true when the map is new to it.
@@ -678,19 +725,71 @@ window.SSQEAutoMapper = (function () {
         }
         phase = ((phase % period) + period) % period;
 
-        // does the beat stay put? the local shift that fits each 15 seconds best
+        // All the drums (hats and off-beat hits too) against a grid of quarter beats and one of third beats: the
+        // grid they fit tells straight from swung, and when the kick and snare alone put the beat between two
+        // groups of hits (a kick on the beat and one just before the next: the beat lands in the middle, off both),
+        // the quarter grid the drums sit on puts it right
+        const drumHits = [];
+        {
+            const th2 = percentile(hits, 0.8);
+            for (let i = 1; i + 1 < frames; i++)
+                if (hits[i] > th2 && hits[i] >= hits[i - 1] && hits[i] >= hits[i + 1]) {
+                    const a = hits[i - 1], b = hits[i], c = hits[i + 1];
+                    const d = a - 2 * b + c;
+                    drumHits.push([i + (d ? 0.5 * (a - c) / d : 0), b]);
+                }
+        }
+        const gridFit = q => {
+            let best = { ph: 0, s: -1 };
+            for (let ph = 0; ph < q; ph += 0.05) {
+                let sc = 0;
+                for (const [t, v] of drumHits) {
+                    let d = ((t - ph) % q + q) % q;
+                    d = Math.min(d, q - d);
+                    sc += v * Math.exp(-0.5 * (d / 0.8) ** 2);
+                }
+                if (sc > best.s)
+                    best = { ph, s: sc };
+            }
+            return best;
+        };
+        await breathe();
+        const quarterFit = gridFit(period / 4), thirdFit = gridFit(period / 3);
+        {
+            const q = period / 4;
+            let near = quarterFit.ph;
+            while (near < phase - q / 2)
+                near += q;
+            while (near > phase + q / 2)
+                near -= q;
+            if (Math.abs(near - phase) > 1.5)
+                phase = ((near % period) + period) % period;
+        }
+
+        // does the beat stay put? the local shift that fits each 15 seconds' drums to the quarter grid best (not
+        // more than half a quarter beat either way, or it would land on the next quarter)
         await breathe();
         const shifts = [];
+        const reach = Math.min(5, period / 8 - 0.25);
         for (let from = 0; from + 1500 <= frames; from += 1500) {
+            const inWindow = drumHits.filter(([t]) => t >= from && t < from + 1500);
             let bestShift = 0, bestS = -1;
-            for (let s = -5; s <= 5; s += 0.5) {
-                const v = beatScore(beats, period, phase + s, from, from + 1500);
-                if (v > bestS) {
-                    bestS = v;
-                    bestShift = s;
+            if (inWindow.length >= 20)
+                for (let sh = -reach; sh <= reach + 1e-9; sh += 0.25) {
+                    let sc = 0;
+                    for (const [t, v] of inWindow) {
+                        const q = period / 4;
+                        let d = ((t - phase - sh) % q + q) % q;
+                        d = Math.min(d, q - d);
+                        sc += v * Math.exp(-0.5 * (d / 0.8) ** 2);
+                    }
+                    // (ties go to no shift)
+                    if (sc > bestS * 1.02 || (Math.abs(sc - bestS) <= bestS * 0.02 && Math.abs(sh) < Math.abs(bestShift))) {
+                        bestS = Math.max(sc, bestS);
+                        bestShift = sh;
+                    }
                 }
-            }
-            shifts.push(bestShift);
+            shifts.push(Math.round(bestShift * 2) / 2);
         }
         // (quiet stretches can't tell where the beat is, so a few windows off don't count against it)
         const steady = shifts.filter(s => Math.abs(s) <= 2).length >= shifts.length * 0.7;
@@ -703,7 +802,7 @@ window.SSQEAutoMapper = (function () {
         }
 
         return {
-            bpm, offsetMs: phase * 10, steady, triplet: thirds > quarters * 1.25,
+            bpm, offsetMs: phase * 10, steady, triplet: thirds > quarters * 1.25 && thirdFit.s >= quarterFit.s * 0.85,
             confidence: fine.onBeats, shifts,
         };
     }
@@ -975,6 +1074,11 @@ window.SSQEAutoMapper = (function () {
     // section of the song is allowed more or fewer (intense parts and drops more), and when there are more sounds than
     // that, the strongest and most on-beat ones win. Streams are only filled in between sounds where the song itself
     // is busy (Fill Streams).
+    // How alike two bars have to sound to count as the same (0..1): then the later one copies the earlier one's
+    // rhythm (human maps give such bars the same rhythm 80-100% of the time). Bars that are only alike (a melody note
+    // that differs, a fill on top) lean towards the same rhythm and as many notes.
+    const SAME_SOUND = 0.84, ALIKE_SOUND = 0.72;
+
     function chooseTimes(a, opts, nps, ctx) {
         const { startMs, endMs } = opts;
         const songMs = a.frames * 10;
@@ -1125,11 +1229,91 @@ window.SSQEAutoMapper = (function () {
         // (notes each bar got the first time, so a section can be scaled down from what it really got: its allowance
         // can be far above what its bars can hold)
         const firstCount = [];
+
+        // Mapped like a plan: bars that sound the same (a loop coming round again, the same fill, a chorus coming
+        // back) get the same rhythm, so the same sound never gets a pattern one time and a lone note the next. What a
+        // bar sounds like: when each kind of sound starts (kick, snare, hats, melody, bass) at each eighth of a beat,
+        // and how loud its low, middle and high ends are. proto[j]: the earlier bar that bar j repeats (or -1); its
+        // notes are copied, moved along to bar j (only between parts of the song about as busy as each other: the same
+        // loop in a calm intro and in the drop isn't mapped the same).
+        const sounds = inRange.map(b => {
+            const beatLen = 60000 / ctx.timing[beats[b.first].tp].bpm;
+            const n = Math.max(1, Math.round((b.to - b.from) / beatLen)) * 8;
+            const step = (b.to - b.from) / n;
+            const kinds = [a.sources.kick, a.sources.snare, a.sources.hat, a.sources.melody, a.sources.bass];
+            const on = new Float32Array(n * 5);
+            let norm = 0;
+            for (let q = 0; q < n; q++) {
+                const f0 = Math.max(0, Math.floor((b.from + (q - 0.5) * step) / 10));
+                const f1 = Math.min(a.frames, Math.ceil((b.from + (q + 0.5) * step) / 10));
+                for (let k = 0; k < 5; k++) {
+                    let m = 0;
+                    for (let f = f0; f < f1; f++)
+                        m = Math.max(m, kinds[k][f]);
+                    on[q * 5 + k] = m;
+                    norm += m * m;
+                }
+            }
+            const band = [0, 0, 0];
+            let c = 0;
+            for (let f = Math.max(0, Math.floor(b.from / 10)); f < Math.min(a.frames, b.to / 10); f++, c++) {
+                band[0] += a.bandLow[f];
+                band[1] += a.bandMid[f];
+                band[2] += a.bandHigh[f];
+            }
+            return { n, len: b.to - b.from, on, norm: Math.sqrt(norm), band: band.map(v => v / Math.max(1, c)) };
+        });
+        const sameness = (p, q) => {
+            if (p.n !== q.n || Math.abs(p.len - q.len) > p.len * 0.02 || p.norm < 1e-6 || q.norm < 1e-6)
+                return 0;
+            let dot = 0;
+            for (let i = 0; i < p.on.length; i++)
+                dot += p.on[i] * q.on[i];
+            return dot / (p.norm * q.norm) * Math.exp(-Math.hypot(p.band[0] - q.band[0], p.band[1] - q.band[1], p.band[2] - q.band[2]) / 1.5);
+        };
+        const like = inRange.map(() => -1);
+        const proto = inRange.map((b, j) => {
+            let best = -1, top = ALIKE_SOUND;
+            const nj = sectionAt(b.from).nps;
+            for (let i = 0; i < j; i++) {
+                const ni = sectionAt(inRange[i].from).nps;
+                if (ni > nj * 1.43 || ni < nj * 0.7)
+                    continue;
+                const v = sameness(sounds[i], sounds[j]);
+                if (v >= top) {
+                    top = v;
+                    best = i;
+                }
+            }
+            like[j] = best;
+            return top >= SAME_SOUND ? best : -1;
+        });
+        const rootOf = j => {
+            while (proto[j] >= 0)
+                j = proto[j];
+            return j;
+        };
+        // which bar a note time is in (a bar's sounds count from 20ms before it starts)
+        const barIndexOf = t => {
+            let lo = 0, hi = inRange.length - 1;
+            while (lo < hi) {
+                const m = (lo + hi + 1) >> 1;
+                if (inRange[m].from - 20 <= t)
+                    lo = m;
+                else
+                    hi = m - 1;
+            }
+            return lo;
+        };
+        ctx.bars = inRange.map((b, j) => ({ from: b.from, to: b.to, proto: proto[j] }));
+
         const mapBars = (scale, push = { mult: 1, stage: 0 }) => {
         out = [];
         heard = new Map();
         let carry = 0;
         const firstPass = !firstCount.length;
+        // each bar's notes, as times from the bar's start (for the bars that repeat it)
+        const rel = [];
         inRange.forEach((b, j) => {
             const s = sectionAt(b.from);
             const beatLen = 60000 / ctx.timing[beats[b.first].tp].bpm;
@@ -1164,8 +1348,11 @@ window.SSQEAutoMapper = (function () {
 
             const sc = scale.get(s);
             const exact = (sc === undefined || firstCount[j] === undefined ? cap[j] * push.mult : Math.min(cap[j], firstCount[j]) * sc * push.mult) + carry;
+            // (a bar like an earlier one gets about as many notes as it did)
+            const lk = like[j] >= 0 && rel[like[j]] ? rel[like[j]] : null;
+            const want = lk ? (exact + lk.length) / 2 : exact;
             // never more notes than the bar has positions at the finest division allowed
-            const k = Math.max(0, Math.min(Math.round(exact), beatsIn * topDiv(family, beatLen)));
+            const k = Math.max(0, Math.min(Math.round(want), beatsIn * topDiv(family, beatLen)));
             // how close notes may be: the beat division this many notes needs
             const d = Math.min(topDiv(family, beatLen), family.find(d => d >= k / beatsIn * 1.05) || family[family.length - 1]);
             const minGap = beatLen / Math.max(d, 1) * 0.85;
@@ -1173,14 +1360,44 @@ window.SSQEAutoMapper = (function () {
 
             // sounds that aren't on the bar's division (a flam, a grace note, an off-beat sound at an easy
             // difficulty) are left out rather than moved a long way from where they're heard
+            // (and in a bar like an earlier one, the sounds where that bar had its notes come first)
             const here = raw.map(e => {
                 const g = gridAt(e.ms, div);
+                const was = lk && lk.some(dt => Math.abs(b.from + dt - g.at) <= 3);
                 return g.err <= Math.max(tolerance(g.step), Math.min(25, 0.5 * g.step))
-                    ? { ms: Math.round(g.at), src: e.ms, score: e.strength * (0.55 + 0.45 * g.weight) } : null;
+                    ? { ms: Math.round(g.at), src: e.ms, score: e.strength * (0.55 + 0.45 * g.weight) * (was ? 1.8 : 1) } : null;
             }).filter(e => e && ok(e.ms));
+            // a bar that sounds like one before it: the same notes, moved along
+            if (proto[j] >= 0 && rel[proto[j]]) {
+                const copied = [];
+                for (const dt of rel[proto[j]]) {
+                    const ms = Math.round(b.from + dt);
+                    if (!ok(ms) || copied.includes(ms))
+                        continue;
+                    copied.push(ms);
+                    const own = here.find(e => Math.abs(e.ms - ms) <= 2);
+                    if (own)
+                        heard.set(ms, own.src);
+                }
+                rel[j] = copied.map(t => t - b.from);
+                carry = Math.min(2, Math.max(-2, exact - copied.length));
+                if (firstPass)
+                    firstCount[j] = copied.length;
+                out.push(...copied);
+                return;
+            }
             // the strongest sounds, spread over the bar first (a bar's few notes all bunched at its start, then
             // nothing, feels like the map stopped), then the rest of the strongest wherever they are
             const picked = [];
+            // (a bar like an earlier one: first the earlier bar's notes, wherever this bar has the sound for them)
+            if (lk)
+                for (const dt of lk) {
+                    const e = here.find(x => Math.abs(x.ms - (b.from + dt)) <= 3);
+                    if (e && picked.length < k && picked.every(t => Math.abs(t - e.ms) >= minGap)) {
+                        picked.push(e.ms);
+                        heard.set(e.ms, e.src);
+                    }
+                }
             const spread = Math.max(minGap, 0.55 * (b.to - b.from) / Math.max(1, k));
             for (const gap of [spread, minGap])
                 for (const e of here.sort((p, q) => q.score - p.score)) {
@@ -1221,6 +1438,7 @@ window.SSQEAutoMapper = (function () {
             carry = Math.min(2, Math.max(-2, exact - picked.length));
             if (firstPass)
                 firstCount[j] = picked.length;
+            rel[j] = picked.map(t => t - b.from);
             out.push(...picked);
         });
         // No cuts where the music carries on. A gap much longer than this part's usual spacing (a bar whose share
@@ -1279,6 +1497,27 @@ window.SSQEAutoMapper = (function () {
                 break;
             out.push(...add);
         }
+        // (and a note filled into a gap in a bar that others repeat goes into them too)
+        propagate();
+        };
+        // every bar that repeats another gets exactly that bar's notes, moved along
+        const propagate = () => {
+            if (!proto.some(p => p >= 0))
+                return;
+            const inBar = inRange.map(() => []);
+            for (const t of new Set(out))
+                inBar[barIndexOf(t)].push(t);
+            for (let j = 0; j < inRange.length; j++) {
+                const p = proto[j];
+                if (p < 0)
+                    continue;
+                const shift = inRange[j].from - inRange[p].from;
+                inBar[j] = inBar[p].map(t => Math.round(t + shift)).filter(t => t >= startMs && t <= endMs && avoid.every(v => Math.abs(v - t) >= 25));
+                for (const t of inBar[p])
+                    if (heard.has(t))
+                        heard.set(Math.round(t + shift), heard.get(t) + shift);
+            }
+            out = inBar.flat();
         };
         mapBars(new Map());
 
@@ -1335,12 +1574,46 @@ window.SSQEAutoMapper = (function () {
             const all = [...new Set(out)].sort((p, q) => p - q);
             let excess = all.length - opts.count;
             if (excess > 0) {
-                const filled = all.filter(t => !heard.has(t));
-                const from = filled.length >= excess ? filled : all;
+                // Taken out together: the same note in every bar that repeats a bar, so the repeats stay the same
+                // (a group too big for what's left over is skipped; single notes make up the rest)
+                const groups = new Map();
+                for (const t of all) {
+                    const j = barIndexOf(t), r = rootOf(j);
+                    const key = `${r}:${Math.round(t - inRange[j].from)}`;
+                    if (!groups.has(key))
+                        groups.set(key, []);
+                    groups.get(key).push(t);
+                }
+                const list = [...groups.values()];
+                const filled = list.filter(g => g.every(t => !heard.has(t)));
+                const from = filled.reduce((n, g) => n + g.length, 0) >= excess ? filled : list;
+                from.sort((p, q) => p[0] - q[0]);
+                const size = from.reduce((n, g) => n + g.length, 0) / Math.max(1, from.length);
                 const drop = new Set();
-                const step = from.length / excess;
-                for (let q = 0; q < excess; q++)
-                    drop.add(from[Math.min(from.length - 1, Math.floor(q * step + step / 2))]);
+                const stride = Math.max(1, from.length * size / excess);
+                for (let q = stride / 2; q < from.length && excess > 0; q += stride) {
+                    const g = from[Math.floor(q)];
+                    if (g.length <= excess && !g.some(t => drop.has(t))) {
+                        g.forEach(t => drop.add(t));
+                        excess -= g.length;
+                    }
+                }
+                for (const g of from.slice().sort((p, q) => p.length - q.length)) {
+                    if (excess <= 0)
+                        break;
+                    if (g.length <= excess && !g.some(t => drop.has(t))) {
+                        g.forEach(t => drop.add(t));
+                        excess -= g.length;
+                    }
+                }
+                for (const t of all) {
+                    if (excess <= 0)
+                        break;
+                    if (!drop.has(t)) {
+                        drop.add(t);
+                        excess--;
+                    }
+                }
                 out = all.filter(t => !drop.has(t));
             }
         }
@@ -1498,6 +1771,9 @@ window.SSQEAutoMapper = (function () {
     // How many places in the library to try for each run of notes
     const SEARCH = 2400;
 
+    // how often a note with room after it starts a quantum slide (with the Quantum option)
+    const SLIDE_CHANCE = 0.5;
+
     // How much the Quantum option wants quantum notes over notes on the grid: enough that most of the map comes out
     // as quantum slides and jumps wherever they can be played
     const QUANTUM_WANT = 0.8;
@@ -1608,8 +1884,8 @@ window.SSQEAutoMapper = (function () {
             return { x: 1, y: 1, ms };
         const spots = [];
         const [lo, hi] = opts.quantum ? QUANTUM : GRID, d = opts.quantum ? 4 : 1;
-        for (let x = lo; x <= hi + 1e-9; x += 1 / d)
-            for (let y = lo; y <= hi + 1e-9; y += 1 / d)
+        for (let x = Math.ceil(lo * d) / d; x <= hi + 1e-9; x += 1 / d)
+            for (let y = Math.ceil(lo * d) / d; y <= hi + 1e-9; y += 1 / d)
                 spots.push([x, y]);
         let best = null;
         for (const [x, y] of spots) {
@@ -1738,7 +2014,7 @@ window.SSQEAutoMapper = (function () {
             if (!opts.loose && (scale > Math.log(5) || scale < Math.log(0.6)))
                 return;
             cost = cost / used_len * 1.5 + 0.12 * Math.abs(scale) * (0.5 + follow);
-            cost += 2.6 * jacks / used_len + 1.8 * spins / used_len;
+            cost += 5 * jacks / used_len + 1.8 * spins / used_len;
             // Flow: no rougher than the learned maps (at 100%, a fair bit smoother)
             if (model && roughN)
                 cost += 2.4 * flow * Math.max(0, rough / roughN - model.change * (1.2 - 0.45 * flow));
@@ -1845,9 +2121,11 @@ window.SSQEAutoMapper = (function () {
                     consider(jumpInto(e, Math.floor(Math.random() * 8), i, prev, gaps), 0, 0, 0, 0);
             }
             const start = prev || opts.anchor || { x: 0.5 + Math.random() * 1.5, y: 0.5 + Math.random() * 1.5 };
+            // (with real slides in the map, the notes between them are jumps, and big ones)
             for (let s = 0; s < 4; s++) {
-                consider(quantumRun('slide', start, prev2, gaps, opts.jump), 0, 0, 0, 0);
-                consider(quantumRun('jumps', start, prev2, gaps, opts.jump), 0, 0, 0, 0);
+                if (!opts.slidesOn)
+                    consider(quantumRun('slide', start, prev2, gaps, opts.jump), 0, 0, 0, 0);
+                consider(quantumRun('jumps', start, prev2, gaps, opts.slidesOn ? Math.max(1.6, 1.5 * opts.jump) : opts.jump), 0, 0, 0, 0);
             }
         }
 
@@ -1935,12 +2213,155 @@ window.SSQEAutoMapper = (function () {
         };
         let i = 0;
         let lastRun = null;
+
+        // Bars that repeat an earlier bar's sound (and so its rhythm, see chooseTimes) mostly get that bar's pattern
+        // again, turned or mirrored: a different way from last time, or the same way as the bar before when a whole
+        // phrase is coming round again (so it flows from bar to bar like it did the first time). That keeps the map to
+        // a plan. The more Variety, the less often it copies.
+        const bars = opts.bars || [];
+        const barOf = new Int32Array(times.length).fill(-1);
+        const firstOf = bars.map(() => -1), countOf = bars.map(() => 0);
+        for (let q = 0, j = 0; q < times.length && bars.length; q++) {
+            while (j + 1 < bars.length && bars[j + 1].from - 20 <= times[q])
+                j++;
+            barOf[q] = j;
+            if (firstOf[j] < 0)
+                firstOf[j] = q;
+            countOf[j]++;
+        }
+        const placedIn = bars.map(() => []);
+        const variety = (opts.runOptions && opts.runOptions.variety) ?? 0.5;
+        const willCopy = [];
+        bars.forEach((b, j) => {
+            const p = b.proto;
+            let same = p >= 0 && countOf[j] > 0 && countOf[j] === countOf[p];
+            for (let q = 0; same && q < countOf[j]; q++)
+                same = Math.abs((times[firstOf[j] + q] - b.from) - (times[firstOf[p] + q] - bars[p].from)) <= 25;
+            // (a phrase already being copied bar by bar carries on)
+            const phrase = j > 0 && willCopy[j - 1] && bars[j - 1].proto === p - 1;
+            willCopy[j] = same && Math.random() < (phrase ? 0.97 : 0.95 - 0.6 * variety);
+        });
+        const copyStarts = bars.map((b, j) => willCopy[j] ? firstOf[j] : -1).filter(q => q >= 0);
+        const copied = bars.map(() => null);
+        const copyBar = j => {
+            const p = bars[j].proto, src = placedIn[p];
+            if (src.length !== countOf[j])
+                return false;
+            const J = jumpAt(times[i]), flow = (opts.runOptions && opts.runOptions.flow) ?? 0.7;
+            const phrase = j > 0 && copied[j - 1] && copied[j - 1].p === p - 1;
+            let best = null;
+            for (let k = 0; k < 8; k++) {
+                const pos = src.map(o => SYM[k](out[o].x, out[o].y));
+                let cost = 0.3 * Math.random();
+                if (prev) {
+                    const [x0, y0] = pos[0];
+                    const d0 = Math.hypot(x0 - prev.x, y0 - prev.y), g0 = Math.max(1, times[i] - prev.ms);
+                    // never the same spot twice, nor a move too fast or a turn too hard to play
+                    if (d0 < 0.05 || d0 / g0 * 1000 > opts.speedCap)
+                        continue;
+                    if (prev2 && prev.ms - prev2.ms >= 3) {
+                        const t1 = (prev.ms - prev2.ms) / 1000, t2 = g0 / 1000;
+                        const ax = (x0 - prev.x) / t2 - (prev.x - prev2.x) / t1, ay = (y0 - prev.y) / t2 - (prev.y - prev2.y) / t1;
+                        if (Math.hypot(ax, ay) / ((t1 + t2) / 2) > opts.accelCap)
+                            continue;
+                        const v1 = [prev.x - prev2.x, prev.y - prev2.y], v2 = [x0 - prev.x, y0 - prev.y];
+                        const l1 = Math.hypot(...v1);
+                        if (l1 > 0.05)
+                            cost += 0.6 * flow * (1 - (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * d0)) / 2;
+                    }
+                    cost += Math.abs(Math.log((d0 + 0.15) / (J + 0.15)));
+                }
+                if (phrase)
+                    cost += k === copied[j - 1].k ? -1 : 0.5;
+                else if (k === 0)
+                    cost += 0.35;
+                if (!best || cost < best.cost)
+                    best = { k, pos, cost };
+            }
+            if (!best)
+                return false;
+            if (opts.trace)
+                opts.trace.push({ ms: times[i], name: 'repeat', k: best.k, len: best.pos.length, copyOf: p });
+            for (const [x, y] of best.pos) {
+                const note = { x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000, ms: times[i] };
+                out.push(note);
+                placedIn[j].push(out.length - 1);
+                prev2 = prev;
+                prev = note;
+                i++;
+            }
+            copied[j] = { p, k: best.k };
+            return true;
+        };
+
+        // Quantum slides (see generate): the notes after a slide's first note sweep on from it, along a curve or
+        // snaking from side to side, keeping to the edges like quantum maps do, and turning back off them
+        const slides = opts.slides || new Map();
+        const isSlide = new Uint8Array(times.length);
+        for (const [q, n] of slides)
+            for (let z = 1; z <= n && q + z < times.length; z++)
+                isSlide[q + z] = 1;
+        const placeSlide = () => {
+            let n = 0;
+            while (i + n < times.length && isSlide[i + n])
+                n++;
+            const start = prev;
+            if (!n || !start)
+                return false;
+            const [lo, hi] = QUANTUM;
+            const clamp = v => Math.min(hi, Math.max(lo, v));
+            const step = Math.min(4.5, (opts.slideSpeed || 12) * Math.max(1, times[i + n - 1] - start.ms) / 1000) / n;
+            const along = prev2 && Math.hypot(start.x - prev2.x, start.y - prev2.y) > 0.05
+                ? Math.atan2(start.y - prev2.y, start.x - prev2.x) : Math.random() * 2 * Math.PI;
+            let best = null;
+            for (let t = 0; t < 8; t++) {
+                const turn = (Math.random() * 2 - 1) * 0.3, wiggle = Math.random() < 0.5 ? 0 : 0.1 + 0.15 * Math.random();
+                let a = along + (Math.random() * 2 - 1) * 1.2, x = start.x, y = start.y, bounced = 0, edge = 0;
+                const pts = [];
+                for (let z = 1; z <= n; z++) {
+                    a += turn;
+                    if (x + Math.cos(a) * step < lo || x + Math.cos(a) * step > hi) {
+                        a = Math.PI - a;
+                        bounced++;
+                    }
+                    if (y + Math.sin(a) * step < lo || y + Math.sin(a) * step > hi) {
+                        a = -a;
+                        bounced++;
+                    }
+                    x = clamp(x + Math.cos(a) * step);
+                    y = clamp(y + Math.sin(a) * step);
+                    const side = wiggle * (z % 2 ? 1 : -1);
+                    const px = clamp(x - Math.sin(a) * side), py = clamp(y + Math.cos(a) * side);
+                    if (px < 0 || px > 2 || py < 0 || py > 2)
+                        edge++;
+                    pts.push([Math.round(px * 100) / 100, Math.round(py * 100) / 100]);
+                }
+                const score = bounced - 0.8 * edge / n + 0.3 * Math.random();
+                if (!best || score < best.score)
+                    best = { pts, score };
+            }
+            if (opts.trace)
+                opts.trace.push({ ms: times[i], name: 'slide', len: n });
+            for (const [x, y] of best.pts) {
+                const note = { x, y, ms: times[i] };
+                out.push(note);
+                if (barOf[i] >= 0)
+                    placedIn[barOf[i]].push(out.length - 1);
+                prev2 = prev;
+                prev = note;
+                i++;
+            }
+            return true;
+        };
+
         const copyRun = r => {
             const f = SYM[r.k];
             for (let q = 0; q < r.len && i < times.length; q++, i++) {
                 const [x, y] = f(r.e.x[r.i + q + 1], r.e.y[r.i + q + 1]);
                 const note = { x: Math.round((x + r.ox) * 1000) / 1000, y: Math.round((y + r.oy) * 1000) / 1000, ms: times[i] };
                 out.push(note);
+                if (barOf[i] >= 0)
+                    placedIn[barOf[i]].push(out.length - 1);
                 prev2 = prev;
                 prev = note;
             }
@@ -1970,31 +2391,46 @@ window.SSQEAutoMapper = (function () {
         // where the music changes (a new section, or something new inside one): runs stop there, and what comes
         // after starts a new pattern
         const bounds = (opts.boundaries || []).slice().sort((p, q) => p - q);
-        let bi = 0, fresh = false;
+        let bi = 0, fresh = false, ci = 0;
         while (i < times.length) {
             await yieldNow(i / times.length);
             while (bi < bounds.length && bounds[bi] <= times[i]) {
                 bi++;
                 fresh = true;
             }
+            const j = barOf[i];
+            if (j >= 0 && willCopy[j] && i === firstOf[j]) {
+                if (copyBar(j))
+                    continue;
+                willCopy[j] = false;
+            }
+            if (isSlide[i] && placeSlide())
+                continue;
             const limit = bi < bounds.length ? bounds[bi] : Infinity;
+            // (runs stop where a repeated bar starts)
+            while (ci < copyStarts.length && copyStarts[ci] <= i)
+                ci++;
+            const nextCopy = ci < copyStarts.length ? copyStarts[ci] : Infinity;
             // a run of up to 12-24 notes (fewer joins, more of the original flow), ending at a long pause
             const L = 12 + Math.floor(Math.random() * 13);
             const gaps = [];
             for (let q = 0; q < L && i + q < times.length; q++) {
-                if (q > 0 && times[i + q] >= limit)
+                if (q > 0 && (times[i + q] >= limit || i + q >= nextCopy || isSlide[i + q]))
                     break;
                 const g = times[i + q] - (q === 0 ? (prev ? prev.ms : times[i] - 500) : times[i + q - 1]);
                 if (q > 2 && g > 4 * gaps[q - 1] && g > 600)
                     break;
                 gaps.push(g);
+                // (a slide goes on from this note)
+                if (slides.has(i + q))
+                    break;
             }
             remember();
             const ropts = {
                 ...opts.runOptions, quantum: !!opts.quantum, jump: jumpAt(times[i]), vmax: opts.vmax, history,
                 speedCap: opts.speedCap, accelCap: opts.accelCap, recentSpeed: recentSpeed(), recentMoves: recentMoves(), fresh,
                 lastEntry: lastRun && lastRun.e, lastEnd: lastRun ? lastRun.i + lastRun.len : 0, lastK: lastRun && lastRun.k,
-                lastName: lastRun && lastRun.e.name,
+                lastName: lastRun && lastRun.e.name, slidesOn: slides.size > 0,
             };
             // nothing carries on from here: anything that does, then a fresh start (still a playable move away)
             let run = findRun(lib, gaps, prev, prev2, ropts, used)
@@ -2009,6 +2445,8 @@ window.SSQEAutoMapper = (function () {
             if (!run) {
                 const note = stepNote(prev, prev2, times[i], jumpAt(times[i]), opts);
                 out.push(note);
+                if (barOf[i] >= 0)
+                    placedIn[barOf[i]].push(out.length - 1);
                 prev2 = prev;
                 prev = note;
                 i++;
@@ -2175,12 +2613,12 @@ window.SSQEAutoMapper = (function () {
             ctx.triplet = a.tempo.triplet;
             ctx.shifts = a.tempo.steady ? null : a.tempo.shifts;
         }
-        const times = ctx.timing ? chooseTimes(a, opts, nps, ctx) : chooseTimesFree(a, opts, nps);
+        let times = ctx.timing ? chooseTimes(a, opts, nps, ctx) : chooseTimesFree(a, opts, nps);
         await tick();
         if (!times.length)
             return Object.assign([], { info: { bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady) } });
 
-        // what to copy from: the learned maps, the map being made (preferred), or built-in patterns
+        // what to copy from: the learned maps, the map being made (preferred), and the example maps that come with it
         const entries = model.maps.slice();
         const style = (opts.styleNotes || []).filter(n => n.ms < opts.startMs || n.ms > opts.endMs);
         if (style.length >= 12) {
@@ -2189,29 +2627,43 @@ window.SSQEAutoMapper = (function () {
             entries.push(own);
         }
         let lib = prepare(entries, !!opts.quantum);
+        // Jumps, streams or quantum asked for: the example maps of that kind lead, with the learned maps whose design
+        // is like theirs (a stream map doesn't get mixed into a jump map). Otherwise the learned maps, with one map
+        // leading and the maps closest to its design (with many maps learned, copying from all of them at once gives a
+        // patchwork: a stretch in one map's design, then suddenly a completely different one); the example maps only
+        // help out while there are few learned maps.
+        const want = opts.quantum ? 'quantum' : opts.patterns === 'jumps' || opts.patterns === 'streams' ? opts.patterns : null;
+        const gapsOf = times.slice(1).map((t, q) => t - times[q]).filter(g => g > 5).sort((p, q) => p - q);
+        const usualGap = gapsOf.length ? gapsOf[gapsOf.length >> 1] : 200;
+        const fit = e => Math.abs(Math.log(e.style.gap / usualGap));
+        if (want) {
+            const kindEx = prepare(exampleEntries().filter(e => e.kind === want), !!opts.quantum);
+            if (kindEx.length) {
+                const ref = kindEx.map(e => e.style);
+                const like = e => Math.min(...ref.map(r => styleDistance(e.style, r)));
+                // (for quantum, any quantum map it learned)
+                const alike = lib.filter(e => e.bonus || like(e) < 1.6 || (want === 'quantum' && e.style.off >= 0.15))
+                    .sort((p, q) => like(p) - like(q)).slice(0, 6);
+                lib = [...kindEx, ...alike];
+            }
+        } else {
+            if (lib.length < 3)
+                lib = [...lib, ...prepare(exampleEntries(), !!opts.quantum)];
+            // (maps of a completely different design never come in: a jump map doesn't get stream parts)
+            if (lib.length > 3) {
+                let lead = lib.find(e => e.bonus);
+                if (!lead) {
+                    const ranked = lib.slice().sort((p, q) => fit(p) - fit(q)).slice(0, 3);
+                    lead = ranked[Math.floor(Math.random() * ranked.length)];
+                }
+                const near = lib.filter(e => e !== lead)
+                    .map(e => ({ e, d: styleDistance(e.style, lead.style) + 0.6 * fit(e) }))
+                    .filter(x => x.d < 3).sort((p, q) => p.d - q.d).slice(0, 9).map(x => x.e);
+                lib = [lead, ...near];
+            }
+        }
         if (!lib.length)
             lib = prepare([defaultEntry()], !!opts.quantum);
-        // With many maps learned, copying from all of them at once gives a patchwork: a stretch in one map's design,
-        // then suddenly a completely different one. So one map leads (the map being made, if it has notes; otherwise
-        // one of the learned maps whose rhythm fits this song best), and only the maps closest to its design are used.
-        if (lib.length > 10) {
-            const all = lib;
-            const gaps = times.slice(1).map((t, q) => t - times[q]).filter(g => g > 5).sort((p, q) => p - q);
-            const want = gaps.length ? gaps[gaps.length >> 1] : 200;
-            const fit = e => Math.abs(Math.log(e.style.gap / want));
-            let lead = lib.find(e => e.bonus);
-            if (!lead) {
-                const ranked = lib.slice().sort((p, q) => fit(p) - fit(q)).slice(0, 3);
-                lead = ranked[Math.floor(Math.random() * ranked.length)];
-            }
-            const near = lib.filter(e => e !== lead)
-                .map(e => ({ e, d: styleDistance(e.style, lead.style) + 0.6 * fit(e) }))
-                .sort((p, q) => p.d - q.d).slice(0, 9).map(x => x.e);
-            // (with the Quantum option, the most quantum of the learned maps come too)
-            const quantumMaps = opts.quantum ? all.filter(e => e !== lead && !near.includes(e) && e.style.off >= 0.15)
-                .sort((p, q) => q.style.off - p.style.off).slice(0, 3) : [];
-            lib = [lead, ...near, ...quantumMaps];
-        }
         await tick();
         const fm = flowModel(lib);
         await tick();
@@ -2242,6 +2694,102 @@ window.SSQEAutoMapper = (function () {
         const speedCap = Math.max(8, vmax * 1.6), accelCap = vmax * 160;
         const boundaries = sections.slice(1).map(x => x.from).filter(ms => ms > opts.startMs && ms < opts.endMs);
 
+        // Quantum slides (with jumps, what quantum maps are made of): from some notes the cursor slides on for part of
+        // the way to the next note, along a curve or a snaking line of notes so close together they play as one sweep
+        // (about a third of a beat, going about as fast as the difficulty's moves), and the next note is a jump from
+        // where it ends. Bars that repeat each other get them in the same places.
+        const slides = new Map();
+        if (opts.quantum && ctx.bars && ctx.bars.length && ctx.timing) {
+            const bars = ctx.bars;
+            const rootOf = j => {
+                while (bars[j].proto >= 0)
+                    j = bars[j].proto;
+                return j;
+            };
+            const barAt = t => {
+                let lo = 0, hi = bars.length - 1;
+                while (lo < hi) {
+                    const m = (lo + hi + 1) >> 1;
+                    if (bars[m].from - 20 <= t)
+                        lo = m;
+                    else
+                        hi = m - 1;
+                }
+                return lo;
+            };
+            const beatAt = t => {
+                let tp = ctx.timing[0];
+                for (const p of ctx.timing)
+                    if (p.ms <= t)
+                        tp = p;
+                return 60000 / tp.bpm;
+            };
+            const decided = new Map();
+            // the slides for a set of note times: after which note, how far apart their notes are, how many there are
+            // and how many there's room for (leaving time for the jump after: a cell and a half at the top speed)
+            const plan = main => {
+                const list = [];
+                for (let q = 0; q + 1 < main.length; q++) {
+                    const beat = beatAt(main[q]), gap = main[q + 1] - main[q];
+                    const step = Math.max(14, beat / 24);
+                    const room = gap - Math.max(0.18 * beat, 1500 / speedCap);
+                    const n = Math.floor(Math.min((0.2 + 0.015 * difficulty) * beat, room) / step);
+                    if (gap < 0.4 * beat || gap > 2 * beat || n < 4)
+                        continue;
+                    const j = barAt(main[q]), key = `${rootOf(j)}:${Math.round(main[q] - bars[j].from)}`;
+                    if (!decided.has(key))
+                        decided.set(key, Math.random() < SLIDE_CHANCE * (0.5 + 0.06 * difficulty));
+                    if (decided.get(key))
+                        list.push({ q, step, n, most: Math.max(n, Math.floor(room / step)) });
+                }
+                return list;
+            };
+            let list = plan(times);
+            // A set number of notes counts the slides' notes too: the song is mapped again with as many fewer notes
+            // as the slides add, and the slides are made a note or two longer or shorter to land on it exactly
+            if (opts.count > 0 && list.length) {
+                const added = list.reduce((n, l) => n + l.n, 0);
+                times = chooseTimes(a, { ...opts, count: Math.max(2, Math.round(opts.count * times.length / (times.length + added))) }, nps, ctx);
+                list = plan(times);
+                let diff = opts.count - times.length - list.reduce((n, l) => n + l.n, 0);
+                for (let pass = 0; diff !== 0 && pass < 200; pass++) {
+                    let changed = false;
+                    for (const l of list) {
+                        if (diff > 0 && l.n < l.most) {
+                            l.n++;
+                            diff--;
+                            changed = true;
+                        } else if (diff < 0 && l.n > 3) {
+                            l.n--;
+                            diff++;
+                            changed = true;
+                        }
+                        if (!diff)
+                            break;
+                    }
+                    if (!changed && diff < 0 && list.length) {
+                        diff += list.splice(Math.floor(list.length / 2), 1)[0].n;
+                        changed = true;
+                    }
+                    if (!changed)
+                        break;
+                }
+            }
+            const withSlides = [];
+            let li = 0;
+            for (let q = 0; q < times.length; q++) {
+                withSlides.push(times[q]);
+                if (li < list.length && list[li].q === q) {
+                    const { step, n } = list[li++];
+                    slides.set(withSlides.length - 1, n);
+                    for (let z = 1; z <= n; z++)
+                        withSlides.push(Math.round(times[q] + z * step));
+                }
+            }
+            times = withSlides;
+        }
+        const slideSpeed = Math.min(32, 4 + 0.45 * vmax);
+
         // map it a few times and keep the most balanced (fewer tries for long stretches, so it doesn't take ages)
         // (it hands the page back every few milliseconds so the editor never freezes, and stops trying once it has
         // spent about 20 seconds)
@@ -2261,7 +2809,7 @@ window.SSQEAutoMapper = (function () {
                 last = performance.now();
             };
             const trace = opts.trace ? [] : null;
-            const notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, yieldNow, trace }, jumpAt);
+            const notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, yieldNow, trace, bars: ctx.bars, slides, slideSpeed }, jumpAt);
             const score = badness(notes, jumpAt, vmax, fm, runOptions.flow);
             if (!best || score < best.score)
                 best = { notes, score, trace };
@@ -2272,6 +2820,7 @@ window.SSQEAutoMapper = (function () {
             opts.trace.push(...best.trace);
         best.notes.info = {
             bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady), times: times.length,
+            bars: ctx.bars ? ctx.bars.length : 0, repeats: ctx.bars ? ctx.bars.filter(b => b.proto >= 0).length : 0, barList: ctx.bars,
             sections: sections.map(s => ({ from: s.from, to: s.to, level: +s.level.toFixed(2), drop: s.drop, change: s.change, rate: s.rate && +s.rate.toFixed(1), nps: s.nps && +s.nps.toFixed(1) })),
         };
         return best.notes;

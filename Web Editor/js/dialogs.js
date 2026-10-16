@@ -743,9 +743,9 @@
             slider('Flow', 'autoMapFlow', 0, 100, 5, 70, pct, 'How smooth the cursor\'s path is kept: higher avoids sudden turns and speed changes');
             slider('Follow Learned Maps', 'autoMapFollow', 0, 100, 5, 75, pct, 'How closely the patterns and their rhythm stick to the maps it learned');
             slider('Jump Size', 'autoMapJump', 50, 200, 5, 100, pct, 'Bigger or smaller moves than the learned maps make');
-            choice('Patterns', 'autoMapPatterns', [['mixed', 'Like the learned maps'], ['streams', 'More streams (small moves)'], ['jumps', 'More jumps (big moves)']], 'mixed', 'What kind of patterns to favour');
+            choice('Patterns', 'autoMapPatterns', [['mixed', 'Like the learned maps'], ['streams', 'Stream map (small moves)'], ['jumps', 'Jump map (big moves)']], 'mixed', 'What kind of map: like the maps it learned, or a stream map or jump map like the example maps that come with it (and the learned maps like them)');
             slider('Drop Intensity', 'autoMapDrops', 0, 200, 10, 100, pct, 'How much denser and wider the intense parts and drops are than the rest');
-            slider('Variety', 'autoMapVariety', 0, 100, 5, 50, pct, 'Higher avoids repeating the same patterns; lower repeats what works');
+            slider('Variety', 'autoMapVariety', 0, 100, 5, 50, pct, 'Lower keeps to a plan: a part of the song that comes round again gets its pattern again (turned or mirrored); higher makes new patterns more often');
             // which kinds of sound get notes (any mix of them)
             controls.push(aLabel('Sync To', X, y, LW, 22));
             const SOURCES = [['kick', 'Kicks'], ['snare', 'Snares & claps'], ['hat', 'Hi-hats & cymbals'], ['melody', 'Melody & vocals'], ['bass', 'Bass']];
@@ -775,7 +775,7 @@
             choice('Fill Streams', 'autoMapFill', [['intense', 'In intense parts'], ['busy', 'Wherever the song is busy'], ['never', 'Never (only on sounds)']], 'intense', 'Whether streams are filled in between sounds where the song itself is busy');
             slider('Calm Parts', 'autoMapCalm', 0, 100, 5, 30, pct, 'How many notes calm parts (intros, breakdowns) get: 0% leaves them nearly empty');
             y += 6;
-            check('Quantum (notes off the 3x3 grid)', 'autoMapQuantum', false, 'Quantum jumps and slides between and around the grid cells (from quantum maps it learned, or made to fit the song), never grid patterns moved over');
+            check('Quantum (notes off the 3x3 grid)', 'autoMapQuantum', false, 'A quantum map: quantum jumps, and slides of notes so close together they play as one sweep, like the quantum example map (and quantum maps it learned); never grid patterns moved over');
             check('Follow this map\'s own patterns', 'autoMapUseMap', true, 'The notes already in the map are the patterns it prefers');
             check('Set the detected BPM when the map has none', 'autoMapSetBpm', true, 'Adds the song\'s BPM as a timing point so the beat lines match');
             y += 8;

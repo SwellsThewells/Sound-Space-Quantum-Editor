@@ -2,6 +2,25 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.8 - 10/16/2026 --
+
+Auto mapper:
+- maps are laid out like a plan: a part of the song that sounds the same as an earlier one (a loop coming round, a
+  chorus coming back) gets exactly the same rhythm, and mostly the same pattern again, turned or mirrored a different
+  way. The same sound never gets a pattern one time and a lone note the next. Parts that sound different, like a drop,
+  still get completely new patterns
+- comes with five example maps (just their notes), which it copies its patterns from:
+    jump maps:   Dream Flashback (AshFromKaaba), I will freak you up kid (AshFromKaaba)
+    stream maps: Older (WhiteCatte), Prom Night (Gloomywater175)
+    quantum:     Ayumi (Teft2oo)
+  MORE OPTIONS > Patterns: "Jump map" makes jumpstreams like the jump maps (knight and 2-cell jumps), "Stream map"
+  makes lines and circles like the stream maps, and Quantum makes quantum maps like Ayumi: quantum jumps, and slides
+  of notes so close together they play as one sweep, out to the edges
+- quantum notes can now go out to the edge of the quantum area (-0.85 to 2.85), like the editor allows
+- fixed the beat being placed between the drums on songs where the kick doesn't land on every beat (it heard
+  "I will freak you up kid" as triplets and put the notes off the beat)
+
+----------------------------------
    -- Plus 3.0.7 - 10/16/2026 --
 
 Auto mapper:
