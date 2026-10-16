@@ -1538,6 +1538,9 @@ window.SSQEAutoMapper = (function () {
         const firstPass = !firstCount.length;
         // each bar's notes, as times from the bar's start (for the bars that repeat it)
         const rel = [];
+        // (the notes that are slides in jump parts, and where they are in each bar: a bar's repeats slide the same)
+        const slideTimes = new Set(), slideRel = [];
+        ctx.slideTimes = slideTimes;
         // (and whether each bar is a stream or a jump phrase, in a jump map, and whether it was busy)
         const kindOf = [], busyOf = [], fullDivOf = [];
         inRange.forEach((b, j) => {
@@ -1750,6 +1753,12 @@ window.SSQEAutoMapper = (function () {
                         heard.set(ms, own.src);
                 }
                 rel[j] = copied.map(t => t - b.from);
+                if (slideRel[proto[j]]) {
+                    slideRel[j] = slideRel[proto[j]];
+                    for (const dt of slideRel[j])
+                        if (copied.includes(Math.round(b.from + dt)))
+                            slideTimes.add(Math.round(b.from + dt));
+                }
                 carry = Math.min(2, Math.max(-2, exact - copied.length));
                 if (firstPass)
                     firstCount[j] = copied.length;
@@ -2039,6 +2048,45 @@ window.SSQEAutoMapper = (function () {
                     }
                 }
                 picked.push(...fills);
+            }
+            // Slides in a mixed map's jump parts (the Streams / Jumps balance under 100%): where the music has a quick
+            // figure, three to five sounds at least twice as quick as the jumps (a fill, a roll, a quick run into a
+            // change), those sounds are notes too, and they're played as a slide: quick notes along the edge of the
+            // grid from where the jump lands (see place). One a bar at most, only where the sounds are there, so a bar
+            // and its repeats get the same slide.
+            if (!streamBar && jumpShare > 0 && jumpShare < 1 && !opts.quantum && !(opts.count > 0) && push.stage === 0) {
+                const top = topHere(family, beatLen);
+                let found = null;
+                for (const fine of family.filter(d => d >= 2 * div && d <= top && beatLen / d >= 40)) {
+                    const step = beatLen / fine;
+                    const on = new Map();
+                    for (const e of raw) {
+                        const g = heardOn(e.ms, fine);
+                        if (g.err <= tolerance(g.step) && e.strength >= 0.25 && ok(Math.round(g.at)))
+                            on.set(Math.round(g.at), Math.max(on.get(Math.round(g.at)) || 0, e.strength));
+                    }
+                    const ts = [...on.keys()].sort((p, q) => p - q);
+                    for (let a = 0; a < ts.length; a++) {
+                        let z = a;
+                        while (z + 1 < ts.length && z - a < 4 && Math.abs(ts[z + 1] - ts[z] - step) <= 3)
+                            z++;
+                        const run = ts.slice(a, z + 1);
+                        // (the longest, then the latest in the bar: fills come at the end)
+                        if (run.length >= 3 && (!found || run.length > found.length || (run.length === found.length && run[0] > found[0])))
+                            found = run;
+                    }
+                    if (found)
+                        break;
+                }
+                if (found) {
+                    for (const t of found)
+                        if (!picked.some(p => Math.abs(p - t) <= 3))
+                            picked.push(t);
+                    picked.sort((p, q) => p - q);
+                    for (const t of found)
+                        slideTimes.add(Math.round(t));
+                    slideRel[j] = found.map(t => Math.round(t) - b.from);
+                }
             }
             carry = Math.min(2, Math.max(-2, exact - picked.length));
             if (firstPass)
@@ -2690,6 +2738,8 @@ window.SSQEAutoMapper = (function () {
     const QUANTUM_WANT = 0.8;
     // (made-up quantum runs come after the learned maps' own quantum patterns, when those fit as well)
     const MADE_COST = 0.45;
+    // (how much a lap round the outside is wanted over a stream from the learned maps)
+    const RING_WANT = 0.5;
 
     // A learned run from e[i] on (turned or mirrored by SYM[k]), as an entry whose first note is `from`: the move
     // from there to e[i] is checked and costed like any other
@@ -2853,6 +2903,86 @@ window.SSQEAutoMapper = (function () {
     // 'reverse': round the outside, turning right back now and then (after 6 to 9 notes)
     // 'stairs':  a step one way, a step the other way, like stairs, turning back at the edges
     // A gap much longer than the run's others gets a bigger move (two cells), the way mappers space out emphasis.
+    // A stream round the outside of the grid, in full laps, as human stream maps spin (prom night goes round once or
+    // twice before anything else): on the way it was going, round and round, and it only changes on a strong sound
+    // (acc: how strong the sound at each of its notes is), and only after a lap: from the middle of an edge, through
+    // the middle to the other side, and on round from there, the other way (a figure of eight) or the same. So its
+    // turns are the song's, and it never turns straight back. A gap half again as long as the quick notes is a
+    // hop, two cells round instead of one.
+    const RING = [[0, 0], [1, 0], [2, 0], [2, 1], [2, 2], [1, 2], [0, 2], [0, 1]];
+    function ringRun(start, before, gaps, acc) {
+        const n = gaps.length + 1;
+        const x = new Float64Array(n), y = new Float64Array(n), t = new Float64Array(n);
+        for (let q = 1; q < n; q++)
+            t[q] = t[q - 1] + gaps[q - 1];
+        const at = (px, py) => RING.findIndex(([a, b]) => a === px && b === py);
+        let px = Math.min(2, Math.max(0, Math.round(start.x))), py = Math.min(2, Math.max(0, Math.round(start.y)));
+        x[0] = px;
+        y[0] = py;
+        const sorted = gaps.slice().sort((p, q) => p - q), quick = Math.max(20, sorted[Math.min(1, sorted.length - 1)] || 1);
+        const accs = acc ? Array.from(acc).slice(0, gaps.length) : [];
+        const mean = accs.length ? accs.reduce((p, q) => p + q, 0) / accs.length : 0;
+        const strong = q => accs.length && accs[q - 1] >= Math.max(0.45, 1.2 * mean);
+        // which way round: the way that carries on from the move before (never back onto it)
+        const inX = before ? px - before.x : 0, inY = before ? py - before.y : 0;
+        const pick = idx => {
+            let best = 1, bestDot = -Infinity;
+            for (const d of [1, -1]) {
+                const [nx, ny] = RING[(idx + d + 8) % 8];
+                const dot = (nx - px) * inX + (ny - py) * inY + Math.random() * 0.01;
+                if (dot > bestDot) {
+                    bestDot = dot;
+                    best = d;
+                }
+            }
+            return best;
+        };
+        let idx = at(px, py), dir = 1;
+        let q = 1;
+        if (idx < 0) {
+            // (from the middle: out to the middle of the edge it was heading for)
+            const ex = Math.abs(inX) >= Math.abs(inY) ? 1 + Math.sign(inX || 1) : 1, ey = Math.abs(inX) >= Math.abs(inY) ? 1 : 1 + Math.sign(inY || 1);
+            x[1] = ex;
+            y[1] = ey;
+            [px, py] = [ex, ey];
+            idx = at(px, py);
+            q = 2;
+            dir = Math.random() < 0.5 ? 1 : -1;
+        } else
+            dir = pick(idx);
+        let since = 0, cut = null;
+        for (; q < n; q++) {
+            const near = gaps.slice(Math.max(0, q - 5), Math.min(gaps.length, q + 3)).sort((p, r) => p - r);
+            const hop = gaps[q - 1] >= 1.6 * Math.max(20, near[0] || quick);
+            if (cut) {
+                // (through the middle and out the other side)
+                [px, py] = cut.shift();
+                if (!cut.length) {
+                    cut = null;
+                    idx = at(px, py);
+                    // (on round from there: the other way most of the time, a figure of eight)
+                    dir = Math.random() < 0.7 ? -dir : dir;
+                    since = 0;
+                }
+            } else if (!hop && since >= 7 && idx % 2 === 1 && (strong(q) || since >= 15)) {
+                // a change, on a strong sound: from the middle of an edge, into the middle...
+                const [ox, oy] = RING[(idx + 4) % 8];
+                [px, py] = [1, 1];
+                cut = [[ox, oy]];
+            } else {
+                idx = (idx + dir * (hop ? 2 : 1) + 8) % 8;
+                [px, py] = RING[idx];
+                since += hop ? 2 : 1;
+            }
+            x[q] = px;
+            y[q] = py;
+        }
+        return {
+            name: 'stream ring', x, y, t, n, quantum: false, made: true,
+            cleanUntil: new Int32Array(n).fill(n), wholeUntil: new Int32Array(n).fill(n),
+        };
+    }
+
     function streamRun(kind, start, before, gaps) {
         const n = gaps.length + 1;
         const x = new Float64Array(n), y = new Float64Array(n), t = new Float64Array(n);
@@ -3339,9 +3469,10 @@ window.SSQEAutoMapper = (function () {
                 const seq = opts.recentPts.concat(recent.slice([prev2, prev].filter(Boolean).length));
                 const tol = opts.quantum ? 0.3 : 1e-3;
                 const laps = lapCount(seq, opts.recentPts.length, tol) / used_len;
-                cost += (1 + 2 * variety) * Math.max(0, laps - LAPS_OK);
+                // (a stream on the grid may go round the outside a lap or two, as human stream maps spin)
+                cost += (1 + 2 * variety) * Math.max(0, laps - (opts.quantum ? LAPS_OK : 0.55));
                 // (and much more once it has been going round for a while: a loop or two is fine, ten aren't)
-                cost += 0.06 * Math.max(0, lapStreak(seq, tol) - 12);
+                cost += 0.06 * Math.max(0, lapStreak(seq, tol) - (opts.quantum ? 12 : 18));
                 // (quantum: a circle that drifts round and round, lap after lap, for seconds; human quantum maps go
                 // round one at most and then break out of it with a jump)
                 if (opts.quantum)
@@ -3449,7 +3580,9 @@ window.SSQEAutoMapper = (function () {
             if (opts.quantum)
                 cost -= QUANTUM_WANT * off / used_len - 1.2 * lattice / used_len - (e.made ? MADE_COST + e.extra + (opts.lastName === e.name ? 0.4 : 0) : 0);
             else if (e.made)
-                cost += (e.name === 'stream reverse' ? 0.8 : 0.15) + (opts.lastName === e.name ? 0.3 : 0);
+                // (laps round the outside are what a stream on the grid is wanted to do: one plan, turning with the
+                // song, rather than pieces of the learned maps one after another)
+                cost += e.name === 'stream ring' ? -RING_WANT : (e.name === 'stream reverse' ? 0.8 : 0.15) + (opts.lastName === e.name ? 0.3 : 0);
             // keeps to one map's design rather than hopping between maps; at a change in the music (a new section,
             // a drop bringing in something new) it does the opposite and starts a new pattern
             if (opts.lastEntry === e) {
@@ -3542,9 +3675,10 @@ window.SSQEAutoMapper = (function () {
             const g = gaps.slice(1).sort((p, q) => p - q);
             // (not where a jump map wants jumps: notes far enough apart to jump between aren't a stream)
             if (g[g.length >> 1] < Math.min(95, opts.patterns === 'jumps' ? opts.jumpGap || 95 : 95))
-                // (human streams never zigzag like stairs or turn right back at speed, so those shapes aren't offered)
-                for (const kind of ['snake', 'cross', 'snake', 'cross'])
-                    consider(streamRun(kind, prev, prev2, gaps), 0, 0, 0, 0);
+                // (human streams never zigzag like stairs or turn right back at speed, so those shapes aren't offered;
+                // laps round the outside the most, as human stream maps)
+                for (const kind of ['ring', 'ring', 'ring', 'ring', 'snake', 'cross'])
+                    consider(kind === 'ring' ? ringRun(prev, prev2, gaps, opts.acc) : streamRun(kind, prev, prev2, gaps), 0, 0, 0, 0);
         }
         // With the Quantum option: quantum parts of the learned maps, jumped into from here (quantum notes seldom
         // land exactly where a learned run starts), and quantum slides and jumps made for exactly this spot and rhythm
@@ -3950,6 +4084,35 @@ window.SSQEAutoMapper = (function () {
             return true;
         };
 
+        // Slides in a mixed map's jump parts (chooseTimes: a quick figure in the music): from where the jump lands,
+        // on along the edge of the grid, a cell a note, round the corners (top right down the right side and along
+        // the bottom, say), the way that carries on from the jump
+        const gridSlide = opts.gridSlide || null;
+        const placeGridSlide = () => {
+            let n = 0;
+            // (at most four notes on from the jump's: two figures in a row are two slides)
+            while (i + n < times.length && gridSlide[i + n] && n < 4)
+                n++;
+            if (!n || !prev)
+                return false;
+            const gaps = [];
+            for (let z = 0; z < n; z++)
+                gaps.push(times[i + z] - (z ? times[i + z - 1] : prev.ms));
+            const r = ringRun(prev, prev2, gaps, null);
+            if (opts.trace)
+                opts.trace.push({ ms: times[i], name: 'jump slide', len: n });
+            for (let z = 1; z <= n; z++) {
+                const note = { x: r.x[z], y: r.y[z], ms: times[i] };
+                out.push(note);
+                if (barOf[i] >= 0)
+                    placedIn[barOf[i]].push(out.length - 1);
+                prev2 = prev;
+                prev = note;
+                i++;
+            }
+            return true;
+        };
+
         const copyRun = r => {
             const f = SYM[r.k];
             for (let q = 0; q < r.len && i < times.length; q++, i++) {
@@ -4003,6 +4166,8 @@ window.SSQEAutoMapper = (function () {
             }
             if (isSlide[i] && placeSlide())
                 continue;
+            if (gridSlide && gridSlide[i] && placeGridSlide())
+                continue;
             const limit = bi < bounds.length ? bounds[bi] : Infinity;
             // (runs stop where a repeated bar starts)
             while (ci < copyStarts.length && copyStarts[ci] <= i)
@@ -4012,7 +4177,7 @@ window.SSQEAutoMapper = (function () {
             const L = 12 + Math.floor(Math.random() * 13);
             const gaps = [];
             for (let q = 0; q < L && i + q < times.length; q++) {
-                if (q > 0 && (times[i + q] >= limit || i + q >= nextCopy || isSlide[i + q]))
+                if (q > 0 && (times[i + q] >= limit || i + q >= nextCopy || isSlide[i + q] || (gridSlide && gridSlide[i + q])))
                     break;
                 const g = times[i + q] - (q === 0 ? (prev ? prev.ms : times[i] - 500) : times[i + q - 1]);
                 if (q > 2 && g > 4 * gaps[q - 1] && g > 600)
@@ -4587,6 +4752,9 @@ window.SSQEAutoMapper = (function () {
             for (let z = 1; z <= n && q + z < times.length; z++)
                 inSlide[q + z] = 1;
         const fastAt = localFast(times, inSlide);
+        // (the notes after the first of a slide in a jump part, see chooseTimes)
+        const gridSlide = !opts.quantum && ctx.slideTimes && ctx.slideTimes.size ? Uint8Array.from(times, (ms, q) =>
+            q > 0 && ctx.slideTimes.has(Math.round(ms)) && ctx.slideTimes.has(Math.round(times[q - 1])) ? 1 : 0) : null;
         // how strong the sound at each note is (the kick and snare most): bigger moves go on the stronger ones
         const accents = Float32Array.from(times, ms => {
             let m = 0;
@@ -4636,7 +4804,7 @@ window.SSQEAutoMapper = (function () {
                 last = performance.now();
             };
             const trace = opts.trace ? [] : null;
-            const notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, jumpRunOptions, jumpPart: ctx.jumpPart, yieldNow, trace, bars: ctx.bars, slides, slideSpeed, accents, levelAt, calmAt, sizeAt, fastAt, weakAt: opts.quantum ? null : weakAt }, jumpAt);
+            const notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, jumpRunOptions, jumpPart: ctx.jumpPart, yieldNow, trace, bars: ctx.bars, slides, slideSpeed, accents, levelAt, calmAt, sizeAt, fastAt, weakAt: opts.quantum ? null : weakAt, gridSlide }, jumpAt);
             const score = badness(notes, sizeAt, vmax, fm, runOptions.flow, !!opts.quantum, runOptions);
             if (!best || score < best.score)
                 best = { notes, score, trace };

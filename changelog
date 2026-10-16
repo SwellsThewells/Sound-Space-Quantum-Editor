@@ -2,6 +2,19 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.20 - 10/16/2026 --
+
+- Auto mapper, streams: full circles. A stream now goes round the outside of the grid in laps (a lap or two, as
+  human stream maps spin) instead of snaking through the middle with a turn every note or two, and it changes only on
+  a strong sound in the song: from the middle of an edge, through the middle to the other side and on round, usually
+  the other way (a figure of eight). Streams are one plan like this rather than bits of the learned maps stitched
+  together, which is what made them feel random
+- Auto mapper, mixed maps with Streams / Jumps under 100%: slides in the jump parts. Where the music has a quick
+  figure (three to five sounds at least twice as quick as the jumps: a fill, a roll, a quick run into a change),
+  those sounds are a slide: quick notes along the edge of the grid from where the jump lands, e.g. top right down the
+  right side and along the bottom. A bar and its repeats get the same slide. At 100% (a jump map) there are none
+
+----------------------------------
    -- Plus 3.0.19 - 10/16/2026 --
 
 - COLLABORATE (in the menu, next to SPECTATE): map together, live. It lists everyone logged in; invite someone and
