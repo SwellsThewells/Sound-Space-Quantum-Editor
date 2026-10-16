@@ -2,6 +2,16 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.19 - 10/16/2026 --
+
+- COLLABORATE (in the menu, next to SPECTATE): map together, live. It lists everyone logged in; invite someone and
+  they get a pop-up to accept. Then you choose the song on the create screen, it's sent to them, and you both map
+  the same map at the same time: notes added, moved and deleted, timing points, bookmarks and extra objects show up
+  for the other person straight away (about a twentieth of a second), and edits at the same moment don't overwrite
+  each other. In orange you see their mouse, where they are in the song (on the track and the timeline), what they
+  have selected and the notes they just placed. LEAVE (bottom of the editor) ends it; the map stays with both of you
+
+----------------------------------
    -- Plus 3.0.18 - 10/16/2026 --
 
 - Auto mapper, jump maps (and the jump parts of mixed maps): no more one long zigzag of the biggest jumps. The

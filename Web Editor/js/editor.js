@@ -16,6 +16,10 @@
     let GRID = { x: 810, y: 390, w: 300, h: 300 };
 
     const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+    // web only: the colour of whoever you're mapping with (collab.js), their selection, new notes and place in the song
+    const PEER = 'rgb(255,160,0)', PEER_A = a => `rgba(255,160,0,${a})`;
+    // (how long a note they just placed glows)
+    const PEER_FLASH = 900;
     const fmtInt = n => Math.trunc(n).toLocaleString('en-US');
 
     // GuiGrid.objectLookup - which special object a grid key places
@@ -1182,6 +1186,8 @@
             this.ui.update();
             this.win.process(frametime);
             this.win.render(ctx);
+            // (web only: drawn over the editor, e.g. collab.js's partner's mouse)
+            this.afterRender && this.afterRender(ctx, this.win.width, this.win.height);
         }
 
         // ------------------------------------------------------------ grid rendering
@@ -1395,6 +1401,11 @@
                 for (const d of drawn) {
                     if (d.note.selected)
                         this.roundedRect(d.x - 4, d.y - 4, d.size + 8, d.size + 8, null, this.color(6, d.progress), 2);
+                    if (d.note.peerSel)
+                        this.roundedRect(d.x - 7, d.y - 7, d.size + 14, d.size + 14, null, PEER_A(d.progress), 2);
+                    const flash = d.note.peerAt ? (performance.now() - d.note.peerAt) / PEER_FLASH : 1;
+                    if (flash < 1)
+                        this.roundedRect(d.x - 4 - 14 * flash, d.y - 4 - 14 * flash, d.size + 8 + 28 * flash, d.size + 8 + 28 * flash, null, PEER_A(1 - flash), 3);
                     if (this.hoveringXY === d.note)
                         this.roundedRect(d.x - 4, d.y - 4, d.size + 8, d.size + 8, null, this.color(5, 0.25), 2);
                 }
@@ -1682,6 +1693,12 @@
                         else
                             this.strokeBox(x - 4, cellGap - 4, noteSize + 8, noteSize + 8, this.color(6));
                     }
+                    if (note.peerSel)
+                        this.strokeBox(x - 7, cellGap - 7, noteSize + 14, noteSize + 14, PEER);
+                    if (note.peerAt && performance.now() - note.peerAt < PEER_FLASH) {
+                        const f = (performance.now() - note.peerAt) / PEER_FLASH;
+                        this.strokeBox(x - 4 - 8 * f, cellGap - 4 - 8 * f, noteSize + 8 + 16 * f, noteSize + 8 + 16 * f, PEER_A(1 - f));
+                    }
 
                     if (note.ms <= currentTime - sfxOffset) {
                         toPlay = note;
@@ -1872,6 +1889,14 @@
             this.line(msX(0), 0, msX(0), H, this.color(1));
             this.line(endPos, 0, endPos, H, this.color(8));
             this.line(cursorPos, 0, cursorPos, H, this.color(4, 0.75));
+            // (where whoever you're mapping with is in the song)
+            for (const p of this.peers || []) {
+                const px = msX(p.time);
+                if (px >= 0 && px <= W) {
+                    this.line(px, 0, px, H, PEER);
+                    this.text(p.name, px + 4, 2, 16, PEER);
+                }
+            }
             if (this.selecting) {
                 this.line(msX(this.selectMsStart), 0, msX(this.selectMsStart), H, this.color(5));
                 this.line(msX(this.selectMsEnd), 0, msX(this.selectMsEnd), H, this.color(5));
@@ -2098,6 +2123,17 @@
             ticks(map.timingPoints, y - 10, y - 6, 2 * widthDiff);
             ticks(map.vfxObjects.items, y + 9, y + 7, 2 * widthDiff);
             ticks(map.specialObjects.items, y + 9, y + 7, 2 * widthDiff);
+            // (whoever you're mapping with)
+            for (const p of e.peers || []) {
+                const px = line.x + line.w * Math.min(1, Math.max(0, p.time / max));
+                ctx.fillStyle = PEER;
+                ctx.beginPath();
+                ctx.moveTo(px, y - 4);
+                ctx.lineTo(px - 6, y - 14);
+                ctx.lineTo(px + 6, y - 14);
+                ctx.closePath();
+                ctx.fill();
+            }
         }
 
         drawText(ctx) {

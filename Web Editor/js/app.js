@@ -1148,6 +1148,7 @@
         window.ssqeApp = app;
         // web only: accounts and spectating (online.js)
         window.SSQEOnline && SSQEOnline.attach(app);
+        window.SSQECollab && SSQECollab.attach(app);
         app.init();
     });
 })();

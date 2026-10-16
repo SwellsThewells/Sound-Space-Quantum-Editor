@@ -197,6 +197,7 @@ window.SSQEOnline = (function () {
     }
 
     function tick() {
+        onlineTick();
         const ed = app && app.editor;
         if (!shareAllowed() || !ed || !configured()) {
             stopSharing();
@@ -294,6 +295,91 @@ window.SSQEOnline = (function () {
         watching = null;
     }
 
+    // ------------------------------------------------------------ everyone online, and invites (collab.js)
+
+    // Everyone logged in is on a second presence list (whether or not they're mapping), and listens on their own
+    // inbox channel for invites and answers to them.
+    let everyone = null, everyoneReady = false, meOnline = null, inbox = null, inboxFor = '', busy = false;
+    const people = new Map(); // id -> { id, name, busy }
+    const inboxHandlers = [];
+    function onlineTick() {
+        if (!sb())
+            return;
+        if (!user) {
+            if (meOnline && everyone) {
+                everyone.untrack();
+                meOnline = null;
+            }
+            if (inbox) {
+                client.removeChannel(inbox);
+                inbox = null;
+                inboxFor = '';
+            }
+            return;
+        }
+        if (!everyone) {
+            everyone = client.channel('ssqe-online', { config: { presence: { key: Math.random().toString(36).slice(2) } } });
+            everyone.on('presence', { event: 'sync' }, () => {
+                people.clear();
+                for (const metas of Object.values(everyone.presenceState()))
+                    for (const m of metas)
+                        if (m && m.id && m.name)
+                            people.set(m.id, { id: m.id, name: m.name, busy: !!m.busy });
+            });
+            everyone.subscribe(status => {
+                everyoneReady = status === 'SUBSCRIBED';
+            });
+        }
+        if (everyoneReady && (!meOnline || meOnline.id !== user.id || meOnline.busy !== busy)) {
+            meOnline = { id: user.id, name: nameOf(user), busy };
+            everyone.track(meOnline);
+        }
+        if (inboxFor !== user.id) {
+            if (inbox)
+                client.removeChannel(inbox);
+            inboxFor = user.id;
+            inbox = client.channel(`ssqe-inbox-${user.id}`, { config: { broadcast: { self: false } } });
+            inbox.on('broadcast', { event: 'msg' }, ({ payload }) => {
+                for (const fn of inboxHandlers)
+                    try {
+                        fn(payload);
+                    } catch (e) {
+                        console.warn(e);
+                    }
+            });
+            inbox.subscribe(() => { });
+        }
+    }
+    const onlineUsers = () => [...people.values()].filter(u => !user || u.id !== user.id).sort((a, b) => a.name.localeCompare(b.name));
+    const onInbox = fn => inboxHandlers.push(fn);
+    // a message to someone's inbox (with who it's from)
+    function sendTo(id, payload) {
+        return new Promise(resolve => {
+            if (!sb() || !user)
+                return resolve(false);
+            const ch = client.channel(`ssqe-inbox-${id}`, { config: { broadcast: { self: false } } });
+            let done = false;
+            const finish = ok => {
+                if (done)
+                    return;
+                done = true;
+                setTimeout(() => client.removeChannel(ch), 2000);
+                resolve(ok);
+            };
+            ch.subscribe(status => {
+                if (status === 'SUBSCRIBED') {
+                    ch.send({ type: 'broadcast', event: 'msg', payload: { ...payload, from: user.id, name: nameOf(user) } });
+                    finish(true);
+                } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT')
+                    finish(false);
+            });
+            setTimeout(() => finish(false), 10000);
+        });
+    }
+    // a channel for two people mapping together
+    const room = id => sb() ? client.channel(`ssqe-collab-${id}`, { config: { broadcast: { self: false } } }) : null;
+    const closeRoom = ch => ch && client && client.removeChannel(ch);
+
     // ------------------------------------------------------------ start
 
     function attach(theApp) {
@@ -319,5 +405,6 @@ window.SSQEOnline = (function () {
         attach, configured, signUp, logIn, logOut, joinLive, liveMappers, watch, unwatch,
         username: () => nameOf(user), loggedIn: () => !!user, sharing: () => !!(tracked && mineReady),
         watched: () => Date.now() < watchedUntil, DELAY,
+        onlineUsers, onInbox, sendTo, room, closeRoom, setBusy: b => busy = !!b, userId: () => user && user.id,
     };
 })();

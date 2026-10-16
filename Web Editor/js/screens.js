@@ -298,7 +298,8 @@
             // web only: the map player, opened on top of the editor; stats (credits are in Settings)
             button(1190, 560, 600, 85, 'MAP PLAYER', 48, () => app.openPlayer()),
             button(1190, 655, 600, 85, 'STATS', 48, () => app.showScreen('stats')),
-            button(1190, 750, 600, 85, 'SPECTATE', 48, () => app.showScreen('spectate')),
+            button(1190, 750, 295, 85, 'SPECTATE', 40, () => app.showScreen('spectate')),
+            button(1495, 750, 295, 85, 'COLLABORATE', 40, () => app.showScreen('collaborate')),
             accountButton,
             autosaved, lastMap, navLeft, navRight,
             ...selects, ...closes,
@@ -414,15 +415,24 @@
                         map.soundId = id;
                         window.SSQEStats && SSQEStats.add('mapsCreated');
                         await app.openNewMap(map, null);
+                        // (mapping with someone: the song goes to them too, see collab.js)
+                        window.SSQECollab && SSQECollab.songChosen(audioFile, id);
                     },
                 }),
                 new G.Button(690, 920, 540, 75, { text: 'BACK TO MENU', textSize: 48, onLeftClick: () => app.showMenu() }),
             ]),
             gameNavs,
         ];
+        // (mapping with someone: they wait for the song chosen here)
+        const collabNote = new G.Label(360, 200, 1200, 60, { text: '', textSize: 40 });
+        controls.push(collabNote);
 
         const screen = new Screen(app, controls);
-        screen.update = () => panels.forEach((p, i) => p.visible = i === active);
+        screen.update = () => {
+            panels.forEach((p, i) => p.visible = i === active);
+            const peer = window.SSQECollab && SSQECollab.choosingFor();
+            collabNote.text = peer ? `MAPPING WITH ${peer.toUpperCase()}: CHOOSE THE SONG, THEN CREATE MAP` : '';
+        };
         return screen;
     }
 
@@ -955,5 +965,75 @@
         return screen;
     }
 
-    SSQE.Screens = { Screen, Picture, menu, create, settings, keybinds, stats, credits, spectate, wrapText };
+    // ---------------------------------------------------------------- collaborate (web only, see collab.js)
+
+    // everyone online (logged in), to invite one of them to map together
+    function collaborate(app) {
+        const O = window.SSQEOnline, C = window.SSQECollab;
+        const rows = [];
+        for (let i = 0; i < 12; i++) {
+            const name = new G.Label(580, 238 + i * 62, 480, 50, { text: '', textSize: 30, centerMode: None });
+            const inv = new G.Button(1090, 232 + i * 62, 240, 54, {
+                text: 'INVITE', textSize: 30, onLeftClick: () => {
+                    const u = rows[i].user;
+                    if (u && C)
+                        C.invite(u);
+                },
+            });
+            rows.push({ name, inv, user: null });
+        }
+        const info = new G.Label(560, 400, 800, 300, { text: '', textSize: 34 });
+        const login = new G.Button(760, 700, 400, 70, { text: 'LOG IN', textSize: 40, onLeftClick: () => app.dialogs.account() });
+        const controls = [
+            background(),
+            new Picture(35, 4, 160, 130, { name: 'logo', align: 'left' }),
+            new G.Label(215, 22, 900, 100, { text: 'COLLABORATE', textSize: 96, font: 'square', centerMode: None }),
+            new G.Label(560, 160, 800, 50, { text: 'ONLINE NOW - INVITE SOMEONE TO MAP WITH YOU', textSize: 34 }),
+            new G.Square(530, 215, 860, 770, { color: [0, 0, 0, 40] }),
+            info, login, ...rows.flatMap(r => [r.name, r.inv]),
+            new G.Label(480, 990, 800, 40, { text: 'When they accept, you pick the song and you both map it at the same time.', textSize: 22 }),
+            new G.Button(1300, 990, 560, 70, { text: 'BACK TO MENU', textSize: 44, onLeftClick: () => app.showMenu() }),
+        ];
+        const screen = new Screen(app, controls);
+        screen.update = () => {
+            const ok = O && O.configured() && C;
+            const inn = ok && O.loggedIn();
+            login.visible = !!ok && !inn;
+            const list = inn ? O.onlineUsers() : [];
+            rows.forEach((r, i) => {
+                const u = list[i];
+                r.user = u || null;
+                r.name.visible = r.inv.visible = !!u;
+                if (u) {
+                    r.name.text = `${u.name}${u.busy ? '  (mapping with someone)' : ''}`.slice(0, 40);
+                    const st = C.inviteState(u.id);
+                    r.inv.text = st === 'sent' ? 'INVITED...' : st === 'declined' ? 'DECLINED' : 'INVITE';
+                }
+            });
+            info.text = !ok ? 'Collaborating isn\'t set up\nin this version yet.'
+                : !inn ? 'Log in to map with other people.\n(Just a username and a password.)'
+                    : list.length ? '' : 'Nobody else is online right now.';
+        };
+        return screen;
+    }
+
+    // a guest, waiting for the host to pick the song and for it to arrive
+    function collabwait(app) {
+        const C = window.SSQECollab;
+        const status = new G.Label(360, 420, 1200, 200, { text: '', textSize: 44 });
+        const controls = [
+            background(),
+            new Picture(35, 4, 160, 130, { name: 'logo', align: 'left' }),
+            new G.Label(215, 22, 900, 100, { text: 'COLLABORATE', textSize: 96, font: 'square', centerMode: None }),
+            status,
+            new G.Button(710, 760, 500, 80, { text: 'LEAVE', textSize: 44, onLeftClick: () => C && C.leave() }),
+        ];
+        const screen = new Screen(app, controls);
+        screen.update = () => {
+            status.text = C ? C.status() : '';
+        };
+        return screen;
+    }
+
+    SSQE.Screens = { Screen, Picture, menu, create, settings, keybinds, stats, credits, spectate, collaborate, collabwait, wrapText };
 })();
