@@ -8,11 +8,11 @@ const { spawn } = require('child_process');
 const { Readable } = require('stream');
 
 const NAME = 'Sound Space Quantum Editor Plus';
-const REPO = 'iloverhythia/Sound-Space-Quantum-Editor';
+const REPO = 'iloverhythia/Sound-Space-Quantum-Editor-Plus';
 // Discord: the application whose name Discord shows, and the picture for the presence (a link, so it can be changed
 // without uploading anything to Discord)
 const DISCORD_CLIENT_ID = '1067849747710345346';
-const DISCORD_IMAGE = 'https://iloverhythia.github.io/Sound-Space-Quantum-Editor/discord.png';
+const DISCORD_IMAGE = 'https://iloverhythia.github.io/Sound-Space-Quantum-Editor-Plus/discord.png';
 
 // the web editor, map player and changelog: next to this folder while developing, in resources/app when installed
 const ROOT = app.isPackaged ? path.join(process.resourcesPath, 'app') : path.join(__dirname, '..');

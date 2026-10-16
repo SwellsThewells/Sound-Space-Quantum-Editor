@@ -6,7 +6,7 @@
   "main": "main.js",
   "author": "Sound Space Quantum Editor Plus contributors",
   "license": "MIT",
-  "repository": "github:iloverhythia/Sound-Space-Quantum-Editor",
+  "repository": "github:iloverhythia/Sound-Space-Quantum-Editor-Plus",
   "private": true,
   "scripts": {
     "start": "electron .",

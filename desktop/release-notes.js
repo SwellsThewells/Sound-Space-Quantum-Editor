@@ -15,4 +15,4 @@ console.log(`
 After that, the app updates itself when a new version comes out.
 
 Windows may warn that the app is from an unknown publisher (it isn't code-signed): choose *More info* > *Run anyway*.
-It also runs in the browser: https://iloverhythia.github.io/Sound-Space-Quantum-Editor/`);
+It also runs in the browser: https://iloverhythia.github.io/Sound-Space-Quantum-Editor-Plus/`);
