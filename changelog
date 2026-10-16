@@ -2,6 +2,13 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.18 - 10/16/2026 --
+
+- Auto mapper, jump maps (and the jump parts of mixed maps): no more one long zigzag of the biggest jumps. The
+  weaker beats now and then get a short jump, a cell or across a corner, with the big jumps on the strong sounds,
+  as human jump maps do; still almost all jumps, never a row of short ones that turns into a slow stream
+
+----------------------------------
    -- Plus 3.0.17 - 10/16/2026 --
 
 - Auto mapper: a set number of notes in a quantum map now comes out exact (it could come out a few dozen short)

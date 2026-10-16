@@ -3073,7 +3073,7 @@ window.SSQEAutoMapper = (function () {
         return null;
     }
 
-    function moveFor(size, gap, opts, fast = 0, prevGap = 0, nextGap = 0) {
+    function moveFor(size, gap, opts, fast = 0, prevGap = 0, nextGap = 0, weak = 0) {
         const g = opts.jumpGap || 100;
         // (in a mixed map, notes closer than jumpGap too: a run of 1/8 notes next to 1/16 bursts isn't a chain of
         // jumps, only its first note is)
@@ -3094,6 +3094,9 @@ window.SSQEAutoMapper = (function () {
         const move = Math.min(want, reach(gap, fast, opts));
         // (on the grid, a jump shrunk by a calm part or the difficulty's speed is still a jump: across a corner, or
         // two cells where there's time, not a one-cell step)
+        // (a jump part's weaker beat: a short jump, a cell, or across a corner)
+        if (weak && floor >= 2 && !opts.quantum)
+            return Math.min(move, weak === 2 ? 1 : 1.41);
         if (!opts.quantum && floor >= 2 && move >= 1.2 && move < 2)
             return move >= 1.85 ? 2 : 1.41;
         return move;
@@ -3139,7 +3142,8 @@ window.SSQEAutoMapper = (function () {
                     return;
             }
             let cost = 0, used_len = 0, dist = 0, spins = 0, spikes = 0, logSum = 0, rough = 0, roughN = 0, off = 0, sized = 0, wanted = 0, lattice = 0;
-            let scribble = 0, ball = 0, under = 0, nearRun = 0, kinks = 0, turnA = 0, turnB = 0;
+            let scribble = 0, ball = 0, under = 0, nearRun = 0, kinks = 0, turnA = 0, turnB = 0, bigOnWeak = 0, shortRow = 0;
+            let lastShort = prev && prev2 && Math.hypot(prev.x - prev2.x, prev.y - prev2.y) < 1.5 ? 1 : 0;
             const recent = [prev2, prev].filter(Boolean).map(p => [p.x, p.y]);
             let lastGap = prev && prev2 ? prev.ms - prev2.ms : 0;
             for (let q = 0; q < len; q++) {
@@ -3268,8 +3272,18 @@ window.SSQEAutoMapper = (function () {
                 // shorter gap a smaller one, so the cursor keeps about the same speed through rhythm changes; and
                 // notes far enough apart in time are jumps across the grid, as in every human map, see moveFor)
                 const want = moveFor(J * Math.min(2.5, Math.max(0.5, Math.pow(gg / gm, opts.beta ?? 0.8))), gg, opts, opts.fast ? opts.fast[q] : 0,
-                    q ? gaps[q - 1] : prev && prev2 ? prev.ms - prev2.ms : 0, q + 1 < gaps.length ? gaps[q + 1] : 0);
+                    q ? gaps[q - 1] : prev && prev2 ? prev.ms - prev2.ms : 0, q + 1 < gaps.length ? gaps[q + 1] : 0,
+                    opts.weak && opts.patterns === 'jumps' && !opts.quantum ? opts.weak[q] : 0);
                 sized += Math.abs(Math.log((move + 0.15) / (want + 0.15)));
+                // (a big jump on a jump part's weak beat, where a short one is wanted: the big ones belong on the strong)
+                if (want < 1.5 && move >= 1.9 && opts.weak && opts.weak[q] && opts.patterns === 'jumps')
+                    bigOnWeak++;
+                // (and short ones a couple at a time, between big ones: a long row of them is a slow stream, not jumps)
+                if (opts.patterns === 'jumps' && !opts.quantum && gg >= (opts.jumpGap || 100)) {
+                    lastShort = move < 1.5 ? lastShort + 1 : 0;
+                    if (lastShort >= 3)
+                        shortRow++;
+                }
                 wanted += want;
                 // (a step where a jump is wanted: a steady run of notes far enough apart to jump between, crawled a
                 // cell at a time, is what makes auto maps feel too smooth)
@@ -3354,6 +3368,7 @@ window.SSQEAutoMapper = (function () {
                 cost += 2.4 * flow * Math.max(0, rough / roughN - model.change * (1.2 - 0.45 * flow));
             // steady difficulty: moves about as big as wanted here, without sudden far jumps
             // (much more so when Jump Size or Patterns ask for bigger or smaller moves than the maps make)
+            cost += 1.5 * bigOnWeak / used_len + 1.5 * shortRow / used_len;
             cost += (opts.sizeWeight || 1.5) * (0.5 * Math.abs(Math.log((dist / used_len + 0.15) / (wanted / used_len + 0.15))) + 0.5 * sized / used_len)
                 + 1.5 * spikes / used_len;
             // flow: carries on the way the map it comes from did before this point...
@@ -4019,6 +4034,7 @@ window.SSQEAutoMapper = (function () {
                 recentPts: out.slice(-24).map(nt => [nt.x, nt.y]), recentNotes: out.slice(-4),
                 acc: opts.accents ? opts.accents.subarray(i, i + gaps.length) : null,
                 fast: opts.fastAt ? opts.fastAt.subarray(i, i + gaps.length) : null,
+                weak: opts.weakAt ? opts.weakAt.subarray(i, i + gaps.length) : null,
             };
             // nothing carries on from here: anything that does, then a fresh start (still a playable move away)
             let run = findRun(lib, gaps, prev, prev2, ropts, used)
@@ -4571,8 +4587,6 @@ window.SSQEAutoMapper = (function () {
             for (let z = 1; z <= n && q + z < times.length; z++)
                 inSlide[q + z] = 1;
         const fastAt = localFast(times, inSlide);
-        const sizeAt = (i, gap) => moveFor(jumpAt(times[i]), gap, { ...(ctx.jumpPart && ctx.jumpPart(times[i]) ? jumpRunOptions : runOptions), comfort: runOptions.comfort * levelAt(times[i]), calm: calmAt(times[i]) }, fastAt[i],
-            i >= 2 ? times[i - 1] - times[i - 2] : 0, i + 1 < times.length ? times[i + 1] - times[i] : 0);
         // how strong the sound at each note is (the kick and snare most): bigger moves go on the stronger ones
         const accents = Float32Array.from(times, ms => {
             let m = 0;
@@ -4581,6 +4595,28 @@ window.SSQEAutoMapper = (function () {
             return Math.min(1.5, m);
         });
 
+        // In jump parts (jump maps, and a mixed map's jump parts) the weaker beats are short jumps, a cell or across
+        // a corner, and the big ones go on the stronger sounds, as human jump maps do (about half their jumps are
+        // short): otherwise every jump is two cells and a jump map is one long zigzag. Weaker: a note's sound next to
+        // the notes around it.
+        // (also where the beats are all about as strong: the weakest third of the notes around it, if a little weaker
+        // than they are on average)
+        const weakAt = Uint8Array.from(times, (ms, i) => {
+            let sum = 0, cnt = 0, below = 0;
+            for (let z = Math.max(0, i - 8); z <= Math.min(times.length - 1, i + 8); z++, cnt++) {
+                sum += accents[z];
+                if (accents[z] < accents[i])
+                    below++;
+            }
+            const rel = accents[i] / Math.max(1e-3, sum / cnt);
+            return rel < 0.7 ? 2 : rel < 0.92 || (below < cnt * 0.34 && rel < 0.99) ? 1 : 0;
+        });
+        const sizeAt = (i, gap) => {
+            const jp = ctx.jumpPart && ctx.jumpPart(times[i]);
+            const o = jp ? jumpRunOptions : runOptions;
+            return moveFor(jumpAt(times[i]), gap, { ...o, comfort: runOptions.comfort * levelAt(times[i]), calm: calmAt(times[i]) }, fastAt[i],
+                i >= 2 ? times[i - 1] - times[i - 2] : 0, i + 1 < times.length ? times[i + 1] - times[i] : 0, !opts.quantum && o.patterns === 'jumps' ? weakAt[i] : 0);
+        };
         // map it a few times and keep the most balanced (fewer tries for long stretches, so it doesn't take ages)
         // (it hands the page back every few milliseconds so the editor never freezes, and stops trying once it has
         // spent about 20 seconds)
@@ -4600,7 +4636,7 @@ window.SSQEAutoMapper = (function () {
                 last = performance.now();
             };
             const trace = opts.trace ? [] : null;
-            const notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, jumpRunOptions, jumpPart: ctx.jumpPart, yieldNow, trace, bars: ctx.bars, slides, slideSpeed, accents, levelAt, calmAt, sizeAt, fastAt }, jumpAt);
+            const notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, jumpRunOptions, jumpPart: ctx.jumpPart, yieldNow, trace, bars: ctx.bars, slides, slideSpeed, accents, levelAt, calmAt, sizeAt, fastAt, weakAt: opts.quantum ? null : weakAt }, jumpAt);
             const score = badness(notes, sizeAt, vmax, fm, runOptions.flow, !!opts.quantum, runOptions);
             if (!best || score < best.score)
                 best = { notes, score, trace };
