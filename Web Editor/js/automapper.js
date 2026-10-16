@@ -4140,7 +4140,7 @@ window.SSQEAutoMapper = (function () {
     // Resolves to the notes, with .info = { bpm, offsetMs, steady (when the BPM was detected), sections }.
     // The star rating a map at each difficulty usually comes out at (1 to 10; Rhythia's SR, see starrating.js), for the
     // first guess at the difficulty a star rating asks for
-    const STARS_AT = [0, 1.2, 1.7, 2.3, 2.9, 3.6, 4.3, 5.1, 6.0, 7.0, 7.9];
+    const STARS_AT = [0, 0.9, 1.2, 1.5, 2.0, 2.5, 3.5, 4.6, 6.3, 7.5, 8.3];
     const difficultyFor = stars => {
         if (stars <= STARS_AT[1])
             return Math.max(0.4, stars / STARS_AT[1]);
