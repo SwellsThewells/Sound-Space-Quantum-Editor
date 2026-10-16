@@ -14,8 +14,8 @@
 // the song's audio stays with the mapper.
 window.SSQEOnline = (function () {
     // the Supabase project: its URL and public (anon) key, which are meant to be in apps
-    const SUPABASE_URL = '';
-    const SUPABASE_KEY = '';
+    const SUPABASE_URL = 'https://areubmqbmfxveqzzuadn.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_z9_WtnWtQPNjt5blIHeVSg_HI4nekTV';
     const DOMAIN = 'users.ssqeplus.app';
     const DELAY = 5000;
     const SEND_EVERY = 500;
