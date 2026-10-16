@@ -31,6 +31,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "update.js",
       "package.json",
       "build/icon.png",
       "build/icon.ico",

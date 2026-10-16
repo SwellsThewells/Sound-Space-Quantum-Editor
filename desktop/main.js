@@ -6,6 +6,18 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { Readable } = require('stream');
+const update = require('./update');
+
+// While updating, this is the new version's .exe in the download, started to put its files in place (update.js): it
+// opens no window and closes when it's done
+const finishJob = process.argv.find(a => a.startsWith(update.FLAG));
+if (finishJob) {
+    const job = finishJob.slice(update.FLAG.length);
+    app.setPath('userData', path.join(path.dirname(job), 'helper-data'));
+    app.disableHardwareAcceleration();
+    update.finish(app, job);
+    return;
+}
 
 const NAME = 'Sound Space Quantum Editor Plus';
 const REPO = 'iloverhythia/Sound-Space-Quantum-Editor-Plus';
@@ -175,13 +187,15 @@ function newer(a, b) {
     return false;
 }
 
-// Auto update (Windows): the new release's zip is downloaded, the editor saves what it has, the app closes, and a
-// little PowerShell script waits until every copy of it has gone, puts the new files over the old ones and starts it
-// again. Settings and maps are kept (they live in the user's app data, not next to the .exe). How it went is written
-// to update-result.json in the app data and shown on the next start. Where the app's folder can't be written to, the
-// download page opens instead.
+// Auto update (Windows): the new release's zip is downloaded and unpacked, the new version's .exe from it is started
+// to finish the update, the editor saves what it has and the app closes. The new .exe waits until it has, copies the
+// new files over the old ones and starts the app again (update.js). Settings and maps are kept (they live in the
+// user's app data, not next to the .exe). How it went is written to update-result.json in the app data and shown on
+// the next start, and every step to update-log.txt. Where the app's folder can't be written to, the download page
+// opens instead.
 const resultFile = () => path.join(app.getPath('userData'), 'update-result.json');
-let updating = false;
+const logFile = () => path.join(app.getPath('userData'), 'update-log.txt');
+let updating = false, updateDir = null;
 
 async function latestRelease() {
     const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
@@ -233,6 +247,7 @@ async function checkForUpdate(manual = false) {
     } catch (e) {
         updating = false;
         progress(null);
+        update.logger(logFile())('FAILED:', e.message);
         const again = await dialog.showMessageBox(win, {
             type: 'error', title: NAME, message: `The update couldn't be installed: ${e.message}`,
             buttons: ['Open Download Page', 'Close'], defaultId: 0, cancelId: 1,
@@ -244,6 +259,8 @@ async function checkForUpdate(manual = false) {
 
 // what the last update did, told once on the next start
 async function reportUpdate() {
+    if (app.isPackaged)
+        update.cleanUp(app.getPath('temp'), () => updateDir);
     let result;
     try {
         result = JSON.parse(fs.readFileSync(resultFile(), 'utf8').replace(/^﻿/, ''));
@@ -259,7 +276,7 @@ async function reportUpdate() {
     const { response } = await dialog.showMessageBox(win, {
         type: 'error', title: NAME,
         message: `The update to ${result.version || 'the new version'} didn't finish.`,
-        detail: `${result.error || `The app is still ${app.getVersion()}.`}\n\nYou can download the new version and unzip it over this one.`,
+        detail: `${result.error || `The app is still ${app.getVersion()}.`}\n\nYou can download the new version and unzip it over this one. (What happened is in ${logFile()})`,
         buttons: ['Open Download Page', 'Close'], defaultId: 0, cancelId: 1,
     });
     if (response === 0)
@@ -285,48 +302,10 @@ function progress(text, fraction = -1) {
     win.webContents.send('ssqe-update-progress', text);
 }
 
-// The PowerShell script that swaps the files. Paths are single-quoted ('' inside), and the file gets a byte order mark
-// so Windows PowerShell reads paths with accents in them right.
-function updateScript({ zip, files, installDir, exe, result, version }) {
-    const q = p => `'${String(p).replace(/'/g, "''")}'`;
-    const name = path.basename(exe, path.extname(exe));
-    return '﻿' + [
-        '$ErrorActionPreference = "Stop"',
-        `$result = ${q(result)}`,
-        `$version = ${q(version)}`,
-        'function Save($ok, $err) {',
-        '    $o = [ordered]@{ ok = $ok; version = $version; error = $err }',
-        '    ($o | ConvertTo-Json -Compress) | Out-File -FilePath $result -Encoding utf8',
-        '}',
-        'try {',
-        // every copy of the app (the window and its helper processes) has to be gone before its files can be replaced
-        '    $deadline = (Get-Date).AddSeconds(60)',
-        `    while ((Get-Process -Name ${q(name)} -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) { Start-Sleep -Milliseconds 300 }`,
-        `    if (Get-Process -Name ${q(name)} -ErrorAction SilentlyContinue) { throw "the app didn't close" }`,
-        `    if (Test-Path -LiteralPath ${q(files)}) { Remove-Item -LiteralPath ${q(files)} -Recurse -Force }`,
-        `    New-Item -ItemType Directory -Force -Path ${q(files)} | Out-Null`,
-        // Windows' own tar unpacks zips quickly; Expand-Archive if it isn't there
-        '    $unpacked = $false',
-        '    $tar = if ($env:SystemRoot) { Join-Path $env:SystemRoot "System32\\tar.exe" } else { "" }',
-        `    if ($tar -and (Test-Path -LiteralPath $tar)) { try { & $tar -xf ${q(zip)} -C ${q(files)}; $unpacked = ($LASTEXITCODE -eq 0) } catch { } }`,
-        `    if (-not $unpacked) { Expand-Archive -LiteralPath ${q(zip)} -DestinationPath ${q(files)} -Force }`,
-        `    if (-not (Test-Path -LiteralPath (Join-Path ${q(files)} ${q(path.basename(exe))}))) { throw "the update's zip doesn't have the app in it" }`,
-        // the old app's files can stay locked for a moment after it closes
-        '    for ($i = 0; $i -lt 15; $i++) {',
-        `        try { Copy-Item -Path (Join-Path ${q(files)} '*') -Destination ${q(installDir)} -Recurse -Force; break }`,
-        '        catch { if ($i -eq 14) { throw }; Start-Sleep -Seconds 1 }',
-        '    }',
-        '    Save $true $null',
-        '} catch {',
-        '    Save $false ($_.Exception.Message)',
-        '}',
-        `Start-Process -FilePath ${q(exe)}`,
-    ].join('\r\n');
-}
-
 async function installUpdate(asset, installDir, version) {
-    const dir = path.join(app.getPath('temp'), 'ssqe-plus-update');
-    fs.rmSync(dir, { recursive: true, force: true });
+    const log = update.logger(logFile());
+    log('updating', app.getVersion(), 'to', version, 'in', installDir);
+    const dir = updateDir = path.join(app.getPath('temp'), `ssqe-plus-update-${Date.now()}`);
     fs.mkdirSync(dir, { recursive: true });
     const zip = path.join(dir, 'update.zip');
 
@@ -350,22 +329,28 @@ async function installUpdate(asset, installDir, version) {
     await new Promise((resolve, reject) => out.end(err => err ? reject(err) : resolve()));
     if (total && done < total)
         throw new Error('the download was cut off');
+    log('downloaded', done, 'bytes');
+
+    const files = path.join(dir, 'files');
+    shown = -1;
+    await update.unzip(zip, files, f => {
+        const pct = Math.floor(f * 100);
+        if (pct !== shown) {
+            shown = pct;
+            progress(`UNPACKING UPDATE ${version} - ${pct}%`, f);
+        }
+    });
+    const helper = path.join(files, path.basename(process.execPath));
+    if (!fs.existsSync(helper))
+        throw new Error("the update's zip doesn't have the app in it");
+    log('unpacked to', files);
 
     progress('INSTALLING UPDATE - THE APP WILL RESTART');
-    const script = path.join(dir, 'update.ps1');
-    fs.writeFileSync(script, updateScript({
-        zip, files: path.join(dir, 'files'), installDir, exe: process.execPath, result: resultFile(), version,
-    }), 'utf8');
-    await new Promise((resolve, reject) => {
-        const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script], {
-            detached: true, stdio: 'ignore', windowsHide: true,
-        });
-        child.once('error', reject);
-        child.once('spawn', () => {
-            child.unref();
-            resolve();
-        });
-    });
+    const job = path.join(dir, 'job.json');
+    fs.writeFileSync(job, JSON.stringify({
+        pid: process.pid, files, installDir, exe: process.execPath, result: resultFile(), version, log: logFile(),
+    }));
+    log('started the new version to finish, process', await update.launch(helper, [update.FLAG + job], files));
     await quitForUpdate();
 }
 

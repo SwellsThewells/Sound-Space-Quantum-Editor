@@ -2,6 +2,16 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.6 - 10/16/2026 --
+
+- fixed updating: the app closed for the update and never opened again. Updates no longer use a PowerShell script:
+  the new version unpacks itself, waits for the old one to close, copies its files over it and opens the app again.
+  Every step is written to update-log.txt in the app's data folder (%APPDATA%/Sound Space Quantum Editor Plus)
+
+IF YOU HAVE 3.0.5 OR OLDER: download this version's zip by hand once and unzip it over your old one (or anywhere);
+updates install themselves from then on
+
+----------------------------------
    -- Plus 3.0.5 - 10/16/2026 --
 
 - STATS page (menu > STATS): time editing and playing, sessions, notes placed and deleted, maps created, opened and

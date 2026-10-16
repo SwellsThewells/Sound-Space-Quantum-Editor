@@ -5,8 +5,9 @@ The web editor and map player (`../Web Editor`, `../Web Player`) as a Windows de
 - Every update to `master` builds the app and publishes it as a GitHub release (`.github/workflows/desktop-release.yml`):
   `SSQEPlus<version>.zip`, with `Sound Space Quantum Editor Plus.exe` inside, like the original editor's zips. The
   release notes are the newest entry of `../changelog`.
-- It updates itself: on start (when Check For Updates is on) it looks for a newer release, downloads its zip, and a
-  small PowerShell script puts the new files over the old ones once the app has closed, then starts it again.
+- It updates itself: on start (when Check For Updates is on) it looks for a newer release, downloads and unpacks its
+  zip, and starts the new version's own .exe from it, which waits for the app to close, copies the new files over the
+  old ones and starts it again (`update.js`). Every step is written to `update-log.txt` in the app data.
 - Playtesting in Rhythia: the path is chosen in SETTINGS > PLAYER and kept by the app (`desktop-settings.json` in its
   app data), and PLAYTEST starts Rhythia with the map and song like the original editor.
 - Discord rich presence shows what you're doing (in the menu, editing a map, playing a map). The application ID and
