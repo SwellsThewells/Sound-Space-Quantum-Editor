@@ -681,6 +681,11 @@
         const OtherNav = new G.Container(320, 0, 1220, 700, [
             chk(0, 0, 'Skip Download From Roblox', 'skipDownload'),
             chk(0, 60, 'Check For Updates', 'checkUpdates'),
+            // desktop app: look for a new version right now, and which one this is
+            ...(window.ssqeDesktop ? [
+                btn(0, 130, 400, 50, 'CHECK FOR UPDATES NOW', 30, () => window.ssqeDesktop.checkForUpdatesNow()),
+                lbl(0, 195, 600, 30, `Version ${window.ssqeDesktop.version}`, 28),
+            ] : []),
         ]);
 
         const navs = [['COLORS', ColorsNav], ['GRAPHICS', GraphicsNav], ['MAPPING', MappingNav], ['PLAYER', PlayerNav], ['AUDIO', AudioNav], ['OTHER', OtherNav]];

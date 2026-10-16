@@ -2,6 +2,17 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.4 - 10/16/2026 --
+
+- fixed the auto updater: the app now saves and closes properly before updating (an open map could stop it closing),
+  waits until it has fully closed, and tells you on the next start whether the update worked (and why not if it didn't)
+- SETTINGS > OTHER > CHECK FOR UPDATES NOW, and the version you have
+- Discord now shows "Sound Space Quantum Editor Plus"
+
+IF YOU HAVE 3.0.1, 3.0.2 OR 3.0.3: download this version's zip by hand once (unzip it over your old one, or anywhere);
+updates install themselves from then on
+
+----------------------------------
    -- Plus 3.0.3 - 10/16/2026 --
 
 - the project moved to github.com/iloverhythia/Sound-Space-Quantum-Editor-Plus: updates, the Discord picture and the

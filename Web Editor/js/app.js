@@ -177,6 +177,12 @@
                 this.desktopPaths = { Rhythia: '', Novastra: '' };
                 window.ssqeDesktop.playtestPaths().then(p => this.desktopPaths = p).catch(() => { });
                 window.ssqeDesktop.onUpdateProgress(text => text ? this.loading(true, text) : this.loading(false));
+                // the app is about to close to update: the open map's changes are saved first
+                window.ssqeDesktop.onSaveForUpdate(async () => {
+                    this.flushCache();
+                    SSQE.Settings.save(this.settings);
+                    await new Promise(r => setTimeout(r, 300));
+                });
                 window.ssqeDesktop.checkForUpdates(this.settings.checkUpdates !== false);
                 window.ssqeDesktop.onOpenFiles(files => {
                     if (files && files.length)
