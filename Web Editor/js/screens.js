@@ -238,6 +238,19 @@
 
     const background = () => new G.Square(0, 0, 1920, 1080, { color: [30, 30, 30] });
 
+    // a picture from assets/ drawn as it is (keeping its transparency), fitted inside the control
+    class Picture extends G.Control {
+        draw(ctx) {
+            const img = G.texture(this.name);
+            if (!img.complete || !img.naturalWidth)
+                return;
+            const r = this.rect, k = Math.min(r.w / img.naturalWidth, r.h / img.naturalHeight);
+            const w = img.naturalWidth * k, h = img.naturalHeight * k;
+            ctx.globalAlpha = 1;
+            ctx.drawImage(img, r.x + (r.w - w) / 2 * (this.align === 'left' ? 0 : 1), r.y + (r.h - h) / 2, w, h);
+        }
+    }
+
     // ---------------------------------------------------------------- GuiWindowMenu
 
     function menu(app) {
@@ -279,11 +292,11 @@
             button(1190, 640, 600, 100, 'MAP PLAYER', 54, () => app.openPlayer()),
             autosaved, lastMap, navLeft, navRight,
             ...selects, ...closes,
-            button(35, 140, 100, 40, 'Feedback?', 20, () => window.open('https://forms.gle/Rh4RXKT9KyttJ9Dc6', '_blank', 'noopener')),
+            button(262, 132, 100, 40, 'Feedback?', 20, () => window.open('https://forms.gle/Rh4RXKT9KyttJ9Dc6', '_blank', 'noopener')),
             changelog,
             label(60, 195, 200, 40, { text: 'CHANGELOG', textSize: 42 }),
-            label(35, 0, 750, 100, { text: 'SOUND SPACE', textSize: 156, font: 'square' }),
-            label(615, 140, 150, 40, { text: 'QUANTUM EDITOR', textSize: 38, font: 'square' }),
+            new Picture(35, 4, 212, 172, { name: 'logo', align: 'left' }),
+            label(262, 26, 700, 90, { text: 'QUANTUM EDITOR PLUS', textSize: 84, font: 'square' }),
         ];
 
         const screen = new Screen(app, controls);
@@ -686,6 +699,9 @@
             resetButton,
             btn(700, 810, 500, 50, 'OPEN EDITOR FOLDER', 30, () => app.dialogs.message('The web editor keeps its maps and audio in your browser, so there is no editor folder to open.')),
             btn(700, 755, 500, 50, 'CHANGE KEYBINDS', 30, () => app.openKeybinds()),
+            // web only: the whole setup (editor and map player settings, background, cursor, note mesh) in one file
+            btn(1270, 810, 500, 50, 'EXPORT SETUP (.SSQES)', 30, () => { save(); app.exportSetup(); }),
+            btn(1270, 865, 500, 50, 'IMPORT SETUP (.SSQES)', 30, () => app.importSetup()),
         ];
 
         const screen = new Screen(app, controls);
@@ -767,5 +783,5 @@
         return screen;
     }
 
-    SSQE.Screens = { Screen, menu, create, settings, keybinds, wrapText };
+    SSQE.Screens = { Screen, Picture, menu, create, settings, keybinds, wrapText };
 })();

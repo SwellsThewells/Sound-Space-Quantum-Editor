@@ -1,0 +1,103 @@
+{
+  "name": "sound-space-quantum-editor-plus",
+  "productName": "Sound Space Quantum Editor Plus",
+  "version": "3.0.0",
+  "description": "Sound Space Quantum Editor Plus: map editor and map player",
+  "main": "main.js",
+  "author": "Sound Space Quantum Editor Plus contributors",
+  "license": "MIT",
+  "repository": "github:iloverhythia/Sound-Space-Quantum-Editor",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "dependencies": {
+    "@xhayper/discord-rpc": "1.5.1"
+  },
+  "devDependencies": {
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "io.github.swellsthewells.ssqeplus",
+    "productName": "Sound Space Quantum Editor Plus",
+    "executableName": "Sound Space Quantum Editor Plus",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "build/icon.png",
+      "build/icon.ico",
+      "build/discord.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../Web Editor",
+        "to": "app/Web Editor"
+      },
+      {
+        "from": "../Web Player",
+        "to": "app/Web Player"
+      },
+      {
+        "from": "../changelog",
+        "to": "app/changelog"
+      }
+    ],
+    "fileAssociations": [
+      {
+        "ext": "ssqes",
+        "name": "Sound Space Quantum Editor Settings",
+        "description": "Sound Space Quantum Editor Plus setup",
+        "icon": "build/icon.ico"
+      },
+      {
+        "ext": "sspm",
+        "name": "Sound Space Map",
+        "description": "Sound Space map",
+        "icon": "build/icon.ico"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Sound Space Quantum Editor Plus",
+      "artifactName": "Sound-Space-Quantum-Editor-Plus-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Sound-Space-Quantum-Editor-Plus-Portable-${version}.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game"
+    },
+    "publish": null
+  }
+}

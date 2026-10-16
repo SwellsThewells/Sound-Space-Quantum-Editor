@@ -531,8 +531,9 @@
             new G.Square(35, 180, 950, 790, { color: [0, 0, 0, 40] }),
             new G.Square(55, 230, 900, 715, { color: [0, 0, 0, 50] }),
             new G.Square(0, 1040, 1920, 40, { color: [0, 0, 0, 50] }),
-            label(35, 0, 750, 100, 'SOUND SPACE', 156, { font: 'square' }),
-            label(670, 140, 150, 40, 'MAP PLAYER', 38, { font: 'square' }),
+            new SSQE.Screens.Picture(35, 4, 212, 172, { name: 'logo', align: 'left' }),
+            label(262, 26, 700, 90, 'QUANTUM EDITOR PLUS', 84, { font: 'square' }),
+            label(262, 118, 400, 40, 'MAP PLAYER', 38, { font: 'square' }),
             label(60, 195, 200, 40, 'MAP', 42),
 
             button(60, 250, 280, 50, 'LOAD MAP', 30, async () => {
@@ -848,8 +849,43 @@
             }
         });
 
+        // the whole setup (map player and editor settings, background, cursor, note mesh) in one .ssqes file
+        const exportSetupButton = button(1270, 810, 500, 50, 'EXPORT SETUP (.SSQES)', 30, async () => {
+            save();
+            try {
+                const learned = window.confirm('Also include what the auto mapper and the realistic autoplay bot have learned? (The file gets bigger.)');
+                const blob = await SSQECustom.exportSetup({ learned });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'my-setup.ssqes';
+                document.body.append(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+                toast.show('EXPORTED SETUP', settings.color1);
+            } catch (err) {
+                toast.show(`FAILED TO EXPORT: ${err.message}`, [255, 80, 80]);
+            }
+        });
+        const importSetupButton = button(1270, 865, 500, 50, 'IMPORT SETUP (.SSQES)', 30, async () => {
+            const file = await pickFile('.ssqes');
+            if (!file || !window.confirm(`Import the setup in '${file.name}'? It replaces your map player and editor settings, background, grid cursor and note mesh.`))
+                return;
+            try {
+                await SSQECustom.importSetup(file);
+                // start again with the new setup (the editor too, when the player is open inside it)
+                try {
+                    (EMBEDDED ? window.parent : window).location.reload();
+                } catch {
+                    location.reload();
+                }
+            } catch (err) {
+                toast.show(`FAILED TO IMPORT: ${err.message}`, [255, 80, 80]);
+            }
+        });
+
         const controls = [
-            background(), nav, resetButton, importButton,
+            background(), nav, resetButton, importButton, exportSetupButton, importSetupButton,
             button(660, 930, 600, 100, 'SAVE AND RETURN', 54, () => {
                 save();
                 if (mapText)

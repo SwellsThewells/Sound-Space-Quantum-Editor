@@ -1,4 +1,4 @@
-# SSQE Web Player
+# Sound Space Quantum Editor Plus (Map Player)
 
 An HTML/JavaScript (WebGL2) port of the Sound Space map player in `Map Player/SSQE Player`.
 It runs entirely in the browser, with no install and no server-side code.

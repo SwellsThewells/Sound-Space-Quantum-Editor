@@ -168,6 +168,17 @@
             this.showMenu();
             this.startAutosaving();
 
+            // the desktop app: what you're doing goes to Discord, and files opened with the app (a .ssqes setup, a
+            // .sspm map) are loaded like LOAD MAP
+            if (window.ssqeDesktop) {
+                setInterval(() => this.updatePresence(), 5000);
+                this.updatePresence();
+                window.ssqeDesktop.onOpenFiles(files => {
+                    if (files && files.length)
+                        this.loadFiles(files.map(f => new File([f.bytes], f.name)));
+                });
+            }
+
             window.addEventListener('beforeunload', e => {
                 if (this.cacheTimer) {
                     this.flushCache();
@@ -271,6 +282,46 @@
                 this.screen = SSQE.Screens[name](this);
                 this.screen.start();
             }
+            this.loading(false);
+            this.animateIn();
+            this.updatePresence();
+        }
+
+        // Discord rich presence (desktop app only), like the original editor's
+        updatePresence() {
+            if (!window.ssqeDesktop)
+                return;
+            const playing = this.playerFrame && this.playerFrame.style.display !== 'none' && !this.playerFrame.classList.contains('hidden');
+            let details = 'In the menu', state = '';
+            if (playing)
+                details = 'Playing a map';
+            else if (this.editor && this.editor.map) {
+                const map = this.editor.map;
+                details = `Editing a map - ${map.notes.items.length} notes`;
+                state = map.fileId || '';
+            }
+            window.ssqeDesktop.setPresence({ details, state });
+        }
+
+        // the new screen fades and settles in
+        animateIn() {
+            const canvas = document.getElementById('editor-canvas');
+            if (!canvas)
+                return;
+            canvas.classList.remove('ssqe-enter');
+            void canvas.offsetWidth;
+            canvas.classList.add('ssqe-enter');
+        }
+
+        // Covers the screen with a 'LOADING...' overlay (or takes it away) and resolves once it's on screen, so a
+        // click that takes a moment (opening a map decodes its audio) shows at once instead of looking frozen
+        loading(on, text = 'LOADING...') {
+            const el = document.getElementById('ssqe-loading');
+            if (!el)
+                return Promise.resolve();
+            el.querySelector('.text').textContent = text;
+            el.classList.toggle('on', !!on);
+            return on ? new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 90)))) : Promise.resolve();
         }
 
         // ------------------------------------------------------------ helpers
@@ -381,6 +432,8 @@
                     allow: 'fullscreen; autoplay',
                     allowfullscreen: '',
                     title: 'Map Player',
+                    id: 'ssqe-player-frame',
+                    class: 'hidden',
                 });
                 Object.assign(frame.style, { position: 'fixed', inset: '0', width: '100%', height: '100%', border: '0', zIndex: '50', background: '#000', display: 'none' });
                 document.body.append(frame);
@@ -392,18 +445,26 @@
             }
             if (this.screen && this.screen.stop)
                 this.screen.stop();
+            clearTimeout(this.playerHide);
             this.playerFrame.style.display = 'block';
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                this.playerFrame.classList.remove('hidden');
+                this.updatePresence();
+            }));
             this.playerFrame.focus();
         }
 
         closePlayer() {
-            if (!this.playerFrame || this.playerFrame.style.display === 'none')
+            if (!this.playerFrame || this.playerFrame.style.display === 'none' || this.playerFrame.classList.contains('hidden'))
                 return;
-            this.playerFrame.style.display = 'none';
+            this.playerFrame.classList.add('hidden');
+            this.playerHide = setTimeout(() => this.playerFrame.style.display = 'none', 230);
             if (document.fullscreenElement)
                 document.exitFullscreen().catch(() => { });
             if (this.screen && this.screen.start)
                 this.screen.start();
+            this.animateIn();
+            this.updatePresence();
             // settings may have changed in the player
             this.settings && this.applyTheme();
         }
@@ -412,8 +473,44 @@
             this.showScreen('keybinds');
         }
 
+        // ------------------------------------------------------------ setup files (.ssqes)
+
+        async exportSetup() {
+            const answer = await this.dialogs.confirm(
+                'Export your setup: the editor and map player settings, keybinds, custom background, grid cursor and note mesh.\n\nAlso include what the auto mapper and the realistic autoplay bot have learned? (The file gets bigger.)',
+                [['Yes', 'yes'], ['No', 'no'], ['Cancel', 'cancel']]);
+            if (answer !== 'yes' && answer !== 'no')
+                return;
+            try {
+                const blob = await SSQECustom.exportSetup({ learned: answer === 'yes' });
+                await this.download(blob, 'my-setup.ssqes');
+            } catch (e) {
+                this.dialogs.message(`Failed to export the setup: ${e.message}`, 'Error');
+            }
+        }
+
+        async importSetup(file) {
+            file = file || await this.pickFile('.ssqes');
+            if (!file)
+                return;
+            const answer = await this.dialogs.confirm(
+                `Import the setup in '${file.name}'?\n\nIt replaces your editor and map player settings, keybinds, custom background, grid cursor and note mesh (and what the auto mapper and bot learned, if the file has that). Your maps aren't touched.`,
+                [['Import', 'yes'], ['Cancel', 'no']]);
+            if (answer !== 'yes')
+                return;
+            try {
+                await this.loading(true, 'IMPORTING SETUP...');
+                await SSQECustom.importSetup(file);
+                // everything (this editor and the map player) starts again with the new setup
+                location.reload();
+            } catch (e) {
+                this.loading(false);
+                this.dialogs.message(`Failed to import the setup: ${e.message}`, 'Error');
+            }
+        }
+
         async loadMapDialog() {
-            const files = await this.pickFile('.txt,.ini,.sspm,.rhm,.osu,audio/*,.asset,.mp3,.ogg,.wav,.flac,.m4a,.opus', true);
+            const files = await this.pickFile('.txt,.ini,.sspm,.rhm,.osu,.ssqes,audio/*,.asset,.mp3,.ogg,.wav,.flac,.m4a,.opus', true);
             if (files.length)
                 this.loadFiles(files);
         }
@@ -489,10 +586,16 @@
 
         async loadFiles(files) {
             const byExt = ext => files.filter(f => f.name.toLowerCase().endsWith(ext));
+            const setup = byExt('.ssqes')[0];
+            if (setup)
+                return this.importSetup(setup);
             const audioFiles = files.filter(f => !/\.(txt|ini|sspm|osu|rhm)$/i.test(f.name));
             const base = name => name.replace(/\.[^.]*$/, '');
 
             try {
+                // (shows that the map is loading as soon as it's picked: reading a big .sspm takes a moment)
+                if (files.some(f => /\.(txt|sspm|osu|rhm)$/i.test(f.name)))
+                    await this.loading(true, 'LOADING MAP...');
                 const sspm = byExt('.sspm')[0];
                 if (sspm) {
                     const map = new Map();
@@ -546,7 +649,10 @@
                     this.dialogs.message('To start a new map from an audio file, use CREATE NEW MAP.');
             } catch (e) {
                 console.warn(e);
+                this.loading(false);
                 this.dialogs.message(`Failed to load map data: ${e.message}`);
+            } finally {
+                this.loading(false);
             }
         }
 
@@ -635,6 +741,10 @@
             }
 
             let audio = await this.storage.getAudio(map.soundId);
+            if (audio)
+                await this.loading(true, 'LOADING MAP...');
+            else
+                this.loading(false);
             if (!audio) {
                 const answer = await this.dialogs.confirm(`No audio found for ID '${map.soundId}'.\n\nWould you like to import an audio file for this ID?`, [['OK', 'yes'], ['Cancel', 'no']]);
                 if (answer !== 'yes')
@@ -646,9 +756,11 @@
             }
 
             try {
+                await this.loading(true, 'LOADING MAP...');
                 await SSQE.Audio.loadSounds();
                 await this.music.load(audio);
             } catch (e) {
+                this.loading(false);
                 const answer = await this.dialogs.confirm(`Failed to load audio with ID '${map.soundId}':\n\n${e.message}\n\nWould you like to import a new file?`, [['OK', 'yes'], ['Cancel', 'no']]);
                 if (answer === 'yes') {
                     const file = await this.pickFile('audio/*');

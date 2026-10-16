@@ -2,6 +2,40 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0 - 10/16/2026 --
+
+Sound Space Quantum Editor is now SOUND SPACE QUANTUM EDITOR PLUS!
+
+- new name and logo
+- a desktop app for Windows: every update is published on GitHub releases (installer or portable .exe)
+- the desktop app shows what you're doing on Discord, and tells you when a new version is out
+- quick animations when moving between menus; opening a map now shows that it's loading instead of freezing
+- export/import your whole setup as one .ssqes file (SETTINGS > EXPORT SETUP / IMPORT SETUP): editor and map player
+  settings, keybinds, custom background, grid cursor and note mesh, and optionally what the auto mapper and bot learned
+  (in the desktop app, double-click a .ssqes to import it)
+
+AUTO MAPPER (PATTERNS tab):
+- learns from every map you open, and from many at once with LEARN FROM MAPS
+- finds the song's BPM and its downbeats, and maps on the beat; streams stay perfectly even
+- finds drops, build-ups and changes inside a drop, and changes the pattern with the music; drum fills get a burst
+- maps only where the song makes sounds (choose what to sync to: kicks, snares, hi-hats, melody, bass); quiet parts
+  stay empty and there are no random cuts where the music carries on
+- difficulty 1-10 (10 is properly hard), density, an exact number of notes, quantum on/off, and more in MORE OPTIONS
+- copies the design of the maps you give it (one map's style at a time, even with 200 learned), never copies
+  impossible parts and keeps every move playable
+- doesn't freeze the editor while it works
+
+EDITOR:
+- grid zoom and note size sliders
+- custom grid cursor image (animated GIFs too), editor background image, custom .obj note meshes on the grid
+- MAP PLAYER button in the menu
+- RHM export, and fixes for SSPM export
+
+MAP PLAYER:
+- 3D backgrounds, custom note meshes, uncapped FPS and an option to turn off background effects
+- realistic autoplay that learns how you play from your replays
+
+----------------------------------
    -- 2.3.5.4 - 6/14/2026 --
 
 - fixed clicking in the lyric box when editing extra objects causing a black screen

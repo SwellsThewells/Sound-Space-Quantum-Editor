@@ -1,4 +1,4 @@
-# SSQE Web Editor
+# Sound Space Quantum Editor Plus (Web Editor)
 
 A browser port of the Sound Space Quantum Editor in `Editor/New SSQE`. It runs entirely in the
 browser and uses the [web player](../Web%20Player) for playtesting.

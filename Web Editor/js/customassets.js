@@ -393,6 +393,164 @@ window.SSQECustom = (function () {
         await loadMesh();
     }
 
+    // ------------------------------------------------ setup files (.ssqes: Sound Space Quantum Editor Settings)
+
+    // One file with everything that makes an editor and map player yours: the editor's settings (keybinds included),
+    // the map player's settings, the custom background, grid cursor and note mesh, and optionally what the auto
+    // mapper and the bot have learned. It's JSON; pictures are kept as data: URLs and learned numbers as base64.
+    const SETUP_FORMAT = 'ssqes';
+    const SETTINGS_KEYS = { editor: 'ssqe-web-editor-settings', player: 'ssqe-web-player-settings' };
+    const LEARNED_KEYS = ['mapperModel', 'botProfile'];
+    const TYPED = ['Float32Array', 'Float64Array', 'Int8Array', 'Uint8Array', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array'];
+
+    const toBase64 = bytes => {
+        let text = '';
+        for (let i = 0; i < bytes.length; i += 0x8000)
+            text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        return btoa(text);
+    };
+    const fromBase64 = text => {
+        const bin = atob(text), bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++)
+            bytes[i] = bin.charCodeAt(i);
+        return bytes;
+    };
+    const blobToDataUrl = blob => new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(blob);
+    });
+    // only pictures are taken back in from a data: URL
+    function imageFromDataUrl(url) {
+        const m = /^data:(image\/[a-z0-9.+-]+);base64,(.*)$/i.exec(url || '');
+        if (!m)
+            throw new Error('a picture in the file is damaged');
+        return new Blob([fromBase64(m[2])], { type: m[1] });
+    }
+    // learned data holds typed arrays: written as { $typed, b64 }
+    function packValue(v) {
+        if (ArrayBuffer.isView(v))
+            return { $typed: v.constructor.name, b64: toBase64(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)) };
+        if (Array.isArray(v))
+            return v.map(packValue);
+        if (v && typeof v === 'object')
+            return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, packValue(x)]));
+        return v;
+    }
+    // (keys that could change how objects behave are dropped from anything read from a file)
+    const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
+    function unpackValue(v) {
+        if (Array.isArray(v))
+            return v.map(unpackValue);
+        if (v && typeof v === 'object') {
+            if (typeof v.$typed === 'string' && typeof v.b64 === 'string') {
+                if (!TYPED.includes(v.$typed))
+                    throw new Error('unknown data in the file');
+                return new globalThis[v.$typed](fromBase64(v.b64).buffer);
+            }
+            const out = {};
+            for (const [k, x] of Object.entries(v))
+                if (!UNSAFE.has(k))
+                    out[k] = unpackValue(x);
+            return out;
+        }
+        return v;
+    }
+    const plainObject = v => v && typeof v === 'object' && !Array.isArray(v);
+
+    // Resolves to a Blob of the .ssqes file
+    async function exportSetup({ learned = false } = {}) {
+        const read = key => {
+            try {
+                return JSON.parse(localStorage.getItem(key) || 'null');
+            } catch {
+                return null;
+            }
+        };
+        const file = {
+            format: SETUP_FORMAT, version: 1, app: 'Sound Space Quantum Editor Plus', created: new Date().toISOString(),
+            settings: { editor: read(SETTINGS_KEYS.editor), player: read(SETTINGS_KEYS.player) },
+            assets: {},
+        };
+        for (const key of ['backgroundImage', 'editorCursor']) {
+            const rec = await get(key);
+            if (rec && rec.blob)
+                file.assets[key] = { name: rec.name || '', data: await blobToDataUrl(rec.blob) };
+        }
+        const mesh = await get('noteMesh');
+        if (mesh && mesh.text)
+            file.assets.noteMesh = { name: mesh.name || '', text: mesh.text };
+        if (learned) {
+            file.learned = {};
+            for (const key of LEARNED_KEYS) {
+                const value = await get(key);
+                if (value)
+                    file.learned[key] = packValue(value);
+            }
+        }
+        return new Blob([JSON.stringify(file)], { type: 'application/json' });
+    }
+
+    // Reads a .ssqes file and makes it the current setup: its settings, and its background, cursor and note mesh
+    // (or none, where the file has none). Learned data is replaced only when the file has some. Reload the page
+    // afterwards so everything picks it up. Resolves to what was in it; throws on a file that isn't a setup.
+    async function importSetup(blob) {
+        if (blob.size > 200 * 1024 * 1024)
+            throw new Error('the file is too big to be a setup file');
+        let file;
+        try {
+            file = JSON.parse(await blob.text());
+        } catch {
+            throw new Error('this is not a Sound Space Quantum Editor Plus setup file (.ssqes)');
+        }
+        if (!plainObject(file) || file.format !== SETUP_FORMAT)
+            throw new Error('this is not a Sound Space Quantum Editor Plus setup file (.ssqes)');
+        const settings = plainObject(file.settings) ? file.settings : {};
+        const assets = plainObject(file.assets) ? file.assets : {};
+        // check everything first, so a damaged file changes nothing
+        const pictures = {};
+        for (const key of ['backgroundImage', 'editorCursor'])
+            if (plainObject(assets[key]))
+                pictures[key] = { name: String(assets[key].name || ''), blob: imageFromDataUrl(assets[key].data) };
+        let mesh = null;
+        if (plainObject(assets.noteMesh) && typeof assets.noteMesh.text === 'string') {
+            parseObj(assets.noteMesh.text);
+            mesh = { name: String(assets.noteMesh.name || ''), text: assets.noteMesh.text };
+        }
+        const learned = {};
+        if (plainObject(file.learned))
+            for (const key of LEARNED_KEYS)
+                if (plainObject(file.learned[key]))
+                    learned[key] = unpackValue(file.learned[key]);
+
+        const done = { editor: false, player: false, assets: [], learned: Object.keys(learned) };
+        for (const which of ['editor', 'player'])
+            if (plainObject(settings[which])) {
+                localStorage.setItem(SETTINGS_KEYS[which], JSON.stringify(unpackValue(settings[which])));
+                done[which] = true;
+            }
+        for (const key of ['backgroundImage', 'editorCursor']) {
+            if (pictures[key]) {
+                await put(key, pictures[key]);
+                done.assets.push(key);
+            } else
+                await remove(key);
+        }
+        if (mesh) {
+            await put('noteMesh', mesh);
+            done.assets.push('noteMesh');
+        } else
+            await remove('noteMesh');
+        for (const [key, value] of Object.entries(learned))
+            await put(key, value);
+        await Promise.all([loadImage(), loadMesh(), loadCursor()]).catch(() => { });
+        return done;
+    }
+
     // learned data (auto mapper, bot) is stored next to the files
-    return { ready, state, parseObj, decodeGif, cursorFrame, noteMeshSprite, setImage, setNoteMesh, setCursor, get, put, remove };
+    return {
+        ready, state, parseObj, decodeGif, cursorFrame, noteMeshSprite, setImage, setNoteMesh, setCursor, get, put, remove,
+        exportSetup, importSetup,
+    };
 })();
