@@ -2,6 +2,25 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.11 - 10/16/2026 --
+
+Auto mapper (a third round of maps at 8, 9 and 10 in every mode, reviewed against the human maps):
+- no more dead beats: a busy part that can't take every note keeps each beat as a stream (with a jump into the
+  next beat), as every other note, or, when it has to, as its main sounds at the end of the bar, instead of a lone
+  two-note beat between two walls of stream. 9 and 10 are different maps again in busy songs
+- slow notes are real jumps in every part but a song's quietest (intros and outros): medium parts no longer creep
+  a cell at a time, and a jump the difficulty has to shrink becomes a step across a corner rather than one cell
+- songs whose kicks dodge the beat (breakcore) are no longer mapped a 16th note off: the drop's first hit gets its
+  note, slow notes land on the beat, and calm and loud parts differ as much as in the human map
+- Quantum: the notes between slides are real jumps (in the human quantum map almost every note 60-100ms apart is a
+  jump), sweeping in wide curves when they're quick instead of snapping back at stream speed; quick runs arc
+  smoothly without wheeling round the edge
+- Jump map: jump phrases differ from one to the next in intense parts instead of one long wall of the same jumps,
+  stream phrases run to their end, and 8, 9 and 10 step up more evenly
+- mixed maps no longer make chains of jumps out of 1/8 notes next to faster bursts, no jump goes straight back
+  where the note before came from at a join, and a beat-long hole in fast music gets filled
+
+----------------------------------
    -- Plus 3.0.10 - 10/16/2026 --
 
 Auto mapper (a second round of maps at difficulty 8, 9 and 10 in every mode, each one checked note by note

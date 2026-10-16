@@ -2790,15 +2790,17 @@ window.SSQEAutoMapper = (function () {
         // (from a little under jumpGap the floor grows from one cell to two, so a tempo a few percent faster or
         // slower doesn't turn a whole part from steps into jumps)
         const floor = gap >= 1.6 * g ? 2.24 : gap >= g || timed ? 2 : gap >= 0.85 * g ? 1 + (gap - 0.85 * g) / (0.15 * g) : 0;
-        let want = Math.max(size, floor * Math.min(1, opts.jumpScale || 1) * (opts.calm ?? 1));
-        // (on the grid, a shrunken jump is still a jump: across a corner or two cells, not a one-cell step)
-        if (!opts.quantum && floor >= 2 && want >= 1.2 && want < 2)
-            want = want < 1.6 ? 1.41 : 2;
+        const want = Math.max(size, floor * Math.min(1, opts.jumpScale || 1) * (opts.calm ?? 1));
         // (and the quick notes themselves, a stream, step a cell at a time in every style, as long as they're quick:
         // a steady run of slower notes, where there's time, is the style's own)
         if (fast > 0 && gap < 1.3 * fast && gap < g && !opts.quantum)
             return Math.min(want, 1.05, reach(gap, fast, opts));
-        return Math.min(want, reach(gap, fast, opts));
+        const move = Math.min(want, reach(gap, fast, opts));
+        // (on the grid, a jump shrunk by a calm part or the difficulty's speed is still a jump: across a corner, or
+        // two cells where there's time, not a one-cell step)
+        if (!opts.quantum && floor >= 2 && move >= 1.2 && move < 2)
+            return move >= 1.85 ? 2 : 1.41;
+        return move;
     }
 
     // The furthest a move `gap` ms long should go (cells): at the difficulty's comfortable speed (opts.comfort), or
@@ -2840,7 +2842,7 @@ window.SSQEAutoMapper = (function () {
                     return;
             }
             let cost = 0, used_len = 0, dist = 0, spins = 0, spikes = 0, logSum = 0, rough = 0, roughN = 0, off = 0, sized = 0, wanted = 0, lattice = 0;
-            let scribble = 0, ball = 0;
+            let scribble = 0, ball = 0, under = 0;
             const recent = [prev2, prev].filter(Boolean).map(p => [p.x, p.y]);
             let lastGap = prev && prev2 ? prev.ms - prev2.ms : 0;
             for (let q = 0; q < len; q++) {
@@ -2929,6 +2931,10 @@ window.SSQEAutoMapper = (function () {
                 const want = moveFor(J * Math.min(2.5, Math.max(0.5, Math.pow(gg / gm, opts.beta ?? 0.8))), gg, opts, opts.fast ? opts.fast[q] : 0, q ? gaps[q - 1] : prev && prev2 ? prev.ms - prev2.ms : 0);
                 sized += Math.abs(Math.log((move + 0.15) / (want + 0.15)));
                 wanted += want;
+                // (a step where a jump is wanted: a steady run of notes far enough apart to jump between, crawled a
+                // cell at a time, is what makes auto maps feel too smooth)
+                if (!opts.quantum && want >= 1.35 && move < 1.2)
+                    under++;
                 if (move > Math.max(1.5, 2.1 * want) || move / Math.max(gg, 1) * 1000 > vmax)
                     spikes++;
                 if (realQuantum(x + ox, y + oy))
@@ -2999,7 +3005,7 @@ window.SSQEAutoMapper = (function () {
                 return;
             // (and every run costs a little for the join it makes: one long run flows better than many short ones)
             cost += rhythm / used_len * 1.5 + 0.12 * Math.abs(scale) * (0.5 + follow) + 0.8 / used_len;
-            cost += 1.8 * spins / used_len + 1.2 * scribble / used_len + ball;
+            cost += 1.8 * spins / used_len + 1.2 * scribble / used_len + ball + 1.5 * under / used_len;
             // Flow: no rougher than the learned maps (at 100%, a fair bit smoother)
             if (model && roughN)
                 cost += 2.4 * flow * Math.max(0, rough / roughN - model.change * (1.2 - 0.45 * flow));
