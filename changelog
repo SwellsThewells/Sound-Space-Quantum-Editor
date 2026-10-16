@@ -2,6 +2,16 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.5 - 10/16/2026 --
+
+- STATS page (menu > STATS): time editing and playing, sessions, notes placed and deleted, maps created, opened and
+  exported, auto maps, what the auto mapper and bot learned, plays, notes hit and missed, best and average accuracy,
+  best combo, full combos and more (counted from this version on)
+- CREDITS page (menu > CREDITS)
+- much smoother transitions: the old screen fades out while the new one eases in, in the editor and in the map
+  player's menus too, and a map fades in when it starts
+
+----------------------------------
    -- Plus 3.0.4 - 10/16/2026 --
 
 - fixed the auto updater: the app now saves and closes properly before updating (an open map could stop it closing),

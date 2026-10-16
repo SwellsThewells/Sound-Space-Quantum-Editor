@@ -461,6 +461,7 @@
         }
 
         try {
+            G.fadeIn(document.getElementById('game'), document.getElementById('overlay'));
             game = new SSQEGame.Game({
                 canvas: document.getElementById('game'),
                 overlay: document.getElementById('overlay'),
@@ -500,6 +501,8 @@
     // ---------------------------------------------------------------- screens
 
     function show(next) {
+        // (the old screen fades out as the new one comes in)
+        G.crossfade(document.getElementById('editor-canvas'));
         if (screen)
             screen.stop();
         screen = next.screen;
@@ -906,6 +909,11 @@
         menu = buildMenu();
         settingsScreen = buildSettings();
         show(menu);
+        // the STATS page (in the editor): a session of the player on its own (inside the editor it's the editor's)
+        if (window.SSQEStats && !EMBEDDED) {
+            SSQEStats.session();
+            SSQEStats.tick(() => false);
+        }
 
         // click sounds need an unlocked audio context
         const unlock = () => {

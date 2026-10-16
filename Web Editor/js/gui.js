@@ -1538,7 +1538,46 @@
         return e;
     };
 
+    // ---------------------------------------------------------------- moving between screens (web only)
+
+    // The old screen (a still copy of the canvas) fades out and shrinks a touch while the new one fades in and settles
+    // from a touch larger, both easing out, so a click moves smoothly instead of cutting. Only opacity and scale
+    // animate, which the browser does on the GPU. snapshot: false only fades the new screen in.
+    const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
+    let still = null;
+    const reducedMotion = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function crossfade(canvas, { snapshot = true, duration = 440 } = {}) {
+        if (!canvas || !canvas.animate || reducedMotion())
+            return;
+        if (snapshot && canvas.width && canvas.height) {
+            if (!still) {
+                still = document.createElement('canvas');
+                still.id = 'ssqe-crossfade';
+                Object.assign(still.style, { position: 'fixed', inset: '0', width: '100%', height: '100%', pointerEvents: 'none', zIndex: '16' });
+            }
+            still.getAnimations().forEach(a => a.cancel());
+            still.width = canvas.width;
+            still.height = canvas.height;
+            still.getContext('2d').drawImage(canvas, 0, 0);
+            document.body.append(still);
+            still.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(0.965)' }],
+                { duration: duration * 0.8, easing: EASE, fill: 'forwards' }).onfinish = () => still.remove();
+        }
+        canvas.getAnimations().forEach(a => a.cancel());
+        canvas.animate([{ opacity: 0, transform: 'scale(1.03)' }, { opacity: 1, transform: 'scale(1)' }], { duration, easing: EASE });
+    }
+
+    // fades elements in (the game when a map starts)
+    function fadeIn(...elements) {
+        if (reducedMotion())
+            return;
+        for (const e of elements)
+            if (e && e.animate)
+                e.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 380, easing: EASE });
+    }
+
     SSQE.GUI = {
+        crossfade, fadeIn,
         setSettings: s => settings = s,
         ASSETS, fitCanvas, snap, get pixelRatio() { return pixelRatio; },
         Styles, CenterMode, Text, loadFonts, texture, drawTile, fillSquircle, strokeSquircle, squirclePath, rgb: C.rgb,

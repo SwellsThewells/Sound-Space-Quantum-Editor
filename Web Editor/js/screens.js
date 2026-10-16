@@ -259,8 +259,9 @@
         const button = (x, y, w, h, text, textSize, onClick) => new G.Button(x, y, w, h, { text, textSize, onLeftClick: onClick });
 
         const changelog = new ScrollingText(60, 230, 890, 715, { content: app.changelog || 'Loading...' });
-        const autosaved = button(1190, 640, 600, 100, 'AUTOSAVED MAP', 54, () => app.openAutosaved());
-        const lastMap = button(1190, 755, 600, 100, 'EDIT LAST MAP', 54, () => app.openLastMap());
+        // (the buttons are a little shorter than the original's so STATS and CREDITS fit in the column)
+        const autosaved = button(1190, 845, 600, 85, 'AUTOSAVED MAP', 48, () => app.openAutosaved());
+        const lastMap = button(1190, 845, 600, 85, 'EDIT LAST MAP', 48, () => app.openLastMap());
 
         const navLeft = button(0, 1040, 40, 40, '<', 34, () => { app.mapIndex--; });
         const navRight = button(1880, 1040, 40, 40, '>', 34, () => { app.mapIndex++; });
@@ -284,12 +285,14 @@
             new G.Square(35, 180, 950, 790, { color: [0, 0, 0, 40] }),
             new G.Square(55, 230, 900, 715, { color: [0, 0, 0, 50] }),
             new G.Square(0, 1040, 1920, 40, { color: [0, 0, 0, 50] }),
-            button(1190, 180, 600, 100, 'CREATE NEW MAP', 54, () => app.openCreate()),
-            button(1190, 295, 600, 100, 'LOAD MAP', 54, () => app.loadMapDialog()),
-            button(1190, 410, 600, 100, 'PASTE MAP', 54, () => app.pasteMap()),
-            button(1190, 525, 600, 100, 'SETTINGS', 54, () => app.openSettings()),
-            // web only: the map player, opened on top of the editor
-            button(1190, 640, 600, 100, 'MAP PLAYER', 54, () => app.openPlayer()),
+            button(1190, 180, 600, 85, 'CREATE NEW MAP', 48, () => app.openCreate()),
+            button(1190, 275, 600, 85, 'LOAD MAP', 48, () => app.loadMapDialog()),
+            button(1190, 370, 600, 85, 'PASTE MAP', 48, () => app.pasteMap()),
+            button(1190, 465, 600, 85, 'SETTINGS', 48, () => app.openSettings()),
+            // web only: the map player, opened on top of the editor; stats and credits
+            button(1190, 560, 600, 85, 'MAP PLAYER', 48, () => app.openPlayer()),
+            button(1190, 655, 600, 85, 'STATS', 48, () => app.showScreen('stats')),
+            button(1190, 750, 600, 85, 'CREDITS', 48, () => app.showScreen('credits')),
             autosaved, lastMap, navLeft, navRight,
             ...selects, ...closes,
             button(262, 132, 100, 40, 'Feedback?', 20, () => window.open('https://forms.gle/Rh4RXKT9KyttJ9Dc6', '_blank', 'noopener')),
@@ -307,7 +310,7 @@
             autosaved.visible = false;
             lastMap.visible = !!app.lastMapEntry();
             const r = lastMap.origin;
-            lastMap.origin = { ...r, y: autosaved.visible ? 870 : 755 };
+            lastMap.origin = { ...r, y: autosaved.visible ? 940 : 845 };
 
             // GuiWindowMenu.AssembleMapList / Render
             const count = app.openMaps.length;
@@ -402,6 +405,7 @@
                         await app.storage.putAudio(id, audioFile);
                         const map = new SSQE.Map();
                         map.soundId = id;
+                        window.SSQEStats && SSQEStats.add('mapsCreated');
                         await app.openNewMap(map, null);
                     },
                 }),
@@ -735,6 +739,96 @@
         return screen;
     }
 
+    // ---------------------------------------------------------------- stats (web only)
+
+    function stats(app) {
+        const S = window.SSQEStats;
+        let data = S ? S.read() : {};
+        let learned = { maps: 0 }, replays = 0;
+        if (window.SSQEAutoMapper)
+            SSQEAutoMapper.stats().then(r => r && (learned = r)).catch(() => { });
+        if (window.SSQEBot)
+            SSQEBot.stats().then(r => r && (replays = r.replays || 0)).catch(() => { });
+        const n = v => S.number(v), t = v => S.duration(v);
+        const pct = v => `${(Number(v) || 0).toFixed(2)}%`;
+        const TILES = [
+            ['TIME EDITING', () => t(data.timeEditing)],
+            ['TIME PLAYING', () => t(data.timePlaying)],
+            ['TIME IN THE APP', () => t(data.timeInApp)],
+            ['SESSIONS', () => n(data.sessions)],
+            ['DAYS USED', () => n(data.daysUsed)],
+            ['NOTES PLACED', () => n(data.notesPlaced)],
+            ['NOTES DELETED', () => n(data.notesDeleted)],
+            ['MAPS CREATED', () => n(data.mapsCreated)],
+            ['MAPS OPENED', () => n(data.mapsOpened)],
+            ['MAPS EXPORTED', () => n(data.mapsExported)],
+            ['AUTO MAPS MADE', () => n(data.autoMaps)],
+            ['NOTES AUTO MAPPED', () => n(data.notesAutoMapped)],
+            ['MAPS LEARNED', () => n(learned.maps)],
+            ['REPLAYS LEARNED', () => n(replays)],
+            ['OPEN MAPS', () => n(app.openMaps.length)],
+            ['PLAYS', () => n(data.plays)],
+            ['PLAYTESTS', () => n(data.playtests)],
+            ['NOTES HIT', () => n(data.notesHit)],
+            ['NOTES MISSED', () => n(data.notesMissed)],
+            ['FULL COMBOS', () => n(data.fullCombos)],
+            ['BEST ACCURACY', () => pct(data.bestAccuracy)],
+            ['AVERAGE ACCURACY', () => data.accuracyRuns ? pct(data.accuracySum / data.accuracyRuns) : '-'],
+            ['BEST COMBO', () => n(data.bestCombo)],
+            ['AUTOPLAYS WATCHED', () => n(data.watched)],
+            ['SETUPS SHARED', () => n(data.setupsShared)],
+        ];
+        const W = 340, H = 118, GAP_X = 24, GAP_Y = 18, X0 = 60, Y0 = 170;
+        const values = [];
+        const tiles = TILES.flatMap(([caption, get], i) => {
+            const x = X0 + (i % 5) * (W + GAP_X), y = Y0 + Math.floor(i / 5) * (H + GAP_Y);
+            const value = new G.Label(x, y + 12, W, 62, { text: get(), textSize: 50, colorSetting: 'color1' });
+            values.push([value, get]);
+            return [
+                new G.Square(x, y, W, H, { color: [0, 0, 0, 55], cornerRadius: 0.12 }),
+                value,
+                new G.Label(x, y + 74, W, 32, { text: caption, textSize: 24 }),
+            ];
+        });
+        const since = new G.Label(218, 118, 600, 36, { text: '', textSize: 26, centerMode: None });
+        const controls = [
+            background(),
+            new Picture(35, 4, 160, 130, { name: 'logo', align: 'left' }),
+            new G.Label(215, 22, 400, 100, { text: 'STATS', textSize: 96, font: 'square', centerMode: None }),
+            since,
+            ...tiles,
+            new G.Button(660, 930, 600, 100, { text: 'BACK TO MENU', textSize: 52, onLeftClick: () => app.showMenu() }),
+        ];
+        const screen = new Screen(app, controls);
+        let wait = 0;
+        screen.update = dt => {
+            // the numbers keep up while the page is open
+            wait -= dt || 0.016;
+            if (wait <= 0) {
+                wait = 1;
+                data = S ? S.read() : {};
+                since.text = data.firstUsed ? `since ${data.firstUsed}` : '';
+            }
+            for (const [label, get] of values)
+                label.text = get();
+        };
+        return screen;
+    }
+
+    // ---------------------------------------------------------------- credits (web only)
+
+    function credits(app) {
+        const controls = [
+            background(),
+            new Picture(35, 4, 160, 130, { name: 'logo', align: 'left' }),
+            new G.Label(215, 22, 500, 100, { text: 'CREDITS', textSize: 96, font: 'square', centerMode: None }),
+            new Picture(660, 170, 600, 600, { name: 'credits' }),
+            new G.Label(160, 790, 1600, 100, { text: 'MADE BY MRBRECKEN AND DJ #FAWOREEOUT', textSize: 64, font: 'square' }),
+            new G.Button(660, 930, 600, 100, { text: 'BACK TO MENU', textSize: 52, onLeftClick: () => app.showMenu() }),
+        ];
+        return new Screen(app, controls);
+    }
+
     // ---------------------------------------------------------------- GuiWindowKeybinds
 
     function keybinds(app) {
@@ -805,5 +899,5 @@
         return screen;
     }
 
-    SSQE.Screens = { Screen, Picture, menu, create, settings, keybinds, wrapText };
+    SSQE.Screens = { Screen, Picture, menu, create, settings, keybinds, stats, credits, wrapText };
 })();
