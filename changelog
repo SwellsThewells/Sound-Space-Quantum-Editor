@@ -2,6 +2,23 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.13 - 10/16/2026 --
+
+Auto mapper (a fourth round of maps at 8, 9 and 10 in every mode, reviewed against the human maps):
+- a song keeps one style at every difficulty: a mixed map takes its lead from the same learned map at 8, 9 and 10,
+  and a jump map or a quantum map never leads a mixed one
+- no more fast there-and-back moves (out and straight back at stream or jump speed), which no human map has
+- jump maps take turns between jump phrases and stream phrases through their intense parts, as human jump maps do,
+  instead of a minute-long wall of jumps; the jump streams at 10 only go where something sounds
+- streams run on through two stream beats in a row and break before the strong sounds, instead of always seven
+  notes and a jump into every beat
+- a quiet lead-in before a drop and a song dying away at the end are left nearly empty, as human maps leave them
+- steady half-beat notes stay exactly on the beat, so a run of jumps keeps an even speed
+- a bar whose sounds only half fit takes the division of a bar with the same drums that fits clearly
+- Quantum: no more stretches of notes sitting just off the grid points (they looked like the 3x3 grid shifted a
+  little); quantum notes are clearly off the grid
+
+----------------------------------
    -- Plus 3.0.12 - 10/16/2026 --
 
 Auto mapper:
