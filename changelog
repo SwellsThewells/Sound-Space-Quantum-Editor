@@ -2,6 +2,22 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.24 - 10/17/2026 --
+
+- AUTO MAPPER: the Quantum checkbox is now a Quantum slider, 0-100% (on the Patterns tab and in More Options). 100%
+  is a fully quantum map. Lower, only some parts of the song are quantum (the more intense ones first), fewer and
+  tamer the lower you go: around 10% it's just a few quick runs bent into straight or curved lines between grid notes,
+  like the Bezier and Curve Bezier tools; around 50% some parts get real quantum jumps and slides, kept close to the
+  grid; from about 75% most of the song does. 0% is no quantum at all. (Quantum on before: the slider starts at 100%)
+- AUTO MAPPER: quantum now learns from the quantum maps you teach it, not the Ayumi example. It measures their design
+  (how much is off the grid and how far out it goes, how their jumps turn, how often they slide and how long and fast
+  the slides are, how much their streams stay on the grid) and averages it over all of them, then makes its own
+  patterns in that design. The Ayumi example is only used when it has learned no quantum maps
+- AUTO MAPPER: much less copy and paste. From a learned map it takes at most a few notes at a time (8 on the grid, 6
+  in quantum) and never just carries on with the next notes of the same map, so you get the maps' feel and not their
+  patterns pasted in; and repeated bars come back less often (still some, so it stays consistent with the song)
+
+----------------------------------
    -- Plus 3.0.23 - 10/17/2026 --
 
 - COLLABORATE: your play cursor on the grid (or your custom cursor image) no longer jumps around when someone else

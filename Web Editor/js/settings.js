@@ -80,7 +80,8 @@
         autoMapDensity: 100, // web only: % of the density the auto mapper learned
         autoMapDifficulty: 5, // web only: 1..10 (before star targets; still read when autoMapStars isn't set)
         autoMapStars: 5, // web only: the star rating the auto mapper aims its maps at (Rhythia's SR)
-        autoMapQuantum: false, // web only: the auto mapper may place notes off the 3x3 grid
+        autoMapQuantum: false, // web only: (before the Quantum slider) the auto mapper may place notes off the 3x3 grid
+        autoMapQuantumPct: 0, // web only: how much of an auto map is quantum, 0-100 (100: all of it)
         autoMapFlow: 70, // web only: auto mapper options (dialogs.autoMapOptions)
         autoMapFollow: 75,
         autoMapJump: 100,
@@ -170,6 +171,9 @@
                     else if (typeof saved[key] === typeof DEFAULTS[key])
                         s[key] = saved[key];
                 }
+                // (the old Quantum checkbox, on: the slider at 100%)
+                if (!('autoMapQuantumPct' in saved) && saved.autoMapQuantum === true)
+                    s.autoMapQuantumPct = 100;
             }
         } catch { /* storage unavailable */ }
         return s;

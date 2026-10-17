@@ -109,7 +109,7 @@
                     buffer, startMs: start, endMs: end, density: (s.autoMapDensity ?? 100) / 100, difficulty: s.autoMapDifficulty ?? 5,
                     stars: s.autoMapStars ?? 5,
                     timing,
-                    quantum: !!s.autoMapQuantum,
+                    quantum: Math.min(100, Math.max(0, s.autoMapQuantumPct ?? 0)) / 100,
                     before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
                     styleNotes: s.autoMapUseMap === false ? [] : notes.map(n => ({ x: n.x, y: n.y, ms: n.ms })),
                     count: s.autoMapCount || 0,
@@ -160,6 +160,11 @@
             G.Label.prototype.process.call(this, dt);
             this.text = `Stars: ${(s.autoMapStars ?? 5).toFixed(1)}`;
         };
+        const AutoMapQuantumLabel = label(370, 560, 175, 30, '', 30, { centerMode: None });
+        AutoMapQuantumLabel.process = function (dt) {
+            G.Label.prototype.process.call(this, dt);
+            this.text = `Quantum: ${Math.round(s.autoMapQuantumPct ?? 0)}%`;
+        };
         const AutoMapStats = label(370, 280, 175, 90, '', 24, { centerMode: None });
         AutoMapStats.process = function (dt) {
             G.Label.prototype.process.call(this, dt);
@@ -192,7 +197,7 @@
             label(370, 110, 175, 30, 'Density %:', 30, { centerMode: None }),
             numberBox(370, 140, 120, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [10, 400], get: () => s.autoMapDensity ?? 100, set: v => { s.autoMapDensity = v; saveS(); } }),
             AutoMapDifficultyLabel,
-            // (the star rating the map is aimed at, 1 to 12 in half stars)
+            // (the star rating the map is aimed at, 1 to 15 in tenths)
             slider(370, 230, 175, 32, () => ((s.autoMapStars ?? 5) - 1) * 10, v => { s.autoMapStars = Math.round(10 + v) / 10; saveS(); }, 140, 1, 40),
             AutoMapStats,
             button(370, 380, 175, 40, 'LEARN FROM MAPS', 27, async () => {
@@ -200,8 +205,10 @@
                 if (files && files.length)
                     SSQEAutoMapper.learnFiles(files, (text, error) => editor.toast(text, error ? 'error' : 'other'));
             }),
-            checkbox(370, 565, 'Quantum', 27, 'autoMapQuantum'),
-            button(370, 610, 175, 40, 'MORE OPTIONS', 27, () => app.dialogs.autoMapOptions(editor)),
+            // (how much of the map is quantum: 0 none, 100 all of it, in between some parts, tamer the lower)
+            AutoMapQuantumLabel,
+            slider(370, 590, 175, 32, () => s.autoMapQuantumPct ?? 0, v => { s.autoMapQuantumPct = Math.round(v); saveS(); }, 100, 1, 0),
+            button(370, 640, 175, 40, 'MORE OPTIONS', 27, () => app.dialogs.autoMapOptions(editor)),
             label(370, 480, 175, 30, 'Notes (0 = Auto):', 26, { centerMode: None }),
             numberBox(370, 510, 140, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [0, 100000], get: () => s.autoMapCount ?? 0, set: v => { s.autoMapCount = Math.round(v); saveS(); } }),
             button(370, 430, 175, 40, 'RESET LEARNING', 27, () => {

@@ -876,7 +876,7 @@
             choice('Fill Streams', 'autoMapFill', [['intense', 'In intense parts'], ['busy', 'Wherever the song is busy'], ['never', 'Never (only on sounds)']], 'intense', 'Whether streams are filled in between sounds where the song itself is busy');
             slider('Calm Parts', 'autoMapCalm', 0, 100, 5, 30, pct, 'How many notes calm parts (intros, breakdowns) get: 0% leaves them nearly empty');
             y += 6;
-            check('Quantum (notes off the 3x3 grid)', 'autoMapQuantum', false, 'A quantum map: quantum jumps, and in the more intense sections slides of notes so close together they play as one sweep, like the quantum example map (and quantum maps it learned); never grid patterns moved over');
+            slider('Quantum', 'autoMapQuantumPct', 0, 100, 1, 0, pct, 'How much of the map is quantum (notes off the 3x3 grid), in the design of the quantum maps it learned: 100% all of it, lower only some parts and tamer, around 10% just a few runs bent into lines and curves like the Bezier tool');
             check('Follow this map\'s own patterns', 'autoMapUseMap', true, 'The notes already in the map are the patterns it prefers');
             check('Set the detected BPM when the map has none', 'autoMapSetBpm', true, 'Adds the song\'s BPM as a timing point so the beat lines match');
             y += 8;

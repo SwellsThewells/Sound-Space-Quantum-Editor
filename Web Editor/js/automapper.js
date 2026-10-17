@@ -17,10 +17,13 @@
 // It also comes with example maps (automapperexamples.js): jump maps, stream maps and a quantum map, which lead when a
 // jump map, a stream map or quantum is asked for, and fill in while it has learned few maps.
 //
-// With the Quantum option, the notes are quantum jumps and quantum slides (notes so close together they play as one
-// sweep): the quantum parts of the example and learned maps, or ones made for the spot and rhythm (quantumRun). Grid
-// patterns are only ever moved by whole cells, never by part of one: a grid pattern sitting off the grid isn't quantum
-// mapping.
+// Quantum (0-100%): at 100% the notes are quantum jumps and quantum slides (notes so close together they play as one
+// sweep), made for the spot and rhythm (quantumRun) in the design of the quantum maps it learned, averaged
+// (quantumProfile: how far off and out they go, how their jumps turn, their slides), with short figures from those maps
+// now and then; the example map's design only when it learned none. Lower, only some parts are quantum, fewer and
+// tamer the lower, and around 10% only a few quick runs bent onto lines and curves between grid notes (bendCurves).
+// Grid patterns are only ever moved by whole cells, never by part of one: a grid pattern sitting off the grid isn't
+// quantum mapping. From any learned map it takes a few notes at a time (its feel), never a long stretch.
 //
 // What it learns is stored in the browser (IndexedDB, see customassets.js).
 window.SSQEAutoMapper = (function () {
@@ -2403,6 +2406,141 @@ window.SSQEAutoMapper = (function () {
             gapT: timeMedian(gaps),
         };
     }
+    // A quantum map's design, measured: how much of it is off the grid and outside it (r90: how far out from the
+    // middle nine notes in ten stay, 1 being the grid's edge), how often its jumps land off the grid, its slides
+    // (notes under 30ms apart: what share of the notes, how many in a row, how far each step and how fast, how much
+    // each step bends), how its jumps turn (a share for each 30 degrees, 0-30 to 150-180, and how often the next
+    // turn is the same way) and what its spots are snapped to (a quarter of a cell, an eighth, ...)
+    function quantumStyleOf(e) {
+        const n = Math.min(e.t.length, 6000);
+        let quickN = 0, quickOff = 0, quickOut = 0;
+        let off = 0, outside = 0, land = 0, landOff = 0, inSlides = 0, run = 0, same = 0, turnsN = 0, lastSign = 0, bendSum = 0, bendN = 0;
+        const rs = [], runs = [], steps = [], speeds = [], hist = [0, 0, 0, 0, 0, 0], jumps = [];
+        const snapFit = { 2: 0, 4: 0, 8: 0, 12: 0, 16: 0 };
+        let snapN = 0;
+        const angle = (ax, ay, bx, by) => Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
+        for (let i = 0; i < n; i++) {
+            const x = e.x[i], y = e.y[i];
+            rs.push(Math.max(Math.abs(x - 1), Math.abs(y - 1)));
+            if (realQuantum(x, y)) {
+                off++;
+                for (const v of [x, y])
+                    if (!isWhole(v)) {
+                        snapN++;
+                        for (const k in snapFit)
+                            if (Math.abs(v * k - Math.round(v * k)) < 0.03 * k / 4 + 0.02)
+                                snapFit[k]++;
+                    }
+            }
+            if (rs[i] > 1.02)
+                outside++;
+            if (i === 0)
+                continue;
+            const g = e.t[i] - e.t[i - 1], dx = x - e.x[i - 1], dy = y - e.y[i - 1], d = Math.hypot(dx, dy);
+            if (g < 30 && g > 2 && d > 0.01) {
+                run++;
+                steps.push(d);
+                speeds.push(d / g * 1000);
+                if (i >= 2 && run >= 2) {
+                    const px = e.x[i - 1] - e.x[i - 2], py = e.y[i - 1] - e.y[i - 2];
+                    if (Math.hypot(px, py) > 0.01) {
+                        bendSum += Math.abs(angle(px, py, dx, dy));
+                        bendN++;
+                    }
+                }
+            } else {
+                if (run >= 2) {
+                    runs.push(run);
+                    inSlides += run;
+                }
+                run = 0;
+            }
+            if (g >= 30 && g < 60 && d > 0.01) {
+                quickN++;
+                if (realQuantum(x, y))
+                    quickOff++;
+                if (rs[i] > 1.02)
+                    quickOut++;
+            }
+            if (g >= 60 && d >= 0.3) {
+                land++;
+                if (realQuantum(x, y))
+                    landOff++;
+                jumps.push(d);
+                if (i >= 2) {
+                    const g0 = e.t[i - 1] - e.t[i - 2], px = e.x[i - 1] - e.x[i - 2], py = e.y[i - 1] - e.y[i - 2];
+                    if (g0 >= 60 && Math.hypot(px, py) >= 0.3) {
+                        const a = angle(px, py, dx, dy);
+                        hist[Math.min(5, Math.floor(Math.abs(a) / (Math.PI / 6)))]++;
+                        const sg = Math.sign(a);
+                        if (sg && sg === lastSign)
+                            same++;
+                        lastSign = sg;
+                        turnsN++;
+                    }
+                }
+            }
+        }
+        const med = list => {
+            const v = list.slice().sort((p, q) => p - q);
+            return v.length ? v[v.length >> 1] : 0;
+        };
+        const sortedR = rs.slice().sort((p, q) => p - q);
+        let snap = 100;
+        for (const k of [2, 4, 8, 12, 16])
+            if (snapN && snapFit[k] >= 0.75 * snapN) {
+                snap = k;
+                break;
+            }
+        return {
+            off: off / Math.max(1, n), outside: outside / Math.max(1, n), r90: sortedR[Math.floor(0.9 * (sortedR.length - 1))] || 1,
+            landOff: land ? landOff / land : 0.5, quickOff: quickN ? quickOff / quickN : 0.5, quickOut: quickN ? quickOut / quickN : 0.3, slideShare: inSlides / Math.max(1, n), slideLen: med(runs) || 4,
+            slideStep: med(steps) || 0.2, slideSpeed: med(speeds) || 12, slideBend: bendN ? bendSum / bendN : 0.15,
+            turns: turnsN ? hist.map(v => v / turnsN) : [0.2, 0.2, 0.2, 0.2, 0.1, 0.1], sameSide: turnsN ? same / turnsN : 0.5,
+            jump: med(jumps) || 2, snap,
+        };
+    }
+    // The design to make quantum parts in: the average of the quantum maps it learned (each counting the same: a mix
+    // of them, not a copy of one), or of the quantum example that comes with the editor when it learned none
+    function quantumProfile(entries) {
+        const list = entries.filter(e => e.n >= 40 && e.style && e.style.off >= 0.2);
+        if (!list.length)
+            return null;
+        const all = list.map(e => e.qstyle || (e.qstyle = quantumStyleOf(e)));
+        const avg = k => all.reduce((t, p) => t + p[k], 0) / all.length;
+        const P = {};
+        for (const k of ['off', 'outside', 'r90', 'landOff', 'quickOff', 'quickOut', 'slideShare', 'slideLen', 'slideStep', 'slideSpeed', 'slideBend', 'sameSide', 'jump'])
+            P[k] = avg(k);
+        P.turns = [0, 1, 2, 3, 4, 5].map(b => all.reduce((t, p) => t + p.turns[b], 0) / all.length);
+        P.snap = Math.max(...all.map(p => p.snap));
+        P.maps = list.map(e => e.name);
+        return P;
+    }
+    // The profile at a Quantum level (0-1): at the top, the learned design as it is; lower down tamer, closer to the
+    // grid (fewer spots off it, nothing far outside it, fewer and shorter slides, gentler turns, coarser spots)
+    function profileAt(P, level) {
+        const L = Math.min(1, Math.max(0, level));
+        const gentle = [0.4, 0.3, 0.18, 0.08, 0.04, 0];
+        const toward = (v, l) => Math.min(0.95, v * (0.4 + 0.6 * l) + (1 - v) * 0.7 * l * l);
+        const turns = P.turns.map((v, b) => gentle[b] + (v - gentle[b]) * L);
+        const tot = turns.reduce((t, v) => t + v, 0) || 1;
+        return {
+            ...P, level: L,
+            // (how much is off the grid goes with the level, from the learned design's own share: at 100% most of it,
+            // even when the maps it learned stream on the grid between their quantum parts; what it looks like
+            // stays theirs)
+            landOff: toward(P.landOff, L),
+            quickOff: toward(P.quickOff, L),
+            off: toward(P.off, L),
+            outside: P.outside * L,
+            r90: 1 + Math.max(0, P.r90 - 1) * L,
+            slideShare: P.slideShare * Math.pow(L, 1.3),
+            slideLen: Math.max(3, P.slideLen * (0.6 + 0.4 * L)),
+            turns: turns.map(v => v / tot),
+            snap: L < 0.5 ? Math.min(P.snap, 4) : L < 0.8 ? Math.min(P.snap, 8) : P.snap,
+        };
+    }
+
     // The gap the notes spend half their time in (gaps under a second): what the map's rhythm is mostly like to
     // play. Unlike the plain median, it barely changes with how many notes there are, so a song mapped at 8, 9 and
     // 10 compares with the learned maps the same way.
@@ -2743,7 +2881,11 @@ window.SSQEAutoMapper = (function () {
     // as quantum slides and jumps wherever they can be played
     const QUANTUM_WANT = 0.8;
     // (made-up quantum runs come after the learned maps' own quantum patterns, when those fit as well)
+    // (with a learned design to follow, the other way round: runs made in that design first, and a learned figure of
+    // at most QUANTUM_MOTIF notes now and then)
     const MADE_COST = 0.45;
+    const QUANTUM_MOTIF = 6;
+    const LEARNED_RUN = 8;
     // (how much less an example map that comes with the editor is wanted than a map it learned)
     const EXAMPLE_COST = 0.3;
     // (how much a lap round the outside is wanted over a stream from the learned maps)
@@ -2761,7 +2903,7 @@ window.SSQEAutoMapper = (function () {
             [x[q], y[q]] = SYM[k](e.x[i + q - 1], e.y[i + q - 1]);
             t[q] = e.t[i + q - 1];
         }
-        return { name: e.name, x, y, t, n, quantum: true, cleanUntil: new Int32Array(n).fill(n), wholeUntil: new Int32Array(n), source: e };
+        return { name: e.name, x, y, t, n, quantum: true, cleanUntil: new Int32Array(n).fill(n), wholeUntil: new Int32Array(n), source: e, srcI: i - 1 };
     }
     const snapTo = (v, d) => Math.round(v * d) / d;
 
@@ -2773,7 +2915,20 @@ window.SSQEAutoMapper = (function () {
     //          time like a spin
     // (sizeOf(q): how big the jump into note q + 1 should be, from its own gap)
     // (sizeOf(q): the move wanted into note q + 1; quickAt(q): whether that note is a quick one, a stream's)
-    function quantumRun(kind, start, before, gaps, J, sizeOf = null, quickAt = null) {
+    // (P: the quantum design to follow, see quantumProfile and profileAt: how its jumps turn, how far out it goes, how
+    // often it lands off the grid, its slides' bend and what its spots snap to)
+    function quantumRun(kind, start, before, gaps, J, sizeOf = null, quickAt = null, P = null) {
+        const snapD = P ? P.snap : 12;
+        // (a turn for a jump, as the design's jumps turn: which 30 degrees by how often it turns that much)
+        const turnOf = () => {
+            let r = Math.random();
+            for (let b = 0; b < 6; b++) {
+                r -= P.turns[b];
+                if (r <= 0)
+                    return (b + Math.random()) * Math.PI / 6;
+            }
+            return (5 + Math.random()) * Math.PI / 6;
+        };
         const n = gaps.length + 1;
         const x = new Float64Array(n), y = new Float64Array(n), t = new Float64Array(n);
         x[0] = start.x;
@@ -2786,8 +2941,9 @@ window.SSQEAutoMapper = (function () {
             ? Math.atan2(start.y - before.y, start.x - before.x) : Math.random() * 2 * Math.PI;
         let step = 0;
         if (kind === 'slide') {
-            step = Math.min(0.75, Math.max(0.2, J * (0.45 + 0.3 * Math.random())));
-            let turn = (Math.random() < 0.5 ? -1 : 1) * (0.06 + 0.3 * Math.random());
+            step = P ? Math.min(0.75, Math.max(0.15, P.slideStep * (0.8 + 0.4 * Math.random())))
+                : Math.min(0.75, Math.max(0.2, J * (0.45 + 0.3 * Math.random())));
+            let turn = (Math.random() < 0.5 ? -1 : 1) * (P ? Math.min(0.45, P.slideBend) * (0.4 + 0.8 * Math.random()) : 0.06 + 0.3 * Math.random());
             let px = start.x, py = start.y;
             for (let q = 1; q < n; q++) {
                 if (q % 8 === 0 && Math.random() < 0.35)
@@ -2800,8 +2956,8 @@ window.SSQEAutoMapper = (function () {
                 }
                 px = clamp(px + Math.cos(ang) * step);
                 py = clamp(py + Math.sin(ang) * step);
-                x[q] = snapTo(px, 12);
-                y[q] = snapTo(py, 12);
+                x[q] = snapTo(px, snapD);
+                y[q] = snapTo(py, snapD);
             }
         } else {
             // spins (turning 100-150 degrees each jump: triangles and stars), zigzags (nearly straight back and
@@ -2820,7 +2976,13 @@ window.SSQEAutoMapper = (function () {
             let spinLeft = 5 + Math.floor(Math.random() * 5);
             for (let q = 1; q < n; q++) {
                 const quick = !!(quickAt && quickAt(q - 1));
-                if (!quick && shape >= 0.45 && shape < 0.75)
+                // (following a design: the same way round as the last turn as often as its jumps do, and landing off
+                // the grid as often as they do, on a cell or half a cell otherwise)
+                const offHere = !P || Math.random() < (quick ? P.quickOff : P.landOff);
+                if (P) {
+                    if (!quick && Math.random() > P.sameSide)
+                        dir = -dir;
+                } else if (!quick && shape >= 0.45 && shape < 0.75)
                     dir = -dir;
                 else if (!quick && --spinLeft <= 0) {
                     dir = -dir;
@@ -2840,17 +3002,25 @@ window.SSQEAutoMapper = (function () {
                     // (an arc that would run into the edge bends harder, or the other way, rather than stopping; a quick
                     // jump that can't curve on turns 75-130 degrees either way before anything sharper)
                     const a2 = quick ? ang + (c < 16 ? arc * bend * (0.8 + 0.4 * Math.random()) : -arc * (0.3 + 1.1 * Math.random()))
+                        : P && c < 24 ? ang + dir * turnOf() + (Math.random() - 0.5) * 0.2
                         : c < 24 ? ang + dir * (slowGap || shape >= 0.75 ? bendOf() : (0.22 + 0.2 * Math.random()) * Math.PI) + (Math.random() - 0.5) * 0.4
                         : c < 32 && !slowGap ? ang + (Math.random() < 0.5 ? -1 : 1) * (0.42 + 0.3 * Math.random()) * Math.PI
                         : Math.random() * 2 * Math.PI;
                     const d = size * (quick ? 0.8 + 0.4 * Math.random() : 0.95 + 0.3 * Math.random());
                     // (a spot past the edge isn't moved onto it: that gives jumps back and forth along the edge)
-                    const cx = snapTo(x[q - 1] + Math.cos(a2) * d, 12), cy = snapTo(y[q - 1] + Math.sin(a2) * d, 12);
+                    let cx = snapTo(x[q - 1] + Math.cos(a2) * d, snapD), cy = snapTo(y[q - 1] + Math.sin(a2) * d, snapD);
+                    // (on the grid instead: a jump onto a cell or half a cell, a quick note onto a cell, a stream's step)
+                    if (!offHere) {
+                        const k = quick ? 1 : 2;
+                        cx = Math.min(2, Math.max(0, Math.round(cx * k) / k));
+                        cy = Math.min(2, Math.max(0, Math.round(cy * k) / k));
+                    }
                     const real = Math.hypot(cx - x[q - 1], cy - y[q - 1]);
-                    if (cx !== clamp(cx) || cy !== clamp(cy) || nearGrid(cx, cy) || real < Math.min(0.6, 0.5 * size))
+                    if (cx !== clamp(cx) || cy !== clamp(cy) || (offHere && nearGrid(cx, cy)) || real < Math.min(quick && !offHere ? 0.9 : 0.6, 0.5 * size))
                         continue;
-                    // (keeping to the grid and just round it, as quantum maps mostly do)
-                    let score = Math.abs(Math.log(real / size)) + 0.1 * Math.random() + 2 * Math.max(0, Math.max(Math.abs(cx - 1), Math.abs(cy - 1)) - 1.2);
+                    // (keeping to the grid and just round it, as quantum maps mostly do: as far out as the design goes)
+                    let score = Math.abs(Math.log(real / size)) + 0.1 * Math.random() + 2 * Math.max(0, Math.max(Math.abs(cx - 1), Math.abs(cy - 1)) - (P ? P.r90 + 0.05 : 1.2))
+                        + (P && Math.max(Math.abs(cx - 1), Math.abs(cy - 1)) > 1.02 ? 0.6 * (1 - P.outside) : 0);
                     for (let back = 2; back <= 6; back++)
                         if (q >= back && Math.hypot(cx - x[q - back], cy - y[q - back]) < 0.35)
                             score += 1;
@@ -2876,7 +3046,7 @@ window.SSQEAutoMapper = (function () {
                 for (let turn = 10; !best && turn <= 180; turn += 10)
                     for (const side of [1, -1]) {
                         const a2 = ang + side * turn * Math.PI / 180, d = Math.max(size, 0.5);
-                        const cx = snapTo(x[q - 1] + Math.cos(a2) * d, 12), cy = snapTo(y[q - 1] + Math.sin(a2) * d, 12);
+                        const cx = snapTo(x[q - 1] + Math.cos(a2) * d, snapD), cy = snapTo(y[q - 1] + Math.sin(a2) * d, snapD);
                         if (!best && cx === clamp(cx) && cy === clamp(cy) && realQuantum(cx, cy)) {
                             best = { x: cx, y: cy };
                             if (quick)
@@ -2886,7 +3056,7 @@ window.SSQEAutoMapper = (function () {
                 if (!best) {
                     const tx = 1 - x[q - 1], ty = 1 - y[q - 1], tl = Math.max(1e-6, Math.hypot(tx, ty));
                     const d = Math.min(tl + 0.5, Math.max(size, 0.5));
-                    best = { x: clamp(snapTo(x[q - 1] + tx / tl * d, 12)), y: clamp(snapTo(y[q - 1] + ty / tl * d, 12)) };
+                    best = { x: clamp(snapTo(x[q - 1] + tx / tl * d, snapD)), y: clamp(snapTo(y[q - 1] + ty / tl * d, snapD)) };
                 }
                 x[q] = best.x;
                 y[q] = best.y;
@@ -3271,8 +3441,12 @@ window.SSQEAutoMapper = (function () {
             // copy e[i + 1 ...] after e[i], which lands on prev
             const f = SYM[k];
             const J = e.target || runJump;
-            const len = Math.min(gaps.length, e.n - i - 1, opts.quantum ? Infinity : e.wholeUntil[i + 1] - i - 1,
-                e.cleanUntil[i + 1] - i - 1);
+            // (quantum: what it takes from a learned map is a short figure, a few notes, not a stretch of it copied;
+            // the rest is made in the maps' design, see quantumRun)
+            // (and on the grid at most LEARNED_RUN notes of a learned map at a time: its feel, not a copy of it; the map
+            // being made is the exception, its own patterns can carry on)
+            const len = Math.min(gaps.length, e.n - i - 1, opts.quantum ? (e.made || !opts.qp ? Infinity : QUANTUM_MOTIF) : e.wholeUntil[i + 1] - i - 1,
+                e.cleanUntil[i + 1] - i - 1, e.made || e.bonus || opts.quantum ? Infinity : LEARNED_RUN);
             if (len < Math.min(opts.loose ? 1 : 3, gaps.length))
                 return;
             // starting fresh (nothing to land on): the move from the last note placed still has to be playable
@@ -3297,7 +3471,8 @@ window.SSQEAutoMapper = (function () {
                 const [x, y] = f(e.x[i + q + 1], e.y[i + q + 1]);
                 if (x + ox < bounds[0] - 1e-6 || x + ox > bounds[1] + 1e-6 || y + oy < bounds[0] - 1e-6 || y + oy > bounds[1] + 1e-6)
                     break;
-                if (opts.quantum && !e.made) {
+                // (unless the design itself streams on the grid between its quantum parts)
+                if (opts.quantum && !e.made && (!opts.qp || opts.qp.off > 0.6)) {
                     nearRun = nearGrid(x + ox, y + oy) ? nearRun + 1 : 0;
                     if (nearRun >= 3)
                         break;
@@ -3591,15 +3766,28 @@ window.SSQEAutoMapper = (function () {
             cost -= 0.006 * used_len;
             // Quantum: real quantum patterns (from quantum maps, or quantum slides and jumps made for here) are
             // wanted over notes on the grid
+            // (with a learned design: as much off the grid as it is, over the last notes and this run together, not
+            // as much as possible)
+            if (opts.quantum && opts.qp) {
+                const before = (opts.recentPts || []).filter(([px, py]) => realQuantum(px, py)).length, had = (opts.recentPts || []).length;
+                cost += 1.6 * Math.abs((before + off) / Math.max(1, had + used_len) - opts.qp.off) - 0.4;
+            }
             if (opts.quantum)
-                cost -= QUANTUM_WANT * off / used_len - 1.2 * lattice / used_len - (e.made ? MADE_COST + e.extra + (opts.lastName === e.name ? 0.4 : 0) : 0);
+                cost -= (opts.qp ? 0 : QUANTUM_WANT * off / used_len) - 1.2 * lattice / used_len - (e.made ? (opts.qp ? 0.1 : MADE_COST) + e.extra + (opts.lastName === e.name ? 0.4 : 0) : opts.qp ? 0.15 : 0);
             else if (e.made)
                 // (laps round the outside are what a stream on the grid is wanted to do: one plan, turning with the
                 // song, rather than pieces of the learned maps one after another)
                 cost += e.name === 'stream ring' ? -(opts.ringWant ?? RING_WANT) : (e.name === 'stream reverse' ? 0.8 : 0.15) + (opts.lastName === e.name ? 0.3 : 0);
             // keeps to one map's design rather than hopping between maps; at a change in the music (a new section,
             // a drop bringing in something new) it does the opposite and starts a new pattern
-            if (opts.lastEntry === e) {
+            // (quantum with a learned design: a figure from a learned map never carries straight on from the last one
+            // taken from it, which would be copying a stretch of it a few notes at a time)
+            if (opts.quantum && opts.qp && !e.made && opts.lastEntry === (e.source || e) && Math.abs((e.srcI ?? i) - opts.lastEnd) < 12)
+                cost += 0.8;
+            // (nor on the grid: the same map's design again is fine, the next notes of it straight on are a copy)
+            else if (!opts.quantum && !e.made && !e.bonus && opts.lastEntry === e && Math.abs(i - opts.lastEnd) < 12)
+                cost += 0.5;
+            else if (opts.lastEntry === e) {
                 if (opts.fresh)
                     cost += Math.abs(i - opts.lastEnd) < 64 ? 0.5 : 0.1;
                 else
@@ -3685,7 +3873,7 @@ window.SSQEAutoMapper = (function () {
                 consider(e, Math.floor(Math.random() * 8), Math.floor(Math.random() * (e.n - 2)), 0, 0);
             }
         // In fast parts on the grid: stream shapes made for here, so it isn't the same loop round the outside every time
-        if (!opts.quantum && prev && isWhole(prev.x) && isWhole(prev.y) && gaps.length >= 4) {
+        if ((!opts.quantum || (opts.qp && opts.qp.quickOff < 0.5)) && prev && isWhole(prev.x) && isWhole(prev.y) && prev.x >= 0 && prev.x <= 2 && prev.y >= 0 && prev.y <= 2 && gaps.length >= 4) {
             const g = gaps.slice(1).sort((p, q) => p - q);
             // (not where a jump map wants jumps: notes far enough apart to jump between aren't a stream)
             if (g[g.length >> 1] < Math.min(95, opts.patterns === 'jumps' ? opts.jumpGap || 95 : 95))
@@ -3697,11 +3885,12 @@ window.SSQEAutoMapper = (function () {
         // With the Quantum option: quantum parts of the learned maps, jumped into from here (quantum notes seldom
         // land exactly where a learned run starts), and quantum slides and jumps made for exactly this spot and rhythm
         if (opts.quantum) {
-            const quantumMaps = lib.filter(e => e.style && e.style.off >= 0.3);
+            const quantumMaps = opts.qlib || lib.filter(e => e.style && e.style.off >= 0.3);
             for (let s = 0; prev && quantumMaps.length && s < 160; s++) {
                 const e = quantumMaps[Math.floor(Math.random() * quantumMaps.length)];
                 const i = Math.floor(Math.random() * (e.n - 2));
-                if (!nearGrid(e.x[i], e.y[i]))
+                // (from its quantum spots, or as often as its own notes are on the grid, from those too)
+                if (!nearGrid(e.x[i], e.y[i]) || (opts.qp && Math.random() > opts.qp.off))
                     consider(jumpInto(e, Math.floor(Math.random() * 8), i, prev, gaps), 0, 0, 0, 0);
             }
             const start = prev || opts.anchor || { x: 0.5 + Math.random() * 1.5, y: 0.5 + Math.random() * 1.5 };
@@ -3727,10 +3916,13 @@ window.SSQEAutoMapper = (function () {
             // (a made-up slide only through really quick notes: from about 45ms apart quantum maps jump on every
             // note, and a slide there is a crawl)
             const quick = gm < 45;
+            // (a stream of tiny quantum steps as often as the design's quick notes are off the grid; otherwise its
+            // streams are the grid's, above)
+            const slideOk = quick && (!opts.qp || Math.random() < opts.qp.quickOff);
             for (let s = 0; s < 4; s++) {
-                if (quick)
-                    consider(quantumRun('slide', start, prev2, gaps, opts.jump), 0, 0, 0, 0);
-                consider(quantumRun('jumps', start, prev2, gaps, big, sizeOf, quickAt), 0, 0, 0, 0);
+                if (slideOk)
+                    consider(quantumRun('slide', start, prev2, gaps, opts.jump, null, null, opts.qp), 0, 0, 0, 0);
+                consider(quantumRun('jumps', start, prev2, gaps, big, sizeOf, quickAt, opts.qp), 0, 0, 0, 0);
             }
         }
 
@@ -3806,7 +3998,9 @@ window.SSQEAutoMapper = (function () {
         const before = (opts.before || []).slice(-2);
         let prev = before.length ? before[before.length - 1] : null;
         let prev2 = before.length > 1 ? before[0] : null;
-        if (prev && !opts.quantum && (!isWhole(prev.x) || !isWhole(prev.y)))
+        // (which notes are quantum: all of them with Quantum at 100%, else those in the parts picked for it)
+        const qAtI = q => opts.qAt ? opts.qAt(times[Math.min(times.length - 1, q)]) : !!opts.quantum;
+        if (prev && !qAtI(0) && (!isWhole(prev.x) || !isWhole(prev.y)))
             prev = { x: Math.min(2, Math.max(0, Math.round(prev.x))), y: Math.min(2, Math.max(0, Math.round(prev.y))), ms: prev.ms };
         const used = new Map();
         const history = new Set();
@@ -3840,7 +4034,9 @@ window.SSQEAutoMapper = (function () {
         const variety = (opts.runOptions && opts.runOptions.variety) ?? 0.5;
         const copyFrom = bars.map(() => -1);
         bars.forEach((b, j) => {
-            for (const [p, chance] of [[b.proto, 0.95 - 0.6 * variety], [b.like ?? -1, 0.6 - 0.4 * variety]]) {
+            // (less often than it used to: a bar copied over and over reads as copy and paste; repeats now and then
+            // keep it consistent)
+            for (const [p, chance] of [[b.proto, 0.8 - 0.55 * variety], [b.like ?? -1, 0.45 - 0.3 * variety]]) {
                 if (p < 0 || p >= j || !countOf[j] || countOf[j] !== countOf[p])
                     continue;
                 let same = true;
@@ -3877,6 +4073,10 @@ window.SSQEAutoMapper = (function () {
             const p = copyFrom[j], src = placedIn[p];
             if (src.length !== countOf[j])
                 return false;
+            // (a quantum bar only comes back in a quantum part, a grid bar in a grid part)
+            const qi = qAtI(i);
+            if (qAtI(firstOf[p]) !== qi)
+                return false;
             const J = jumpAt(times[i]), flow = (opts.runOptions && opts.runOptions.flow) ?? 0.7;
             const phrase = j > 0 && copied[j - 1] && copied[j - 1].p === p - 1 && p < j - 1;
             let best = null;
@@ -3901,7 +4101,7 @@ window.SSQEAutoMapper = (function () {
                     }
                     const want = opts.sizeAt ? opts.sizeAt(i, g0) : J;
                     // (a stream's quick notes join on a cell at a time, not with a skip of two cells)
-                    if (!opts.quantum && g0 < 70 && d0 > 1.5 * Math.max(want, 1))
+                    if (!qi && g0 < 70 && d0 > 1.5 * Math.max(want, 1))
                         continue;
                     cost += Math.abs(Math.log((d0 + 0.15) / (want + 0.15)));
                 }
@@ -3912,25 +4112,25 @@ window.SSQEAutoMapper = (function () {
                     cost += p === j - 1 ? 1.5 : 0.35;
                 // (a bar going round a loop comes back mirrored, going round the other way, rather than as more laps)
                 const before = out.slice(-12).map(nt => [nt.x, nt.y]);
-                cost += 2 * Math.max(0, lapCount(before.concat(pos), before.length, opts.quantum ? 0.3 : 1e-3) / pos.length - LAPS_OK);
-                if (opts.quantum)
+                cost += 2 * Math.max(0, lapCount(before.concat(pos), before.length, qi ? 0.3 : 1e-3) / pos.length - LAPS_OK);
+                if (qi)
                     cost += 0.08 * Math.max(0, turnStreak(out.slice(-24).map(nt => [nt.x, nt.y]).concat(pos)) - 16);
                 // (and no awkward spot where it joins on)
                 const tail = out.slice(-4);
                 const joined = tail.concat(pos.map(([px, py], q) => ({ x: px, y: py, ms: times[i + q] })));
                 const aw = awkward(joined, tail.length), tm = timing(joined, tail.length, opts.runOptions);
-                cost += ((opts.quantum ? 0.5 : 2) * aw.flowBreak + aw.snapBreak + 0.7 * aw.spacingJump
+                cost += ((qi ? 0.5 : 2) * aw.flowBreak + aw.snapBreak + 0.7 * aw.spacingJump
                     + tm.smallJump + 0.4 * tm.speedJump + 0.5 * tm.rightJump + tm.tooFast) / Math.max(4, pos.length) * 4;
                 // The join, both turns of it (onto the copy's first note and on to its second), played like any other
                 // two moves: not turning harder than the difficulty allows, no sudden change of speed or direction
                 // beyond what flowing maps do, and no snapping straight back at speed unless the notes before were
                 // doing just that (a zigzag of jumps)
-                const T0 = prev && streamTurn(prev2, prev, { x: pos[0][0], y: pos[0][1], ms: times[i] }, opts.quantum ? 100 : 160);
+                const T0 = prev && streamTurn(prev2, prev, { x: pos[0][0], y: pos[0][1], ms: times[i] }, qi ? 100 : 160);
                 if (prev && (thereAndBack(prev2, prev, { x: pos[0][0], y: pos[0][1], ms: times[i] }) || (T0 !== null && Math.abs(T0) >= 120)))
                     continue;
                 if (prev && pos.length >= 2) {
                     const P0 = { x: pos[0][0], y: pos[0][1], ms: times[i] }, P1 = { x: pos[1][0], y: pos[1][1], ms: times[i + 1] };
-                    const T1 = streamTurn(prev, P0, P1, opts.quantum ? 100 : 160);
+                    const T1 = streamTurn(prev, P0, P1, qi ? 100 : 160);
                     if (thereAndBack(prev, P0, P1) || (T1 !== null && Math.abs(T1) >= 120))
                         continue;
                     const t1 = (P0.ms - prev.ms) / 1000, t2 = (P1.ms - P0.ms) / 1000;
@@ -4021,7 +4221,7 @@ window.SSQEAutoMapper = (function () {
                 const base = t % 2 === 0 ? backA + (Math.random() < 0.5 ? -1 : 1) * (0.7 + 0.7 * Math.random())
                     : toMid + (Math.random() * 2 - 1) * 1.05;
                 // (bending a little each note, never more than about two right angles over the whole slide)
-                const turn = (Math.random() * 2 - 1) * Math.min(0.3, 2 / n);
+                const turn = (Math.random() * 2 - 1) * Math.min(0.3, 2 / n, opts.qp ? 0.05 + 0.8 * opts.qp.slideBend : 0.3);
                 // (one smooth curve: a slide that snakes from side to side flicks against its own flow on every note)
                 let a = base, x = start.x, y = start.y, edge = 0, overlap = 0, out2 = 0, sharp = 0, walls = 0, against = 0;
                 const pts = [], path = [[x, y]];
@@ -4029,7 +4229,7 @@ window.SSQEAutoMapper = (function () {
                     a += turn;
                     let nx = x + Math.cos(a) * step, ny = y + Math.sin(a) * step;
                     // (curving in before the edge: turned towards the middle, a little at a time)
-                    if (rOf(nx, ny) > 1.3) {
+                    if (rOf(nx, ny) > (opts.qp ? Math.max(1.05, opts.qp.r90 + 0.05) : 1.3)) {
                         const m = Math.atan2(1 - y, 1 - x);
                         let d = Math.atan2(Math.sin(m - a), Math.cos(m - a));
                         a += Math.max(-0.35, Math.min(0.35, d));
@@ -4051,7 +4251,7 @@ window.SSQEAutoMapper = (function () {
                     const r = rOf(px, py);
                     if (r >= 0.5 && r <= 1.15)
                         edge++;
-                    out2 += Math.max(0, r - 1.3);
+                    out2 += Math.max(0, r - (opts.qp ? Math.max(1.05, opts.qp.r90 + 0.05) : 1.3));
                     const pt = [Math.round(px * 100) / 100, Math.round(py * 100) / 100], last = pts.length ? pts[pts.length - 1] : [start.x, start.y];
                     // (never the same spot twice, nor back on the note two before: a hairpin inside the sweep)
                     if (Math.hypot(pt[0] - last[0], pt[1] - last[1]) < 0.02)
@@ -4203,17 +4403,17 @@ window.SSQEAutoMapper = (function () {
             }
             remember();
             const ropts = {
-                ...(opts.jumpPart && opts.jumpPart(times[i]) ? opts.jumpRunOptions : opts.runOptions), quantum: !!opts.quantum, jump: jumpAt(times[i]), vmax: opts.vmax, history,
+                ...(opts.qAt && qAtI(i) ? opts.qRunOptions : opts.jumpPart && opts.jumpPart(times[i]) ? opts.jumpRunOptions : opts.runOptions), quantum: qAtI(i), jump: jumpAt(times[i]), vmax: opts.vmax, history,
                 // (the comfortable speed goes up and down with the sections too)
                 comfort: opts.runOptions && opts.runOptions.comfort ? opts.runOptions.comfort * (opts.levelAt ? opts.levelAt(times[i]) : 1) : undefined,
                 calm: opts.calmAt ? opts.calmAt(times[i]) : 1,
                 speedCap: opts.speedCap, accelCap: opts.accelCap, recentSpeed: recentSpeed(), recentMoves: recentMoves(), fresh,
-                lastEntry: lastRun && lastRun.e, lastEnd: lastRun ? lastRun.i + lastRun.len : 0, lastK: lastRun && lastRun.k,
+                lastEntry: lastRun && (lastRun.e.source || lastRun.e), lastEnd: lastRun ? (lastRun.e.srcI ?? lastRun.i) + lastRun.len : 0, lastK: lastRun && lastRun.k,
                 lastName: lastRun && lastRun.e.name, slidesOn: !!slideNear[i],
                 recentPts: out.slice(-24).map(nt => [nt.x, nt.y]), recentNotes: out.slice(-4),
                 acc: opts.accents ? opts.accents.subarray(i, i + gaps.length) : null,
                 fast: opts.fastAt ? opts.fastAt.subarray(i, i + gaps.length) : null,
-                weak: opts.weakAt ? opts.weakAt.subarray(i, i + gaps.length) : null,
+                weak: opts.weakAt && !qAtI(i) ? opts.weakAt.subarray(i, i + gaps.length) : null,
             };
             // nothing carries on from here: anything that does, then a fresh start (still a playable move away)
             let run = findRun(lib, gaps, prev, prev2, ropts, used)
@@ -4226,7 +4426,7 @@ window.SSQEAutoMapper = (function () {
                     recentSpeed: relax > 6 ? Infinity : ropts.recentSpeed * relax,
                 }, used);
             if (!run) {
-                const note = stepNote(prev, prev2, times[i], prev && opts.sizeAt ? opts.sizeAt(i, times[i] - prev.ms) : jumpAt(times[i]), opts);
+                const note = stepNote(prev, prev2, times[i], prev && opts.sizeAt ? opts.sizeAt(i, times[i] - prev.ms) : jumpAt(times[i]), { ...opts, quantum: qAtI(i) });
                 out.push(note);
                 if (barOf[i] >= 0)
                     placedIn[barOf[i]].push(out.length - 1);
@@ -4241,6 +4441,65 @@ window.SSQEAutoMapper = (function () {
             copyRun(run);
         }
         turn(out, locked);
+        return out;
+    }
+
+    // Basic quantum (a low Quantum level), in the parts picked for it: the quick notes between some of the grid's
+    // notes moved onto a line or a curve from one to the next, as the editor's Bezier tool draws them (plain, or
+    // Curve Bezier). The notes it bends between stay where they were, on the grid; the ones between glide, spaced by
+    // their timing. The higher the level, the more of them are curves and the rounder (and a little past the grid's
+    // edge); a group bends its curves the same way round (an arc) or each the other way (an S).
+    function bendCurves(notes, inPart, level, trace = null) {
+        const out = notes.map(n => ({ ...n }));
+        const lo = -0.35 * Math.min(1, level * 2), hi = 2 - lo;
+        let i = 0;
+        while (i < out.length) {
+            if (!inPart(out[i].ms)) {
+                i++;
+                continue;
+            }
+            // (a group: notes in the part, quick and about evenly spaced, under 220ms apart)
+            let j = i + 1, quick = Infinity;
+            while (j < out.length && inPart(out[j].ms)) {
+                const g = out[j].ms - out[j - 1].ms;
+                if (g > 220 || (quick < Infinity && (g > 2 * quick || g < quick / 2)))
+                    break;
+                quick = Math.min(quick, g);
+                j++;
+            }
+            if (j - i >= 4) {
+                const m = level < 0.12 ? 4 : 3 + (Math.random() < 0.5 ? 1 : 0);
+                const anchors = [];
+                for (let k = i; k < j - 1; k += m)
+                    anchors.push(k);
+                if (j - 1 - anchors[anchors.length - 1] < 2 && anchors.length > 1)
+                    anchors.pop();
+                anchors.push(j - 1);
+                const curved = Math.random() < 0.3 + 1.4 * level;
+                const side0 = Math.random() < 0.5 ? 1 : -1, arc = Math.random() < 0.6;
+                let bent = 0;
+                for (let k = 0; k + 1 < anchors.length; k++) {
+                    const A = out[anchors[k]], B = out[anchors[k + 1]];
+                    const dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy);
+                    if (L < 0.5 || anchors[k + 1] - anchors[k] < 2)
+                        continue;
+                    const side = arc ? side0 : k % 2 ? -side0 : side0;
+                    const bulge = curved ? (0.25 + 0.45 * Math.min(1, level * 2.5)) * L * 0.5 * side : 0;
+                    const cx = (A.x + B.x) / 2 - dy / L * bulge, cy = (A.y + B.y) / 2 + dx / L * bulge;
+                    for (let z = anchors[k] + 1; z < anchors[k + 1]; z++) {
+                        const u = (out[z].ms - A.ms) / Math.max(1, B.ms - A.ms);
+                        const x = (1 - u) * (1 - u) * A.x + 2 * u * (1 - u) * cx + u * u * B.x;
+                        const y = (1 - u) * (1 - u) * A.y + 2 * u * (1 - u) * cy + u * u * B.y;
+                        out[z].x = Math.round(Math.min(hi, Math.max(lo, x)) * 100) / 100;
+                        out[z].y = Math.round(Math.min(hi, Math.max(lo, y)) * 100) / 100;
+                        bent++;
+                    }
+                }
+                if (trace && bent)
+                    trace.push({ ms: out[i].ms, name: curved ? 'curve bezier' : 'bezier', len: bent });
+            }
+            i = Math.max(i + 1, j);
+        }
         return out;
     }
 
@@ -4622,6 +4881,11 @@ window.SSQEAutoMapper = (function () {
 
     async function generateAt(opts) {
         await load();
+        // Quantum, 0 to 1 (true is 1): at 1 the whole map is quantum; lower, only some of its parts, fewer the lower,
+        // and tamer: around 0.1 just a few runs bent onto lines and curves between grid notes like the Bezier tool's
+        const qLevel = Math.min(1, Math.max(0, typeof opts.quantum === 'number' ? opts.quantum : opts.quantum ? 1 : 0));
+        const fullQ = qLevel >= 0.999;
+        opts = { ...opts, quantum: fullQ };
         // (a mixed map with the Streams / Jumps balance at an end is a stream map or a jump map)
         if (!opts.quantum && (!opts.patterns || opts.patterns === 'mixed') && opts.jumpShare !== undefined && (opts.jumpShare <= 0 || opts.jumpShare >= 1))
             opts = { ...opts, patterns: opts.jumpShare <= 0 ? 'streams' : 'jumps' };
@@ -4671,7 +4935,14 @@ window.SSQEAutoMapper = (function () {
         // design (copying from all of them at once gives a patchwork: a stretch in one map's design, then suddenly a
         // completely different one). The example maps that come with the editor only help out: wherever a learned
         // map has something that fits, it's used first.
-        const learned = prepare(entries, !!opts.quantum);
+        const learned = prepare(entries, qLevel > 0);
+        // The quantum design: the average of the quantum maps it learned (the example's only if it learned none)
+        let qlib = learned.filter(e => e.n >= 40 && e.style.off >= 0.2);
+        let qBase = qLevel > 0 ? quantumProfile(qlib) : null;
+        if (qLevel > 0 && !qBase) {
+            qlib = prepare(exampleEntries().filter(e => e.kind === 'quantum'), true);
+            qBase = quantumProfile(qlib);
+        }
         const helpers = list => {
             for (const e of list)
                 e.penalty = learned.length ? EXAMPLE_COST : 0;
@@ -4687,12 +4958,13 @@ window.SSQEAutoMapper = (function () {
             const kindEx = prepare(exampleEntries().filter(e => e.kind === want), !!opts.quantum);
             const ref = kindEx.map(e => e.style);
             const like = e => ref.length ? Math.min(...ref.map(r => styleDistance(e.style, r))) : 0;
-            // (for quantum, any quantum map it learned)
+            // (for quantum, the quantum maps it learned, whatever their design: the example only when there are none)
+            const learnedQ = want === 'quantum' ? learned.filter(e => e.bonus || e.style.off >= 0.2) : [];
             let alike = learned.filter(e => e.bonus || like(e) < 2.2 || (want === 'quantum' && e.style.off >= 0.4));
             if (!alike.length)
                 alike = learned.slice();
             alike = alike.sort((p, q) => like(p) - like(q)).slice(0, 8);
-            lib = [...alike, ...helpers(kindEx)];
+            lib = learnedQ.length ? learnedQ.slice(0, 10) : [...alike, ...helpers(kindEx)];
         } else {
             if (learned.length > 1) {
                 let lead = learned.find(e => e.bonus);
@@ -4793,12 +5065,64 @@ window.SSQEAutoMapper = (function () {
         const speedCap = Math.max(8, vmax * 1.6), accelCap = vmax * 160;
         const boundaries = sections.slice(1).map(x => x.from).filter(ms => ms > opts.startMs && ms < opts.endMs);
 
+        // Quantum under 100%: which parts are quantum. As much of the song as the level (a little more: 0.1 is about a
+        // sixth of it, 0.5 about three fifths), the more intense parts and drops first, in pieces of up to about 10
+        // seconds; picked from the song itself, so 8, 9 and 10 pick the same. Each is either made quantum (jumps
+        // and slides in the learned design, tamed to the level) or, more of them the lower the level, the grid's
+        // notes with the quick ones between bent onto lines and curves (see bendCurves)
+        const qParts = [];
+        if (qLevel > 0 && !fullQ) {
+            const from = Math.max(0, opts.startMs || 0), to = opts.endMs;
+            let pieces = sections.filter(x => x.to > from && x.from < to)
+                .map(x => ({ from: Math.max(x.from, from), to: Math.min(x.to, to), level: x.level, drop: !!x.drop }));
+            if (!pieces.length)
+                for (let t = from; t < to; t += 8000)
+                    pieces.push({ from: t, to: Math.min(to, t + 8000), level: free[Math.min(a.frames - 1, Math.round((t + 4000) / 10))] || 0.5, drop: false });
+            pieces = pieces.flatMap(x => {
+                const k = Math.max(1, Math.round((x.to - x.from) / 10000)), w = (x.to - x.from) / k;
+                return Array.from({ length: k }, (_, z) => ({ ...x, from: Math.round(x.from + z * w), to: z === k - 1 ? x.to : Math.round(x.from + (z + 1) * w) }));
+            });
+            const hash = (v, salt) => ((Math.imul(Math.round(v / 10) + salt * 7919 + a.frames, 2654435761) >>> 0) % 1000) / 1000;
+            const total = pieces.reduce((t, x) => t + x.to - x.from, 0);
+            const wantMs = Math.pow(qLevel, 0.75) * total;
+            const genShare = Math.min(1, Math.max(0, (qLevel - 0.2) / 0.55));
+            let got = 0;
+            for (const x of pieces.slice().sort((p, q) => (q.level + (q.drop ? 0.3 : 0) + 0.35 * hash(q.from, 1)) - (p.level + (p.drop ? 0.3 : 0) + 0.35 * hash(p.from, 1)))) {
+                if (got >= wantMs)
+                    break;
+                if (got + (x.to - x.from) / 2 > wantMs)
+                    continue;
+                got += x.to - x.from;
+                qParts.push({ from: x.from, to: x.to, gen: hash(x.from, 2) < genShare });
+            }
+            qParts.sort((p, q) => p.from - q.from);
+            for (const x of qParts)
+                boundaries.push(x.from, x.to);
+            boundaries.sort((p, q) => p - q);
+        }
+        const qPartAt = ms => qParts.find(x => ms >= x.from - 1 && ms < x.to);
+        const qGenAt = ms => fullQ || !!(qParts.length && (qPartAt(ms) || {}).gen);
+        const qCurveAt = ms => !fullQ && !!(qParts.length && qPartAt(ms) && !qPartAt(ms).gen);
+        const anyGen = fullQ || qParts.some(x => x.gen);
+        // (the design those parts follow, tamed to the level)
+        const qp = qBase && anyGen ? profileAt(qBase, qLevel) : null;
+        runOptions.qp = qp;
+        runOptions.qlib = qlib.length ? qlib : null;
+        jumpRunOptions.qp = qp;
+        jumpRunOptions.qlib = runOptions.qlib;
+        // (the made-quantum parts of a map that isn't all quantum, placed as a quantum map is)
+        const qRunOptions = { ...runOptions, quantum: true, jumpGap: 60, patterns: 'mixed', beta: 0.8,
+            pace: (() => {
+                const at = [0.5, 0.85, 0.85, 1.15], d = Math.min(10, Math.max(7, difficulty)) - 7, k = Math.min(2, Math.floor(d));
+                return at[k] + (at[k + 1] - at[k]) * (d - k);
+            })() };
+
         // Quantum slides (with jumps, what quantum maps are made of): from some notes the cursor slides on for part of
         // the way to the next note, along a curve or a snaking line of notes so close together they play as one sweep
         // (about a third of a beat, going about as fast as the difficulty's moves), and the next note is a jump from
         // where it ends. Bars that repeat each other get them in the same places.
         const slides = new Map();
-        if (opts.quantum && ctx.bars && ctx.bars.length && ctx.timing) {
+        if (anyGen && ctx.bars && ctx.bars.length && ctx.timing) {
             const bars = ctx.bars;
             const rootOf = j => {
                 while (bars[j].proto >= 0)
@@ -4831,6 +5155,8 @@ window.SSQEAutoMapper = (function () {
             const sectionOn = new Map();
             const topLevel = Math.max(0.05, ...sections.map(x => x.level));
             const slidesIn = t => {
+                if (!qGenAt(t))
+                    return false;
                 const sec = sections.find(x => t >= x.from - 50 && t < x.to + 50);
                 if (!sec)
                     return false;
@@ -4874,12 +5200,17 @@ window.SSQEAutoMapper = (function () {
                         // (in a section with slides, most of the room for them gets one: more of it at harder levels and
                         // before stronger sounds)
                         // (few at the easy end: one gap in ten at 3, half at 6, most from 8)
-                        const on = Math.random() < Math.min(0.92, 2.2 * SLIDE_CHANCE * Math.pow((difficulty - 1) / 9, 1.5) * Math.sqrt(Math.min(1.6, Math.max(0.4, rel))));
+                        // (and as often as the learned design slides: about a third of a quantum map's notes in slides is
+                        // the usual, more or fewer as its maps do)
+                        const often = qp ? Math.min(1.6, Math.max(0.15, qp.slideShare / 0.35)) : 1;
+                        const on = Math.random() < Math.min(0.92, 2.2 * SLIDE_CHANCE * often * Math.pow((difficulty - 1) / 9, 1.5) * Math.sqrt(Math.min(1.6, Math.max(0.4, rel))));
                         // (as a share of the room there is: a flick, a sweep or the whole of it)
                         decided.set(key, on ? [0.45, 0.65, 0.85, 1][Math.floor(Math.random() * 4)] : 0);
                     }
                     // (and never longer than the difficulty takes: a short flick at 3, up to about 0.6 of a beat at 10)
-                    const n = Math.floor(decided.get(key) * Math.min(room, (0.15 + 0.045 * difficulty) * beat) / step);
+                    // (about as many notes as the learned design's slides have)
+                    const n = Math.min(Math.floor(decided.get(key) * Math.min(room, (0.15 + 0.045 * difficulty) * beat) / step),
+                        qp ? Math.max(3, Math.round(qp.slideLen * (0.5 + 0.9 * decided.get(key)))) : Infinity);
                     if (decided.get(key) && n >= 3)
                         list.push({ q, step, n, most: Math.max(n, Math.floor(room / step)) });
                 }
@@ -4936,7 +5267,7 @@ window.SSQEAutoMapper = (function () {
             }
             times = withSlides;
         }
-        const slideSpeed = Math.min(32, 4 + 0.45 * vmax);
+        const slideSpeed = Math.min(32, 4 + 0.45 * vmax, qp ? Math.max(8, 1.2 * qp.slideSpeed) : Infinity);
         // the move wanted into note i, `gap` ms after the one before
         const inSlide = new Uint8Array(times.length);
         for (const [q, n] of slides)
@@ -4945,7 +5276,7 @@ window.SSQEAutoMapper = (function () {
         const fastAt = localFast(times, inSlide);
         // (the notes after the first of a slide in a jump part, see chooseTimes)
         const gridSlide = !opts.quantum && ctx.slideTimes && ctx.slideTimes.size ? Uint8Array.from(times, (ms, q) =>
-            q > 0 && ctx.slideTimes.has(Math.round(ms)) && ctx.slideTimes.has(Math.round(times[q - 1])) ? 1 : 0) : null;
+            q > 0 && !qGenAt(ms) && ctx.slideTimes.has(Math.round(ms)) && ctx.slideTimes.has(Math.round(times[q - 1])) ? 1 : 0) : null;
         // how strong the sound at each note is (the kick and snare most): bigger moves go on the stronger ones
         const accents = Float32Array.from(times, ms => {
             let m = 0;
@@ -4972,9 +5303,10 @@ window.SSQEAutoMapper = (function () {
         });
         const sizeAt = (i, gap) => {
             const jp = ctx.jumpPart && ctx.jumpPart(times[i]);
-            const o = jp ? jumpRunOptions : runOptions;
+            const qi = qGenAt(times[i]);
+            const o = qi && !fullQ ? qRunOptions : jp ? jumpRunOptions : runOptions;
             return moveFor(jumpAt(times[i]), gap, { ...o, comfort: runOptions.comfort * levelAt(times[i]), calm: calmAt(times[i]) }, fastAt[i],
-                i >= 2 ? times[i - 1] - times[i - 2] : 0, i + 1 < times.length ? times[i + 1] - times[i] : 0, !opts.quantum && o.patterns === 'jumps' ? weakAt[i] : 0);
+                i >= 2 ? times[i - 1] - times[i - 2] : 0, i + 1 < times.length ? times[i + 1] - times[i] : 0, !qi && o.patterns === 'jumps' ? weakAt[i] : 0);
         };
         // map it a few times and keep the most balanced (fewer tries for long stretches, so it doesn't take ages)
         // (it hands the page back every few milliseconds so the editor never freezes, and stops trying once it has
@@ -4995,8 +5327,11 @@ window.SSQEAutoMapper = (function () {
                 last = performance.now();
             };
             const trace = opts.trace ? [] : null;
-            const notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, jumpRunOptions, jumpPart: ctx.jumpPart, yieldNow, trace, bars: ctx.bars, slides, slideSpeed, accents, levelAt, calmAt, sizeAt, fastAt, weakAt: opts.quantum ? null : weakAt, gridSlide }, jumpAt);
-            const score = badness(notes, sizeAt, vmax, fm, runOptions.flow, !!opts.quantum, runOptions);
+            let notes = await place(times, lib, { ...opts, vmax, speedCap, accelCap, boundaries, runOptions, jumpRunOptions, jumpPart: ctx.jumpPart, yieldNow, trace, bars: ctx.bars, slides, slideSpeed, accents, levelAt, calmAt, sizeAt, fastAt, weakAt: opts.quantum ? null : weakAt, gridSlide,
+                qAt: qParts.length ? qGenAt : null, qRunOptions, qp }, jumpAt);
+            if (qParts.some(x => !x.gen))
+                notes = bendCurves(notes, qCurveAt, qLevel, trace);
+            const score = badness(notes, sizeAt, vmax, fm, runOptions.flow, fullQ || qParts.some(x => x.gen), runOptions);
             if (!best || score < best.score)
                 best = { notes, score, trace };
             const each = (performance.now() - started) / (t + 1);
@@ -5006,6 +5341,7 @@ window.SSQEAutoMapper = (function () {
             opts.trace.push(...best.trace);
         best.notes.info = {
             bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady), times: times.length,
+            quantumParts: qParts.map(x => ({ from: x.from, to: x.to, kind: x.gen ? 'quantum' : 'curves' })), quantumDesign: qp ? qp.maps : null,
             bars: ctx.bars ? ctx.bars.length : 0, repeats: ctx.bars ? ctx.bars.filter(b => b.proto >= 0).length : 0, barList: ctx.bars,
             sections: sections.map(s => ({ from: s.from, to: s.to, level: +s.level.toFixed(2), drop: s.drop, change: s.change, rate: s.rate && +s.rate.toFixed(1), nps: s.nps && +s.nps.toFixed(1) })),
         };
@@ -5058,5 +5394,5 @@ window.SSQEAutoMapper = (function () {
     }
 
     load();
-    return { learn, learnFiles, stats, statsSync, reset, generate, analyse, findTempo, findEvents, trimToStars };
+    return { learn, learnFiles, stats, statsSync, reset, generate, analyse, findTempo, findEvents, trimToStars, quantumStyleOf: notes => quantumStyleOf(toEntry(notes)) };
 })();
