@@ -428,6 +428,57 @@ ipcMain.handle('ssqe-pick-playtest', async (_, game) => {
     return filePaths[0];
 });
 
+// Saving a map like the original editor: SAVE AS picks where the .txt goes (its .ini goes next to it, the same name),
+// and from then on SAVE (and autosave) writes straight to those two files. Only .txt paths (and the .ini beside them)
+// are ever written or read here.
+const mapPath = file => typeof file === 'string' && path.isAbsolute(file) && /\.txt$/i.test(file) ? file : null;
+function writeMap(file, txt, ini) {
+    fs.writeFileSync(file, String(txt ?? ''));
+    fs.writeFileSync(file.replace(/\.txt$/i, '.ini'), String(ini ?? ''));
+}
+ipcMain.handle('ssqe-save-as', async (_, { name, txt, ini }) => {
+    const p = prefs();
+    const safe = String(name || 'map').replace(/[\\/:*?"<>|]/g, '_') || 'map';
+    let dir = p.saveDir;
+    try {
+        if (!dir || !fs.statSync(dir).isDirectory())
+            dir = app.getPath('documents');
+    } catch {
+        dir = app.getPath('documents');
+    }
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        title: 'Save Map As',
+        defaultPath: path.join(dir, `${safe}.txt`),
+        filters: [{ name: 'Map', extensions: ['txt'] }],
+    });
+    if (canceled || !filePath)
+        return null;
+    const file = /\.txt$/i.test(filePath) ? filePath : `${filePath}.txt`;
+    writeMap(file, txt, ini);
+    p.saveDir = path.dirname(file);
+    fs.mkdirSync(path.dirname(prefsFile()), { recursive: true });
+    fs.writeFileSync(prefsFile(), JSON.stringify(p, null, 2));
+    return file;
+});
+ipcMain.handle('ssqe-save-to', async (_, { file, txt, ini }) => {
+    const f = mapPath(file);
+    if (!f)
+        return false;
+    writeMap(f, txt, ini);
+    return true;
+});
+// the .ini beside a .txt map that was opened, like the original editor reads it
+ipcMain.handle('ssqe-read-ini', async (_, file) => {
+    const f = mapPath(file);
+    if (!f)
+        return null;
+    try {
+        return fs.readFileSync(f.replace(/\.txt$/i, '.ini'), 'utf8');
+    } catch {
+        return null;
+    }
+});
+
 // Like the original editor: the map as a .txt and the song next to it in a temp folder, and Rhythia started with
 // --a=<audio> --t=<map> --sp=<speed> --sf=<start ms>
 ipcMain.handle('ssqe-playtest', async (_, job) => {

@@ -580,11 +580,25 @@ window.SSQECollab = (function () {
         const authors = p.authors || [];
         for (const [id, name, color] of authors)
             authorsOf(map).set(id, { name, color });
+        // (the notes already here that are in it stay the same notes, so this person's undo, selection, stored bezier
+        // nodes and anchors all still hold; only the ones that differ are new)
+        const nodes = map.notes.bezierNodes.map(i => map.notes.items[i]).filter(Boolean);
+        const pool = new Map();
+        for (const n of map.notes.items) {
+            const k = keyOf(n);
+            if (!pool.has(k))
+                pool.set(k, []);
+            pool.get(k).push(n);
+        }
+        const take = k => {
+            const list = pool.get(k);
+            return list && list.length ? list.shift() : noteOf(k);
+        };
         const items = [];
         for (const part of parts) {
             const keys = part.notes ? part.notes.split(',') : [];
             keys.forEach((k, i) => {
-                const n = noteOf(k), c = (part.bi || '')[i], a = c && c !== '.' ? authors[c.charCodeAt(0) - 48] : null;
+                const n = take(k), c = (part.bi || '')[i], a = c && c !== '.' ? authors[c.charCodeAt(0) - 48] : null;
                 if (a) {
                     n.by = a[0];
                     n.byColor = a[0] !== s.me ? colorOf(a[0]) : null;
@@ -600,10 +614,12 @@ window.SSQECollab = (function () {
                 items.splice(at, 1);
         }
         for (const k of mineAdd)
-            items.push(noteOf(k));
+            items.push(take(k));
         map.notes.items = items;
         map.notes.sort();
         map.notes.selected = map.notes.items.filter(n => sel.has(keyOf(n)));
+        const at = new Map(map.notes.items.map((n, i) => [n, i]));
+        map.notes.bezierNodes = nodes.map(n => at.get(n)).filter(i => i !== undefined);
         applyExtra(p.extra);
         s.synced = agreed;
         s.hash = NaN;
@@ -650,6 +666,9 @@ window.SSQECollab = (function () {
             remember(peer.id, peer.name);
         const selected = new Set(map.notes.selected);
         const lost = gone.filter(n => selected.has(n));
+        // (this person's stored bezier nodes are kept on their notes, not their places in the list, which someone
+        // else's notes coming and going would shift onto other notes)
+        const nodes = map.notes.bezierNodes.map(i => map.notes.items[i]).filter(Boolean);
         if (gone.length) {
             const goneSet = new Set(gone);
             map.notes._selected = map.notes._selected.filter(n => !goneSet.has(n));
@@ -676,6 +695,29 @@ window.SSQECollab = (function () {
         if (added.length)
             map.notes.sort();
         map.notes.updateSelection();
+        if (nodes.length) {
+            // (a node someone moved goes with it: to the new note nearest it in time and place)
+            const goneSet = new Set(gone), free = added.slice();
+            const moved = nodes.map(n => {
+                if (!goneSet.has(n))
+                    return n;
+                let bi = -1, bd = Infinity;
+                free.forEach((m, i) => {
+                    const d = Math.abs(m.ms - n.ms) / 100 + Math.hypot(m.x - n.x, m.y - n.y);
+                    if (d < bd) {
+                        bd = d;
+                        bi = i;
+                    }
+                });
+                if (bi < 0 || bd > 3)
+                    return null;
+                const m = free.splice(bi, 1)[0];
+                m.anchored = n.anchored;
+                return m;
+            });
+            const at = new Map(map.notes.items.map((n, i) => [n, i]));
+            map.notes.bezierNodes = moved.filter(Boolean).map(n => at.get(n)).filter(i => i !== undefined);
+        }
         // (what all agree on now, so these don't go straight back)
         for (const k of removes) {
             const c = s.synced.get(k) || 0;
@@ -703,9 +745,22 @@ window.SSQECollab = (function () {
         const point = map.selectedPoint ? [map.selectedPoint.bpm, map.selectedPoint.ms] : null;
         const spSel = new Set(map.specialObjects.selected.map(o => `${o.id}|${o.toString()}`));
         const vfxSel = new Set(map.vfxObjects.selected.map(o => `${o.id}|${o.toString()}`));
+        // (the export offset is taken as it is: reading it the usual way moves every note by the change, and the
+        // notes have come already moved, as the changes of the one who changed it; that moved them twice)
+        let data = x, offset;
         try {
-            SSQE.Formats.readIni(map, x);
+            const j = JSON.parse(x);
+            offset = j.exportOffset;
+            delete j.exportOffset;
+            data = JSON.stringify(j);
+        } catch { /* as it is */ }
+        const nodes = map.notes.bezierNodes.slice();
+        try {
+            SSQE.Formats.readIni(map, data);
         } catch { /* what could be read stays */ }
+        if (offset !== undefined)
+            map.props.exportOffset = Number(offset) || 0;
+        map.notes.bezierNodes = nodes;
         map.notes.selected = sel.filter(n => map.notes.items.includes(n));
         map.specialObjects.selected = map.specialObjects.items.filter(o => spSel.has(`${o.id}|${o.toString()}`));
         map.vfxObjects.selected = map.vfxObjects.items.filter(o => vfxSel.has(`${o.id}|${o.toString()}`));

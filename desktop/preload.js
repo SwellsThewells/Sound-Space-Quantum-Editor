@@ -1,6 +1,6 @@
 // The bridge between the editor (a web page) and the desktop app: Discord presence, files opened with the app,
 // updates and playtesting in Rhythia.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('ssqeDesktop', {
     version: ipcRenderer.sendSync('ssqe-version'),
@@ -29,4 +29,16 @@ contextBridge.exposeInMainWorld('ssqeDesktop', {
     playtest: job => ipcRenderer.invoke('ssqe-playtest', job),
     // CALCULATE SR/RP: Rhythia's star rating and ranked points for a map (body: the request), asked from the app
     starRating: body => ipcRenderer.invoke('ssqe-star-rating', body),
+    // saving a map like the original editor: SAVE AS asks where (the .ini goes next to the .txt), SAVE writes there
+    saveMapAs: (name, txt, ini) => ipcRenderer.invoke('ssqe-save-as', { name, txt, ini }),
+    saveMapTo: (file, txt, ini) => ipcRenderer.invoke('ssqe-save-to', { file, txt, ini }),
+    readIniFor: file => ipcRenderer.invoke('ssqe-read-ini', file),
+    // where a file that was opened or dropped is on the computer ('' when it isn't one)
+    pathOf: file => {
+        try {
+            return webUtils.getPathForFile(file) || '';
+        } catch {
+            return '';
+        }
+    },
 });

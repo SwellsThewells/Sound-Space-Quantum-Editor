@@ -746,11 +746,21 @@
                     const map = new Map();
                     Formats.readTxt(map, await txt.text());
                     const ini = byExt('.ini').find(f => base(f.name) === base(txt.name)) || byExt('.ini')[0];
+                    // (the desktop app: where it is, so SAVE writes back to it; and its .ini beside it, as the
+                    // original editor reads it, when only the .txt was picked)
+                    const filePath = this.desktopFiles && window.ssqeDesktop.pathOf ? window.ssqeDesktop.pathOf(txt) : '';
                     if (ini)
                         Formats.readIni(map, await ini.text());
+                    else if (filePath) {
+                        const text = await window.ssqeDesktop.readIniFor(filePath).catch(() => null);
+                        if (text)
+                            Formats.readIni(map, text);
+                    }
                     if (audioFiles[0])
                         await this.storage.putAudio(map.soundId, audioFiles[0]);
                     map.fileName = txt.name;
+                    if (filePath)
+                        map.filePath = filePath;
                     await this.openNewMap(map, null, true);
                     return;
                 }
@@ -822,6 +832,7 @@
             Formats.readIni(map, rec.ini);
             map.key = entry.key;
             map.fileName = rec.fileName || null;
+            map.filePath = rec.filePath || null;
             map.savedText = rec.savedText || null;
             if (rec.props)
                 Object.assign(map.props, rec.props);
@@ -949,6 +960,7 @@
                 order: this.openMaps.indexOf(entry),
                 soundId: map.soundId,
                 fileName: map.fileName,
+                filePath: map.filePath || null,
                 txt: Formats.writeTxt(map),
                 ini: Formats.writeIni(map),
                 savedText: map.savedText,
@@ -995,7 +1007,10 @@
 
                 // the open map is always cached in the browser; maps saved to a folder are also written to their files
                 this.flushCache();
-                if (map.dirHandle && map.fileName)
+                if (this.desktopFiles && map.filePath) {
+                    if (await this.writeDesktop(map))
+                        map.savedText = this.mapText(map);
+                } else if (map.dirHandle && map.fileName)
                     await this.writeToFolder(map, map.dirHandle, map.fileName.replace(/\.txt$/i, ''), false);
                 this.editor && this.editor.toast('AUTOSAVED');
             };
@@ -1027,7 +1042,31 @@
             }
         }
 
+        // web only, the desktop app: like the original editor, a map has a .txt on the computer (map.filePath, its .ini
+        // beside it): SAVE writes there straight away, SAVE AS asks where with the usual save window
+        get desktopFiles() {
+            return !!(window.ssqeDesktop && window.ssqeDesktop.saveMapAs);
+        }
+
+        async writeDesktop(map) {
+            try {
+                return !!await window.ssqeDesktop.saveMapTo(map.filePath, Formats.writeTxt(map), Formats.writeIni(map));
+            } catch (e) {
+                console.warn('Failed to save', e);
+                return false;
+            }
+        }
+
         async save(map) {
+            if (this.desktopFiles) {
+                if (!map.filePath)
+                    return this.saveAs(map);
+                const ok = await this.writeDesktop(map);
+                if (ok)
+                    map.savedText = this.mapText(map);
+                this.afterSave(map, ok);
+                return ok;
+            }
             if (map.dirHandle && map.fileName) {
                 const ok = await this.writeToFolder(map, map.dirHandle, map.fileName.replace(/\.txt$/i, ''), true);
                 this.afterSave(map, ok);
@@ -1037,6 +1076,24 @@
         }
 
         async saveAs(map) {
+            if (this.desktopFiles) {
+                let file = null;
+                try {
+                    file = await window.ssqeDesktop.saveMapAs(map.fileId, Formats.writeTxt(map), Formats.writeIni(map));
+                } catch (e) {
+                    console.warn('Failed to save', e);
+                    this.afterSave(map, false);
+                    return false;
+                }
+                if (!file)
+                    return false;
+                map.filePath = file;
+                map.fileName = file.split(/[\\/]/).pop();
+                map.dirHandle = null;
+                map.savedText = this.mapText(map);
+                this.afterSave(map, true);
+                return true;
+            }
             // folder access isn't allowed inside frames (like a Claude artifact)
             const canUseFolders = !!window.showDirectoryPicker && window.self === window.top;
             const result = await this.dialogs.saveAs(map, canUseFolders);

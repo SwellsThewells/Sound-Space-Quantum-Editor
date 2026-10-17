@@ -2,6 +2,21 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.30 - 10/17/2026 --
+
+- COLLABORATE: other people's edits no longer mess up yours
+  - stored BEZIER nodes stay on your notes (they were kept by place in the note list, so someone adding or deleting a
+    note before them moved your nodes onto other notes); a node note someone moves takes your node with it
+  - when someone changed the export offset, everyone else's notes were moved by it twice; now just once, the same
+    for everyone
+  - when the whole map is sent again (someone joining, or the sync putting itself right), your notes stay the same
+    notes, so your undo, selection, nodes and anchors carry on working
+- SAVING (desktop app): like the original editor. SAVE AS opens the usual save window: pick the folder and name, and
+  the map is saved as name.txt with name.ini next to it. After that, SAVE (and autosave) writes straight to those two
+  files, nothing to click. A .txt map you open from your computer is saved back to where it came from, and its .ini
+  is read from beside it like the original editor does
+
+----------------------------------
    -- Plus 3.0.29 - 10/17/2026 --
 
 - AUTO MAPPER: the star rating you set is what you get, even when the song (or the part of it you're mapping) doesn't
