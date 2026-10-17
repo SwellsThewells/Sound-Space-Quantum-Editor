@@ -286,6 +286,8 @@
             }));
         }
 
+        const collabNote = label(380, 132, 900, 40, { text: '', textSize: 26, centerMode: None });
+        const collabCancel = button(1300, 132, 260, 40, 'CANCEL COLLAB', 24, () => window.SSQECollab && SSQECollab.leave());
         const controls = [
             background(),
             new G.Square(35, 180, 950, 790, { color: [0, 0, 0, 40] }),
@@ -301,6 +303,8 @@
             button(1190, 750, 295, 85, 'SPECTATE', 40, () => app.showScreen('spectate')),
             button(1495, 750, 295, 85, 'COLLABORATE', 40, () => app.showScreen('collaborate')),
             accountButton,
+            // web only: starting a collab, the host opens the map to work on from here (collab.js)
+            collabNote, collabCancel,
             autosaved, lastMap, navLeft, navRight,
             ...selects, ...closes,
             button(262, 132, 100, 40, 'Feedback?', 20, () => window.open('https://forms.gle/Rh4RXKT9KyttJ9Dc6', '_blank', 'noopener')),
@@ -312,6 +316,9 @@
 
         const screen = new Screen(app, controls);
         screen.update = () => {
+            const collabWith = window.SSQECollab && SSQECollab.choosingFor();
+            collabNote.text = collabWith ? `MAPPING WITH ${collabWith.toUpperCase()}: CREATE, LOAD OR OPEN THE MAP` : '';
+            collabCancel.visible = !!collabWith;
             changelog.content = app.changelog || 'Loading...';
 
             // GuiWindowMenu.FixButtonsChangelog

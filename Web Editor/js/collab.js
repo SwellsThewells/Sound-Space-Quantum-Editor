@@ -18,7 +18,9 @@ window.SSQECollab = (function () {
     const CHUNK = 96 * 1024;
     const SEND_EVERY = 33;
     const MAX_PEOPLE = 5;
-    const COLORS = [[255, 160, 0], [0, 200, 255], [130, 255, 90], [255, 90, 200]];
+    // (each person's colour: the host's first, then in the order people joined; the host decides, so it's the same
+    // on everyone's screen and stays the same while they're in)
+    const COLORS = [[255, 160, 0], [0, 200, 255], [130, 255, 90], [255, 90, 200], [255, 230, 60]];
 
     let app = null, s = null;
     const invites = new Map(); // id -> { room, state: 'sent' | 'declined', at }
@@ -132,7 +134,7 @@ window.SSQECollab = (function () {
             return;
         s = {
             role, room, host, ch, ready: false, me: O().userId(), phase: role === 'host' ? 'song' : 'wait',
-            peers: new Map(), colorAt: 0,
+            peers: new Map(), roster: new Map(), noSong: null,
             // the song (the host's, to send; a guest's, coming in)
             song: null, songBytes: null, songMeta: null, early: null,
             // what all last agreed on, and what was last sent
@@ -153,7 +155,10 @@ window.SSQECollab = (function () {
             s.ready = true;
             send({ k: 'hi', role });
         });
-        // (out of whatever they were doing: a map in the editor is kept, as going back to the menu keeps it)
+        if (role === 'host')
+            s.roster.set(s.me, 0);
+        // (out of whatever they were doing: a map in the editor is kept, as going back to the menu keeps it; the host
+        // then opens the map to work on, a new one or one of theirs, from the menu)
         if (app.spectating) {
             app.spectating.stop();
             O().unwatch();
@@ -162,9 +167,10 @@ window.SSQECollab = (function () {
         if (app.editor)
             app.backToMenu();
         if (role === 'host')
-            app.openCreate();
+            app.showMenu();
         else
             app.showScreen('collabwait');
+        presence();
     }
 
     function send(p) {
@@ -172,26 +178,69 @@ window.SSQECollab = (function () {
             s.ch.send({ type: 'broadcast', event: 'c', payload: { ...p, f: s.me, nm: O().username() } });
     }
 
+    const colorOf = id => {
+        if (s.roster.has(id))
+            return COLORS[s.roster.get(id) % COLORS.length];
+        // (not on the host's list yet: the first colour nobody has, until it comes)
+        const taken = new Set(s.roster.values());
+        let k = 0;
+        while (taken.has(k))
+            k++;
+        return COLORS[k % COLORS.length];
+    };
     function peerOf(id, name) {
         let p = s.peers.get(id);
         if (!p) {
-            p = { id, name, color: COLORS[s.colorAt++ % COLORS.length], other: null, heard: performance.now() };
+            if (s.role === 'host' && !s.roster.has(id)) {
+                const taken = new Set(s.roster.values());
+                let k = 1;
+                while (taken.has(k))
+                    k++;
+                s.roster.set(id, k);
+            }
+            p = { id, name, color: colorOf(id), other: null, heard: performance.now() };
             s.peers.set(id, p);
+            if (s.role === 'host')
+                sendRoster();
+            presence();
         }
         p.name = name || p.name;
         p.heard = performance.now();
         return p;
+    }
+    function sendRoster() {
+        send({ k: 'roster', m: [...s.roster.entries()] });
+    }
+    // (everyone's colour from the host's list: their cursor, selection and the notes they placed)
+    function recolor() {
+        for (const p of s.peers.values())
+            p.color = colorOf(p.id);
+        if (s.map)
+            for (const n of s.map.notes.items)
+                if (n.by)
+                    n.byColor = colorOf(n.by);
+        remark();
     }
     function dropPeer(id) {
         const p = s && s.peers.get(id);
         if (!p)
             return;
         s.peers.delete(id);
+        if (s.role === 'host') {
+            s.roster.delete(id);
+            sendRoster();
+        }
         if (s.map)
             for (const n of s.map.notes.items)
                 if (n.peerSel === p.color)
                     n.peerSel = null;
+        presence();
     }
+    const presence = () => {
+        try {
+            app.updatePresence && app.updatePresence();
+        } catch { /* only the desktop app has it */ }
+    };
 
     function leave(quiet = false) {
         if (!s)
@@ -203,8 +252,10 @@ window.SSQECollab = (function () {
         if (ed) {
             ed.peers = [];
             ed.afterRender = null;
-            for (const n of ed.map.notes.items)
+            for (const n of ed.map.notes.items) {
                 n.peerSel = null;
+                n.byColor = null;
+            }
         }
         const inv = app.dialogs.windows && app.dialogs.windows['collab-invite'];
         if (inv)
@@ -214,20 +265,42 @@ window.SSQECollab = (function () {
         O().setBusy(false);
         if (document.body.dataset.screen === 'collabwait')
             app.showMenu();
+        presence();
     }
 
-    // the host has picked the song (the create screen's CREATE MAP)
-    async function songChosen(file, id) {
+    // the host has opened the map to work on (made on the create screen, loaded, pasted, or one from the map bar):
+    // its song goes to everyone, then the map itself as each one's editor opens
+    async function bindMap(map) {
         if (!s || s.role !== 'host' || s.phase !== 'song')
             return;
-        s.phase = 'mapping';
-        s.map = app.editor && app.editor.map;
+        s.phase = 'binding';
+        let audio = null;
+        try {
+            audio = await app.storage.getAudio(map.soundId);
+        } catch { /* none */ }
+        if (!s)
+            return;
+        if (!audio) {
+            s.phase = 'song';
+            s.noSong = map;
+            toast('THIS MAP HAS NO SONG STORED - OPEN ONE THAT HAS ITS SONG', 'warn');
+            return;
+        }
+        s.map = map;
         attachEditor();
-        const bytes = new Uint8Array(await file.arrayBuffer());
+        for (const n of map.notes.items) {
+            n.by = null;
+            n.byColor = null;
+        }
+        const bytes = new Uint8Array(await audio.arrayBuffer());
         s.songBytes = bytes;
-        s.songMeta = { k: 'song', id, name: file.name, type: file.type || '', size: bytes.length, n: Math.ceil(bytes.length / CHUNK) };
+        s.songMeta = { k: 'song', id: map.soundId, name: audio.name || `${map.soundId}`, type: audio.type || '', size: bytes.length, n: Math.ceil(bytes.length / CHUNK), title: map.fileId || '' };
+        s.phase = 'mapping';
+        presence();
         await sendSong();
     }
+    // (kept for the create screen, which calls it: the map it made is picked up the same way)
+    async function songChosen() { }
     // (the whole song, to everyone waiting for it, or to one person who's just joined)
     async function sendSong(to) {
         if (!s || !s.songMeta)
@@ -250,7 +323,19 @@ window.SSQECollab = (function () {
     }
 
     // the whole map, from the host
-    const snapshot = to => ({ k: 'snap', to, notes: s.map.notes.items.map(keyOf), extra: extraOf(s.map) });
+    // (in parts of 5000 notes, each well inside what one message can carry; who placed each note as their place on
+    // the host's list, one character a note)
+    function sendSnapshot(to) {
+        const items = s.map.notes.items, PART = 5000, parts = Math.max(1, Math.ceil(items.length / PART)), snap = rid();
+        for (let q = 0; q < parts; q++) {
+            const slice = items.slice(q * PART, (q + 1) * PART);
+            send({
+                k: 'snap', to, snap, part: q, parts, notes: slice.map(keyOf).join(','),
+                by: slice.map(n => String(Math.min(9, s.roster.get(n.by || s.me) ?? 0))).join(''),
+                extra: q === 0 ? extraOf(s.map) : undefined, roster: q === 0 ? [...s.roster.entries()] : undefined,
+            });
+        }
+    }
 
     async function receive(p) {
         if (!s || !p.f || p.f === s.me || (p.to && p.to !== s.me))
@@ -280,6 +365,12 @@ window.SSQECollab = (function () {
                         break;
                     }
                     sendSong(p.f);
+                }
+                break;
+            case 'roster':
+                if (s.role === 'guest') {
+                    s.roster = new Map(p.m || []);
+                    recolor();
                 }
                 break;
             case 'full':
@@ -330,14 +421,27 @@ window.SSQECollab = (function () {
             case 'ready':
                 // (their editor is open: the map as it is now)
                 if (s.role === 'host' && s.map) {
-                    send(snapshot(p.f));
+                    sendSnapshot(p.f);
                     toast(`${peer.name.toUpperCase()} JOINED`);
                 }
                 break;
-            case 'snap':
-                if (s.map)
-                    applySnapshot(p);
+            case 'snap': {
+                if (!s.map)
+                    break;
+                // (all its parts, then the lot)
+                if (!s.snap || s.snap.id !== p.snap)
+                    s.snap = { id: p.snap, parts: new Array(p.parts), got: 0 };
+                if (!s.snap.parts[p.part]) {
+                    s.snap.parts[p.part] = p;
+                    s.snap.got++;
+                }
+                if (s.snap.got === p.parts) {
+                    const ps = s.snap.parts;
+                    s.snap = null;
+                    applySnapshot(ps);
+                }
                 break;
+            }
             case 'd':
                 if (s.map)
                     applyDiff(p.a || [], p.r || [], peer);
@@ -347,7 +451,7 @@ window.SSQECollab = (function () {
                     applyExtra(p.x);
                 break;
             case 'p':
-                peer.other = { ...(peer.other || {}), ...p, at: performance.now() };
+                peer.other = { ...(peer.other || {}), gx: undefined, gy: undefined, ...p, at: performance.now() };
                 if (p.sel !== undefined)
                     markSelection(peer, p.sel);
                 break;
@@ -365,7 +469,7 @@ window.SSQECollab = (function () {
                 break;
             case 'resync':
                 if (s.role === 'host' && s.map)
-                    send(snapshot(p.f));
+                    sendSnapshot(p.f);
                 break;
         }
     }
@@ -385,6 +489,8 @@ window.SSQECollab = (function () {
         await app.storage.putAudio(g.id, file);
         const map = new SSQE.Map();
         map.soundId = g.id;
+        if (g.title)
+            map.fileName = `${g.title}.txt`;
         await app.openNewMap(map, null);
         if (!s)
             return;
@@ -409,14 +515,48 @@ window.SSQECollab = (function () {
                 markSelection(peer, peer.sel);
     }
 
-    function applySnapshot(p) {
-        const map = s.map;
+    function applySnapshot(parts) {
+        const map = s.map, p = parts[0];
         const sel = new Set(map.notes.selected.map(keyOf));
-        map.notes.items = (p.notes || []).map(noteOf);
+        // (what was done here and not sent yet, before the map came: kept, on top of it, and sent from here)
+        const cur = countKeys(map.notes.items), mineAdd = [], mineDel = [];
+        for (const [k, c] of cur)
+            for (let q = s.synced.get(k) || 0; q < c; q++)
+                mineAdd.push(k);
+        for (const [k, c] of s.synced)
+            for (let q = cur.get(k) || 0; q < c; q++)
+                mineDel.push(k);
+        if (p.roster)
+            s.roster = new Map(p.roster);
+        const idOf = new Map([...s.roster.entries()].map(([id, k]) => [k, id]));
+        const items = [];
+        for (const part of parts) {
+            const keys = part.notes ? part.notes.split(',') : [];
+            keys.forEach((k, i) => {
+                const n = noteOf(k), by = idOf.get(+(part.by || '')[i]);
+                if (by && by !== s.me) {
+                    n.by = by;
+                    n.byColor = colorOf(by);
+                }
+                items.push(n);
+            });
+        }
+        // (the host's map is what all agree on; this side's own changes go on top and out as changes)
+        const agreed = countKeys(items);
+        for (const k of mineDel) {
+            const at = items.findIndex(n => keyOf(n) === k);
+            if (at >= 0)
+                items.splice(at, 1);
+        }
+        for (const k of mineAdd)
+            items.push(noteOf(k));
+        map.notes.items = items;
         map.notes.sort();
         map.notes.selected = map.notes.items.filter(n => sel.has(keyOf(n)));
         applyExtra(p.extra);
-        rebuildSynced();
+        s.synced = agreed;
+        s.hash = NaN;
+        s.gotSnap = true;
         map.changed();
         remark();
     }
@@ -441,6 +581,8 @@ window.SSQECollab = (function () {
             const n = noteOf(k);
             n.peerAt = now;
             n.peerColor = peer.color;
+            n.by = peer.id;
+            n.byColor = peer.color;
             return n;
         });
         const selected = new Set(map.notes.selected);
@@ -481,7 +623,8 @@ window.SSQECollab = (function () {
         }
         for (const k of adds)
             s.synced.set(k, (s.synced.get(k) || 0) + 1);
-        s.hash = hashNotes(map.notes.items);
+        // (checked again next time round: a change made here in the same moment still goes out)
+        s.hash = NaN;
         map.changed();
         remark();
     }
@@ -525,9 +668,9 @@ window.SSQECollab = (function () {
             return;
         const ed = app.editor;
         const now = performance.now();
-        // (the host went back without choosing a song: off)
-        if (s.role === 'host' && s.phase === 'song' && document.body.dataset.screen !== 'create' && now - s.started > 1500) {
-            leave();
+        // (the host has opened a map: that's the one)
+        if (s.role === 'host' && s.phase === 'song' && ed && ed.map !== s.noSong) {
+            bindMap(ed.map);
             return;
         }
         // (back to the menu, or another map opened: done)
@@ -535,10 +678,15 @@ window.SSQECollab = (function () {
             leave();
             return;
         }
-        // (someone who's gone quiet for 20 seconds has gone)
+        // (someone not heard from for 3 minutes has gone; a window in the background can go quiet for a while, so
+        // they're never dropped for that, and keep their colour)
         for (const p of [...s.peers.values()])
-            if (now - p.heard > 20000)
+            if (now - p.heard > 180000)
                 dropPeer(p.id);
+        if (s.role === 'host' && now - (s.lastRoster || 0) > 5000) {
+            s.lastRoster = now;
+            sendRoster();
+        }
         // (a guest waiting for a song that's stopped coming: ask again for what's missing)
         if (s.role === 'guest' && s.song && s.phase === 'receiving' && now - s.lastChunk > 3000) {
             const missing = [];
@@ -551,6 +699,9 @@ window.SSQECollab = (function () {
         if (!s.map || s.phase !== 'mapping')
             return;
         const map = s.map;
+        // (a guest's changes wait until the host's map has come: they go out on top of it)
+        if (s.role === 'guest' && !s.gotSnap)
+            return;
         // the notes: what's been added and removed since all last agreed
         const h = hashNotes(map.notes.items);
         if (h !== s.hash) {
@@ -586,7 +737,16 @@ window.SSQECollab = (function () {
         // where this side is: the mouse, the song position and playing, the selection when it changes
         const c = ed.canvas, w = c.clientWidth || window.innerWidth, hgt = c.clientHeight || window.innerHeight;
         const p = { k: 'p', x: r3(ed.mouse.x / w), y: r3(ed.mouse.y / hgt), t: Math.round(map.currentTime), pl: ed.music && ed.music.isPlaying ? 1 : 0, b: (ed.mouse.left ? 1 : 0) | (ed.mouse.right ? 2 : 0) };
-        const sig = `${p.x},${p.y},${p.t},${p.pl},${p.b}`;
+        // (over the grid, or near it: where on the grid, so it shows over the same cell on a window of any shape)
+        const g = ed.gridRect;
+        if (g && g.w > 0) {
+            const gx = (ed.mouse.x - g.x) / g.w, gy = (ed.mouse.y - g.y) / g.h;
+            if (gx > -0.25 && gx < 1.25 && gy > -0.25 && gy < 1.25) {
+                p.gx = r3(gx);
+                p.gy = r3(gy);
+            }
+        }
+        const sig = `${p.x},${p.y},${p.gx},${p.gy},${p.t},${p.pl},${p.b}`;
         const sel = map.notes.selected.length <= 2000 ? map.notes.selected.map(keyOf) : [];
         const selSig = `${sel.length}:${sel.slice(0, 3).join()}:${sel.slice(-3).join()}`;
         if (selSig !== s.lastSel) {
@@ -687,7 +847,9 @@ window.SSQECollab = (function () {
                 continue;
             }
             // (eased toward where it was last heard: smooth, and only a frame or two behind)
-            const tx = o.x * W, ty = o.y * H, was = shown.get(p.id);
+            const g = ed.gridRect;
+            const onGrid = o.gx !== undefined && g && g.w > 0;
+            const tx = onGrid ? g.x + o.gx * g.w : o.x * W, ty = onGrid ? g.y + o.gy * g.h : o.y * H, was = shown.get(p.id);
             const at = was ? { x: was.x + (tx - was.x) * 0.5, y: was.y + (ty - was.y) * 0.5 } : { x: tx, y: ty };
             shown.set(p.id, at);
             drawCursor(ed, ctx, at.x, at.y, k, p.color, p.name, o.b);
@@ -730,8 +892,10 @@ window.SSQECollab = (function () {
             return `Mapping with ${n}.\n\nGetting the song (${s.song.name})... ${Math.floor(100 * s.song.got / s.song.n)}%`;
         return `Mapping with ${n}...`;
     }
-    const choosingFor = () => s && s.role === 'host' && s.phase === 'song'
+    const choosingFor = () => s && s.role === 'host' && (s.phase === 'song' || s.phase === 'binding')
         ? ([...s.peers.values()].map(p => p.name).join(', ') || 'your invite') : '';
+    // (for rich presence: who with, and whether the map's open yet)
+    const presenceInfo = () => s ? { names: [...s.peers.values()].map(p => p.name), people: 1 + s.peers.size, mapping: s.phase === 'mapping' } : null;
 
     function attach(theApp) {
         app = theApp;
@@ -747,5 +911,5 @@ window.SSQECollab = (function () {
         }, SEND_EVERY);
     }
 
-    return { attach, invite, inviteState, leave, songChosen, status, choosingFor, active: () => !!s, full };
+    return { attach, invite, inviteState, leave, songChosen, status, choosingFor, presenceInfo, active: () => !!s, full };
 })();

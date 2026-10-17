@@ -128,6 +128,11 @@
             return this.map.currentTime;
         }
 
+        // web only: where the grid is on the screen (collab.js shows someone's mouse over the same cell of it)
+        get gridRect() {
+            return GRID;
+        }
+
         set currentTime(v) {
             this.map.currentTime = v;
         }
@@ -1150,9 +1155,10 @@
             return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
         }
 
+        // (i: which of the note colours, or web only, a colour of its own: in a collab, the colour of whoever placed it)
         noteColor(i, a = 1) {
             const cols = this.settings.noteColors;
-            const c = cols[i % cols.length];
+            const c = Array.isArray(i) ? i : cols[i % cols.length];
             return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
         }
 
@@ -1381,10 +1387,10 @@
                 drawn.sort((a, b) => a.size - b.size);
 
             for (const d of drawn) {
-                const c = d.i % s.noteColors.length;
+                const c = d.note.byColor || d.i % s.noteColors.length;
                 const lineWidth = mode3D ? Math.max(1, 2 * d.size / noteSize) : 2;
                 // web only: a custom note mesh (Settings > Player) is shown on the grid the way the player draws it
-                const sprite = window.SSQECustom && SSQECustom.noteMeshSprite(s.noteColors[c]);
+                const sprite = window.SSQECustom && SSQECustom.noteMeshSprite(Array.isArray(c) ? c : s.noteColors[c]);
                 if (sprite) {
                     ctx.globalAlpha = clamp(d.progress, 0, 1);
                     ctx.drawImage(sprite, d.x, d.y, d.size, d.size);
@@ -1669,7 +1675,7 @@
                     let isHovering = this.hoveringObject === note;
                     const x = msX(note.ms);
                     const a = note.ms < currentTime - 1 ? 0.35 : 1;
-                    const c = i % colorCount;
+                    const c = note.byColor || i % colorCount;
 
                     // location marker, note box and mini grid
                     ctx.fillStyle = this.noteColor(c, a);
