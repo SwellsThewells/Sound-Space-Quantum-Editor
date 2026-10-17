@@ -1132,6 +1132,12 @@
             const frametime = Math.max(0, (now - this.lastFrame) / 1000);
             this.lastFrame = now;
 
+            // (the song's length as the player knows it now: put right once the whole song is decoded, see audio.js,
+            // so the timeline doesn't think the song is over early and jump to the end)
+            const songMs = this.music.duration * 1000;
+            if (this.music.loaded && songMs > 0 && Math.abs(songMs - this.map.duration) > 1)
+                this.map.duration = songMs;
+
             if (this.music.isPlaying) {
                 this.currentTime = clamp(this.music.currentTimeMs(), 0, this.totalTime);
                 if (this.music.ended) {

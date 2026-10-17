@@ -2,6 +2,19 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.27 - 10/17/2026 --
+
+- TIMELINE: no more jumping back or restarting by itself while the song plays, mapping alone or together
+  - the song's length was the browser's first guess when the file opened, which for many mp3s is too short: the song
+    could be taken as over early, the timeline jumped to the end and the next play started from the beginning. The
+    length is now put right once the whole song is decoded
+  - the timeline followed the audio's own clock, which only moves in steps and now and then lags a little, and snapped
+    back to it: now it runs on a steady clock eased towards the audio's, so it's smooth and never goes backwards (only
+    a real jump, the audio stalling, is followed straight away)
+  - if the browser paused its audio, the timeline ran on without sound and then jumped back; it now waits
+  - SPECTATE: the timeline of the person you're watching no longer steps back when one of their updates comes late
+
+----------------------------------
    -- Plus 3.0.26 - 10/17/2026 --
 
 - The buttons on the main menu and the map player's menu are flat (no gradient) with nearly square corners, like the

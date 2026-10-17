@@ -124,6 +124,12 @@
             el.addEventListener('ended', () => {
                 this.ended = true;
             });
+            // (the length known when the file opens is the browser's first guess, which for many mp3s is off; it's
+            // put right when the browser knows better, and when the whole song has been decoded)
+            el.addEventListener('durationchange', () => {
+                if (this.el === el && !this.buffer && Number.isFinite(el.duration) && el.duration > 0)
+                    this.duration = el.duration;
+            });
 
             this.stop();
 
@@ -134,6 +140,7 @@
                     if (this.el !== el)
                         return;
                     this.buffer = audio;
+                    this.duration = audio.duration;
                     this.waveform = new Waveform(audio);
                 })
                 .catch(e => console.warn('Waveform decode failed', e));
@@ -205,13 +212,22 @@
             return this.state === 'playing';
         }
 
+        // Where playback is (seconds). The audio's own clock only moves in steps (every 10-40ms, more over
+        // Bluetooth) and now and then lags behind a little, so the timeline runs on a steady clock of its own that's
+        // eased towards the audio's a little every frame: smooth, and never stepping backwards. Only a real jump (the
+        // audio stalled or skipped, a quarter of a second or more out) is followed straight away.
         mediaPos() {
             if (this.state !== 'playing' || !this.el)
                 return this.pos;
             if (this.node) {
                 const ac = audioContext();
-                const elapsed = ac.state === 'running' ? ac.currentTime - this.baseCtx : (performance.now() - this.basePerf) / 1000;
-                const p = this.basePos + elapsed * this.tempo;
+                // (the audio isn't running, so nothing is playing: the timeline waits for it rather than running on
+                // and jumping back when it starts)
+                if (ac.state !== 'running') {
+                    ac.resume && ac.resume().catch(() => { });
+                    return this.steady(null);
+                }
+                const p = this.steady(this.basePos + (ac.currentTime - this.baseCtx) * this.tempo);
                 if (p >= this.duration)
                     this.ended = true;
                 return Math.min(p, this.duration);
@@ -223,17 +239,33 @@
                     this.basePerf = performance.now();
                     this.started = true;
                 }
-                return this.basePos;
+                return this.steady(null);
             }
+            return Math.min(this.steady(this.el.seeking ? null : this.el.currentTime), this.duration);
+        }
 
-            let p = this.basePos + (performance.now() - this.basePerf) / 1000 * this.tempo;
-            const real = this.el.currentTime;
-            if (!this.el.seeking && Math.abs(real - p) > 0.075) {
-                this.basePos = real;
-                this.basePerf = performance.now();
-                p = real;
+        // the steady clock: real is where the audio says it is (null when it can't say, so it holds still)
+        steady(real) {
+            const now = performance.now();
+            const c = this.clock;
+            if (!c) {
+                const start = real ?? this.basePos;
+                this.clock = { pos: start, perf: now, out: start };
+                return start;
             }
-            return Math.min(p, this.duration);
+            if (real === null) {
+                c.perf = now;
+                return c.out;
+            }
+            let pos = c.pos + (now - c.perf) / 1000 * this.tempo;
+            const err = real - pos;
+            pos = Math.abs(err) > 0.25 ? real : pos + err * 0.1;
+            c.pos = pos;
+            c.perf = now;
+            // (a little behind where it was shown: held there until it catches up, never drawn going back)
+            const out = pos < c.out && c.out - pos < 0.25 ? c.out : pos;
+            c.out = out;
+            return out;
         }
 
         // MusicPlayer.CurrentTime getter (ms)
@@ -244,6 +276,7 @@
         // MusicPlayer.CurrentTime setter (ms)
         seek(ms) {
             const p = Math.min(Math.max((ms - this.musicOffset) / 1000, 0), this.duration);
+            this.clock = null;
             this.pos = p;
             this.basePos = p;
             this.basePerf = performance.now();
@@ -276,6 +309,7 @@
         pause() {
             const t = this.currentTimeMs();
             this.pos = this.mediaPos();
+            this.clock = null;
             this.state = 'paused';
             this.stopBuffer();
             if (this.el)

@@ -99,6 +99,7 @@
             this.feed = new Feed(SSQEOnline.DELAY);
             this.state = null;
             this.pointerNow = null;
+            this.shownT = null;
             this.navs = '';
             this.own = { x: -1, y: -1 };
             this.stopRect = null;
@@ -226,7 +227,14 @@
             const W = this.win.width, H = this.win.height;
             if (ptr) {
                 this.music.isPlaying = !!ptr.p;
-                this.currentTime = clamp(ptr.t, 0, this.totalTime);
+                // (while their song plays, never drawn going back a little: a message that came late puts the
+                // played-on position a touch behind, so it waits there until it catches up; a real jump back, theirs,
+                // a second or more, is followed)
+                let t = clamp(ptr.t, 0, this.totalTime);
+                if (ptr.p && this.shownT !== null && t < this.shownT && this.shownT - t < 1000)
+                    t = this.shownT;
+                this.shownT = ptr.p ? t : null;
+                this.currentTime = t;
                 // (their mouse over their editor: what lit up under it for them lights up here)
                 const x = ptr.x * W, y = ptr.y * H;
                 this.mouse.x = x;
