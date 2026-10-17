@@ -2,6 +2,18 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.29 - 10/17/2026 --
+
+- AUTO MAPPER: the star rating you set is what you get, even when the song (or the part of it you're mapping) doesn't
+  have enough sounds for it. Once its own sounds are all used, it puts a note on every beat, then every half, third,
+  quarter, sixth, eighth, twelfth or sixteenth of one, as spaced-out flowing streams, until it's hard enough, then
+  takes notes out to land on it exactly. 15 stars on a 30 second part of a song: 15.00 (it was 7.9 to 10.3)
+- AUTO MAPPER: the search for the right setting takes bigger steps where the rating hardly moves, so it doesn't run out
+  of tries short of the target (9 stars on a part of a song: 9.00, it was 8.5)
+- AUTO MAPPER: with Quantum, a forced high star rating makes bigger quantum moves on quick notes instead of tiny
+  slides (15 stars at 100% Quantum: 15.00, it was 10)
+
+----------------------------------
    -- Plus 3.0.28 - 10/17/2026 --
 
 - COLLABORATE: who placed each note is now saved with the map, with everyone's colour on it. Collab on that map again

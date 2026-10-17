@@ -3910,7 +3910,7 @@ window.SSQEAutoMapper = (function () {
             const sizeOf = q => {
                 const g = gaps[q], fast = opts.fast ? opts.fast[q] : 0;
                 if (quickAt(q))
-                    return Math.min(reach(g, fast, opts), Math.min(1.3, Math.max(0.45, stepSpeed * g / 1000)));
+                    return Math.min(reach(g, fast, opts), Math.min(opts.force ? 1.3 * (opts.jumpScale || 1) : 1.3, Math.max(0.45, stepSpeed * (opts.force ? opts.jumpScale || 1 : 1) * g / 1000)));
                 return moveFor(big * Math.min(2.5, Math.max(0.5, Math.pow(g / gm, 0.8))), g, { ...opts, calm: Math.max(0.9, opts.calm ?? 1) }, fast);
             };
             // (a made-up slide only through really quick notes: from about 45ms apart quantum maps jump on every
@@ -3918,7 +3918,8 @@ window.SSQEAutoMapper = (function () {
             const quick = gm < 45;
             // (a stream of tiny quantum steps as often as the design's quick notes are off the grid; otherwise its
             // streams are the grid's, above)
-            const slideOk = quick && (!opts.qp || Math.random() < opts.qp.quickOff);
+            // (none when a star rating is being forced past what the song gives: tiny steps add next to nothing to it)
+            const slideOk = quick && !opts.force && (!opts.qp || Math.random() < opts.qp.quickOff);
             for (let s = 0; s < 4; s++) {
                 if (slideOk)
                     consider(quantumRun('slide', start, prev2, gaps, opts.jump, null, null, opts.qp), 0, 0, 0, 0);
@@ -4668,10 +4669,16 @@ window.SSQEAutoMapper = (function () {
             return notes;
         }
         const js = opts.jumpScale || 1, dens = opts.density || 1;
-        const at = u => u > 10 ? { difficulty: 10, jumpScale: js * (1 + 0.12 * (u - 10)), density: dens * (1 + 0.25 * (u - 10)), force: true }
+        // (past 20, when the song's own sounds can't make it that hard, as with a short stretch of a song: a note on every
+        // beat, then every half, third, quarter, sixth, eighth, twelfth and sixteenth of one, as spaced-out flowing
+        // streams, the setting up to 40)
+        const GRID_DIVS = [1, 2, 3, 4, 6, 8, 12, 16];
+        const at = u => u > 20 ? { difficulty: 10, jumpScale: js * (2.2 + 0.02 * (u - 20)), density: dens * 3.5, force: true,
+            gridFill: GRID_DIVS[Math.min(GRID_DIVS.length - 1, Math.floor((u - 20) / 2.5))] }
+            : u > 10 ? { difficulty: 10, jumpScale: js * (1 + 0.12 * (u - 10)), density: dens * (1 + 0.25 * (u - 10)), force: true }
             : u < 1 ? { difficulty: 1, density: dens * Math.max(0.3, u) } : { difficulty: u };
         const progress = opts.progress || (() => { });
-        const SEARCH = 10, LO = 0.3, HI = 20;
+        const SEARCH = 14, LO = 0.3, HI = 40;
         const make = async (u, label, tries) => {
             const trace = opts.trace ? [] : undefined;
             const notes = await generateAt({ ...opts, ...at(u), trace, tries, progress: text => progress(`MAKING ${target.toFixed(1)} STARS (${label}) - ${text}`) });
@@ -4696,7 +4703,11 @@ window.SSQEAutoMapper = (function () {
             } else if (r.sr < target) {
                 if (u >= HI)
                     break;
-                next = Math.min(HI, u + Math.max(0.3, Math.min(3, (target - r.sr) / 0.9 + 0.2)));
+                // (as far up as the rating rose over the last step says it takes: where the song's own sounds are all
+                // used and it hardly rises, big steps, so it gets to where it fills in beats rather than running out)
+                const prev = tried.filter(x => x.sr < target && x.u < u).sort((p, q) => q.u - p.u)[0];
+                const slope = prev ? Math.max(0.12, (r.sr - prev.sr) / Math.max(0.1, u - prev.u)) : 0.9;
+                next = Math.min(HI, u + Math.max(0.3, Math.min(6, (target - r.sr) / slope + 0.2)));
             } else {
                 if (u <= LO)
                     break;
@@ -4723,7 +4734,7 @@ window.SSQEAutoMapper = (function () {
         const a = opts.buffer ? await analyse(opts.buffer) : null;
         const trimmed = keep.sr > target ? trimToStars(keep.notes, target, rate, a) : { notes: keep.notes, sr: keep.sr };
         const notes = trimmed.notes;
-        notes.info = { ...keep.notes.info, stars: trimmed.sr, difficulty: keep.u, target };
+        notes.info = { ...keep.notes.info, stars: trimmed.sr, difficulty: keep.u, target, search: tried.map(x => [+x.u.toFixed(2), +x.sr.toFixed(2)]) };
         if (opts.trace && keep.trace)
             opts.trace.push(...keep.trace);
         return notes;
@@ -4829,6 +4840,43 @@ window.SSQEAutoMapper = (function () {
     // (the song's sounds and beat divisions have run out), the rest go evenly into the longest gaps between notes,
     // each gap split into equal parts (one long gap twice as long as another gets twice the notes), so it's always
     // the number asked for, as playable as that many notes can be.
+    // The song's own times, and a note on every 1/gridFill of a beat besides (where something's playing: not in
+    // silence), for a star rating its sounds alone can't reach. A beat's point near one of the song's own notes is
+    // left out, so the stream runs through the notes already there.
+    function fillGrid(times, a, opts, ctx) {
+        const d = opts.gridFill;
+        const points = (ctx.timing || []).filter(p => p.bpm > 0).sort((p, q) => p.ms - q.ms);
+        if (!points.length)
+            points.push({ bpm: 120, ms: 0 });
+        let loudMax = 0;
+        for (let f = 0; f < a.frames; f++)
+            loudMax = Math.max(loudMax, a.loudness[f]);
+        const loudAt = ms => a.loudness[Math.min(a.frames - 1, Math.max(0, Math.round(ms / 10)))] || 0;
+        const avoid = opts.avoid || [];
+        const kept = times.slice().sort((p, q) => p - q);
+        const add = [];
+        for (let k = 0; k < points.length; k++) {
+            const pt = points[k], step = 60000 / pt.bpm / d;
+            const from = Math.max(opts.startMs, k ? pt.ms : -Infinity), to = Math.min(opts.endMs, k + 1 < points.length ? points[k + 1].ms : Infinity);
+            for (let t = pt.ms + Math.ceil((from - pt.ms) / step) * step; t < to - 1; t += step) {
+                const ms = Math.round(t);
+                if (ms <= opts.startMs || ms >= opts.endMs || loudAt(ms) < 0.12 * loudMax || avoid.some(v => Math.abs(v - ms) < step * 0.45))
+                    continue;
+                add.push([ms, step]);
+            }
+        }
+        const out = kept.slice();
+        let j = 0;
+        for (const [ms, step] of add) {
+            while (j < kept.length && kept[j] < ms - step * 0.45)
+                j++;
+            if (j < kept.length && Math.abs(kept[j] - ms) < step * 0.45)
+                continue;
+            out.push(ms);
+        }
+        return [...new Set(out)].sort((p, q) => p - q);
+    }
+
     function exactTimes(times, count, startMs, endMs) {
         times = times.slice().sort((p, q) => p - q);
         if (!(count > 0) || times.length === count)
@@ -4915,6 +4963,8 @@ window.SSQEAutoMapper = (function () {
             ctx.shifts = a.tempo.steady ? null : a.tempo.shifts;
         }
         let times = ctx.timing ? chooseTimes(a, opts, nps, ctx) : chooseTimesFree(a, opts, nps);
+        if (opts.gridFill > 0)
+            times = fillGrid(times, a, opts, ctx);
         if (opts.count > 0)
             times = exactTimes(times, opts.count, opts.startMs, opts.endMs);
         await tick();
@@ -5122,7 +5172,7 @@ window.SSQEAutoMapper = (function () {
         // (about a third of a beat, going about as fast as the difficulty's moves), and the next note is a jump from
         // where it ends. Bars that repeat each other get them in the same places.
         const slides = new Map();
-        if (anyGen && ctx.bars && ctx.bars.length && ctx.timing) {
+        if (anyGen && !opts.gridFill && ctx.bars && ctx.bars.length && ctx.timing) {
             const bars = ctx.bars;
             const rootOf = j => {
                 while (bars[j].proto >= 0)
