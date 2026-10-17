@@ -561,6 +561,16 @@ window.SSQECollab = (function () {
         remark();
     }
 
+    function holdCursor() {
+        const ed = app.editor;
+        if (ed && !(ed.music && ed.music.isPlaying))
+            ed.autoplayHold ??= ed.autoplayLast ? { ...ed.autoplayLast } : null;
+    }
+    function releaseCursor() {
+        if (app.editor)
+            app.editor.autoplayHold = null;
+    }
+
     function applyDiff(adds, removes, peer) {
         const map = s.map;
         const now = performance.now();
@@ -623,6 +633,8 @@ window.SSQECollab = (function () {
         }
         for (const k of adds)
             s.synced.set(k, (s.synced.get(k) || 0) + 1);
+        // (the play cursor stays where it was for this person: it's not their edit)
+        holdCursor();
         // (checked again next time round: a change made here in the same moment still goes out)
         s.hash = NaN;
         map.changed();
@@ -782,12 +794,21 @@ window.SSQECollab = (function () {
         ed.afterRender = (ctx, W, H) => drawOver(ed, ctx, W, H);
         if (!inputOn) {
             window.addEventListener('mousedown', onDown, true);
+            window.addEventListener('mousedown', releaseCursor);
+            window.addEventListener('keydown', releaseCursor);
+            window.addEventListener('mouseup', releaseCursor);
             inputOn = true;
         }
     }
     function detachInput() {
-        if (inputOn)
+        if (inputOn) {
             window.removeEventListener('mousedown', onDown, true);
+            window.removeEventListener('mousedown', releaseCursor);
+            window.removeEventListener('keydown', releaseCursor);
+            window.removeEventListener('mouseup', releaseCursor);
+        }
+        if (app.editor)
+            app.editor.autoplayHold = null;
         inputOn = false;
         barButtons = [];
     }

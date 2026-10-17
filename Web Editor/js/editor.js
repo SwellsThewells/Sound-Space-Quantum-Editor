@@ -1567,6 +1567,17 @@
                 y += ly + (ny - ly) * p;
             }
 
+            // (in a collab: someone else's edit near here doesn't move it; only your own time or your own edit does)
+            const hold = this.autoplayHold;
+            if (hold && hold.t === t && hold.x !== undefined) {
+                x = hold.x;
+                y = hold.y;
+                p = hold.p;
+            } else {
+                this.autoplayHold = null;
+                this.autoplayLast = { t, x, y, p };
+            }
+
             const width = Math.sin(p * Math.PI) * 8 + 16;
             // web only: the user's own cursor image (Settings > Graphics), animated GIFs included
             const custom = window.SSQECustom && SSQECustom.cursorFrame();

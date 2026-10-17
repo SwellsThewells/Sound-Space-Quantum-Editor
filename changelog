@@ -2,6 +2,12 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.23 - 10/17/2026 --
+
+- COLLABORATE: your play cursor on the grid (or your custom cursor image) no longer jumps around when someone else
+  places, moves or deletes notes near where you are. It moves when you change the time or edit something yourself
+
+----------------------------------
    -- Plus 3.0.22 - 10/17/2026 --
 
 - COLLABORATE: map any map together, not only a new one. When they accept, you're back on the menu: create a map,
