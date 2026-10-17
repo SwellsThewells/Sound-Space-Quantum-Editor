@@ -210,15 +210,45 @@
         },
 
         // FontRenderer.Print + render, (x, y) is the top-left of the first line
+        // (web only, for speed: text drawn the same way two frames running is kept as a picture at the screen's
+        // resolution and drawn as one image after that, rather than a glyph at a time every frame)
         draw(ctx, text, x, y, size, font, color, alpha = 1) {
             if (!text || size <= 0)
                 return;
+            text = String(text);
+            const fill = typeof color === 'string' ? color : C.rgb(color, alpha);
+            if (fontsReady && text.length > 1) {
+                const key = `${font}|${size}|${fill}|${pixelRatio}|${text}`;
+                let spr = textSprites.get(key);
+                if (!spr) {
+                    const seen = (textSeen.get(key) || 0) + 1;
+                    if (seen >= 2) {
+                        textSeen.delete(key);
+                        spr = textSprite(text, size, font, fill);
+                        if (textSprites.size > 1500)
+                            textSprites.clear();
+                        textSprites.set(key, spr);
+                    } else {
+                        if (textSeen.size > 5000)
+                            textSeen.clear();
+                        textSeen.set(key, seen);
+                    }
+                }
+                if (spr && spr.canvas) {
+                    ctx.drawImage(spr.canvas, snap(x) - spr.pad, snap(y) - spr.pad, spr.w, spr.h);
+                    return;
+                }
+            }
+            Text.glyphs(ctx, text, x, y, size, font, fill);
+        },
+
+        glyphs(ctx, text, x, y, size, font, fill) {
             const f = prepareFont(...fontKey(font));
             const k = size / f.originSize;
             ctx.font = `${size * f.emPerPixelHeight}px "${f.family}"`;
             ctx.textAlign = 'left';
             ctx.textBaseline = 'alphabetic';
-            ctx.fillStyle = typeof color === 'string' ? color : C.rgb(color, alpha);
+            ctx.fillStyle = fill;
 
             let cx = x, cy = y;
             for (const c of String(text)) {
@@ -243,13 +273,37 @@
         },
     };
 
+    // (see Text.draw: text pictures, and how often each text has been drawn before it gets one)
+    const textSprites = new Map(), textSeen = new Map();
+    let fontsReady = false;
+    function textSprite(text, size, font, fill) {
+        const lines = text.split('\n').length;
+        // (the margin a whole number of device pixels, so the picture lands on them exactly and isn't blurred)
+        const pad = Math.ceil((size * 0.5 + 2) * pixelRatio) / pixelRatio;
+        const w = Text.width(text, size, font) + 2 * pad + 2, h = lines * size + 2 * pad;
+        const pw = Math.ceil(w * pixelRatio), ph = Math.ceil(h * pixelRatio);
+        if (!(pw > 0 && ph > 0) || pw * ph > 4e6)
+            return { canvas: null };
+        const canvas = document.createElement('canvas');
+        canvas.width = pw;
+        canvas.height = ph;
+        const g = canvas.getContext('2d');
+        g.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        Text.glyphs(g, text, pad, pad, size, font, fill);
+        return { canvas, pad, w: pw / pixelRatio, h: ph / pixelRatio };
+    }
+
     function loadFonts() {
         const loads = Object.entries(FONT_FAMILIES).map(([name, family]) => {
             const face = new FontFace(family, `url("${ASSETS}fonts/${name}.ttf")`);
             document.fonts.add(face);
             return face.load().catch(e => console.warn('Font failed to load', name, e));
         });
-        return Promise.all(loads);
+        return Promise.all(loads).then(r => {
+            fontsReady = true;
+            textSprites.clear();
+            return r;
+        });
     }
 
     // ---------------------------------------------------------------- textures

@@ -2,6 +2,19 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.25 - 10/17/2026 --
+
+- SPEED: lots of notes no longer lag the editor. The timeline at the top drew every note as about 14 separate shapes;
+  each note's box is now one ready-made picture, the notes' position markers and lines are drawn together, and boxes
+  hidden under another one aren't drawn again. A very dense part (thousands of notes on screen) went from about 50ms a
+  frame to about 11ms; with a custom note mesh from about 90ms to about 11ms
+- SPEED: BEZIER is no longer laggy. The bezier preview was worked out again from scratch every frame (with 200 nodes,
+  100ms a frame); it's now only worked out when the nodes or settings change and is otherwise one picture (about 2ms).
+  The curve maths is much faster too, so DRAW is quick even with hundreds of nodes. The curves come out exactly the same
+- SPEED: notes on the grid and text everywhere are drawn from ready-made pictures instead of shape by shape and letter
+  by letter. A normal frame takes about a third less time, so the editor keeps up with 144Hz and 240Hz screens
+
+----------------------------------
    -- Plus 3.0.24 - 10/17/2026 --
 
 - AUTO MAPPER: the Quantum checkbox is now a Quantum slider, 0-100% (on the Patterns tab and in More Options). 100%

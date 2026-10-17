@@ -935,13 +935,24 @@ const SSQE = window.SSQE = window.SSQE || {};
             if (curve) {
                 const steps = divisor * degree;
                 const deltaMs = nodes[degree].ms - nodes[0].ms;
+                // (web only, for speed: the binomial coefficients once rather than for every point, and the powers of
+                // t and 1 - t built up a step at a time; the same sum)
+                const coef = new Float64Array(degree + 1);
+                for (let p = 0; p <= degree; p++)
+                    coef[p] = binomial(degree, p);
+                const tp = new Float64Array(degree + 1), up = new Float64Array(degree + 1);
 
                 for (let s = 0; s <= steps; s++) {
-                    const t = s / steps;
+                    const t = s / steps, u = 1 - t;
+                    tp[0] = up[0] = 1;
+                    for (let p = 1; p <= degree; p++) {
+                        tp[p] = tp[p - 1] * t;
+                        up[p] = up[p - 1] * u;
+                    }
                     let x = 0, y = 0;
 
                     for (let p = 0; p <= degree; p++) {
-                        const v = binomial(degree, p) * ((1 - t) ** (degree - p)) * (t ** p);
+                        const v = coef[p] * up[degree - p] * tp[p];
                         x += v * nodes[p].x;
                         y += v * nodes[p].y;
                     }

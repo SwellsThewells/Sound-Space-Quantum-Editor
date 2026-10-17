@@ -1395,6 +1395,12 @@
                     ctx.globalAlpha = clamp(d.progress, 0, 1);
                     ctx.drawImage(sprite, d.x, d.y, d.size, d.size);
                     ctx.globalAlpha = 1;
+                } else if (!mode3D && d.size === noteSize) {
+                    // (web only, for speed: the note's square drawn once per colour and faded in, the same look)
+                    const sq = this.gridNoteSprite(c, noteSize);
+                    ctx.globalAlpha = clamp(d.progress, 0, 1);
+                    ctx.drawImage(sq.canvas, d.x - sq.pad, d.y - sq.pad, sq.w, sq.w);
+                    ctx.globalAlpha = 1;
                 } else
                     this.roundedRect(d.x, d.y, d.size, d.size, this.noteColor(c, 0.15 * d.progress), this.noteColor(c, d.progress), lineWidth);
 
@@ -1441,16 +1447,56 @@
             // bezier preview
             const nodes = notes.bezierNodes.map(i => notes.items[i]).filter(Boolean);
             if (nodes.length > 1) {
-                const points = [];
-                for (const segment of Patterns.bezierSegments(nodes, Math.trunc(s.bezierDivisor + 0.5), s.curveBezier))
-                    for (const n of segment) {
-                        const x = GRID.x + (2 - n.x) * cell + previewGap;
-                        const y = GRID.y + (2 - n.y) * cell + previewGap;
-                        this.roundedRect(x, y, previewSize, previewSize, this.color(2, 0.125), this.color(2, 0.09375), 2);
-                        points.push([x + previewSize / 2, y + previewSize / 2]);
+                // (web only, for speed: worked out and drawn again only when the nodes, the divisor, the grid or the
+                // colours change; every other frame it's one picture)
+                const divisor = Math.trunc(s.bezierDivisor + 0.5);
+                let key = `${divisor}|${s.curveBezier}|${GRID.x},${GRID.y},${cell},${previewGap},${previewSize}|${s.gridSquircles}|${s.gridSquircleRadius}|${G.pixelRatio}|${s.color2}`;
+                for (const n of nodes)
+                    key += `|${n.x},${n.y},${n.ms},${n.anchored ? 1 : 0}`;
+                if (!this.bezierPreview || this.bezierPreview.key !== key) {
+                    const pts = [];
+                    for (const segment of Patterns.bezierSegments(nodes, divisor, s.curveBezier))
+                        for (const n of segment)
+                            pts.push([GRID.x + (2 - n.x) * cell + previewGap, GRID.y + (2 - n.y) * cell + previewGap]);
+                    // (drawn once into a picture just big enough, at the screen's resolution, square by square as before
+                    // so overlapping squares build up the same way)
+                    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+                    for (const [x, y] of pts) {
+                        x0 = Math.min(x0, x);
+                        y0 = Math.min(y0, y);
+                        x1 = Math.max(x1, x + previewSize);
+                        y1 = Math.max(y1, y + previewSize);
                     }
-                for (let i = 1; i < points.length; i++)
-                    this.line(points[i - 1][0], points[i - 1][1], points[i][0], points[i][1], 'rgb(255,255,255)');
+                    const r = G.pixelRatio, pad = 4 / r + 2;
+                    x0 = Math.floor((x0 - pad) * r) / r;
+                    y0 = Math.floor((y0 - pad) * r) / r;
+                    const pw = Math.min(8192, Math.ceil((x1 + pad - x0) * r)), ph = Math.min(8192, Math.ceil((y1 + pad - y0) * r));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, pw);
+                    canvas.height = Math.max(1, ph);
+                    const g = canvas.getContext('2d');
+                    g.setTransform(r, 0, 0, r, -x0 * r, -y0 * r);
+                    g.fillStyle = this.color(2, 0.125);
+                    g.strokeStyle = this.color(2, 0.09375);
+                    g.lineWidth = 2;
+                    for (const [x, y] of pts) {
+                        g.beginPath();
+                        if (s.gridSquircles && g.roundRect)
+                            g.roundRect(x, y, previewSize, previewSize, previewSize * (s.gridSquircleRadius ?? 0.125) * 1.5);
+                        else
+                            g.rect(x, y, previewSize, previewSize);
+                        g.fill();
+                        g.stroke();
+                    }
+                    g.strokeStyle = 'rgb(255,255,255)';
+                    g.lineWidth = 1;
+                    g.beginPath();
+                    pts.forEach(([x, y], i) => i ? g.lineTo(x + previewSize / 2, y + previewSize / 2) : g.moveTo(x + previewSize / 2, y + previewSize / 2));
+                    g.stroke();
+                    this.bezierPreview = { key, canvas, x: x0, y: y0, w: canvas.width / r, h: canvas.height / r };
+                }
+                const bp = this.bezierPreview;
+                ctx.drawImage(bp.canvas, bp.x, bp.y, bp.w, bp.h);
             }
 
             // autoplay cursor
@@ -1597,6 +1643,66 @@
 
         // ------------------------------------------------------------ track rendering (GuiTrack.UpdateInstanceData)
 
+        // A note's square on the grid (fill and outline as roundedRect draws them at full strength), as a picture at
+        // the screen's resolution, one per colour and size
+        gridNoteSprite(c, size) {
+            const s = this.settings, r = G.pixelRatio, pad = 2;
+            const key = `${Array.isArray(c) ? c.join(',') : c}|${size}|${r}|${s.gridSquircles}|${s.gridSquircleRadius}|${s.noteColors.join(';')}`;
+            this.gridNotes ??= new Map();
+            let sq = this.gridNotes.get(key);
+            if (sq)
+                return sq;
+            if (this.gridNotes.size > 64)
+                this.gridNotes.clear();
+            const w = size + 2 * pad, px = Math.max(1, Math.ceil(w * r));
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = px;
+            const g = canvas.getContext('2d');
+            g.scale(px / w, px / w);
+            g.beginPath();
+            if (s.gridSquircles && g.roundRect)
+                g.roundRect(pad, pad, size, size, size * (s.gridSquircleRadius ?? 0.125) * 1.5);
+            else
+                g.rect(pad, pad, size, size);
+            g.fillStyle = this.noteColor(c, 0.15);
+            g.fill();
+            g.strokeStyle = this.noteColor(c, 1);
+            g.lineWidth = 2;
+            g.stroke();
+            sq = { canvas, w, pad };
+            this.gridNotes.set(key, sq);
+            return sq;
+        }
+
+        // A note's box on the track with its mini grid (as renderTrack drew it shape by shape), as a picture at the
+        // screen's resolution, one per colour, see-through-ness and size
+        trackBox(c, a, noteSize, cellPos) {
+            const r = G.pixelRatio;
+            const key = `${Array.isArray(c) ? c.join(',') : c}|${a}|${noteSize}|${r}|${this.settings.noteColors.join(';')}`;
+            this.trackBoxes ??= new Map();
+            let box = this.trackBoxes.get(key);
+            if (box)
+                return box;
+            if (this.trackBoxes.size > 64)
+                this.trackBoxes.clear();
+            const px = Math.max(1, Math.ceil(noteSize * r));
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = px;
+            const g = canvas.getContext('2d');
+            g.scale(px / noteSize, px / noteSize);
+            g.fillStyle = this.noteColor(c, a / 20);
+            g.fillRect(0, 0, noteSize, noteSize);
+            g.strokeStyle = this.noteColor(c, a);
+            g.lineWidth = 1;
+            g.strokeRect(0.5, 0.5, noteSize - 1, noteSize - 1);
+            g.strokeStyle = this.noteColor(c, a * 0.45);
+            for (let k = 0; k < 9; k++)
+                g.strokeRect(cellPos(2 - k % 3) + 0.5, cellPos(Math.trunc(k / 3)) + 0.5, noteSize * 0.2 - 1, noteSize * 0.2 - 1);
+            box = { canvas, w: noteSize };
+            this.trackBoxes.set(key, box);
+            return box;
+        }
+
         tintedSprite(id, color) {
             const key = `${id}|${color}`;
             if (this.tintedSprites[key])
@@ -1681,6 +1787,15 @@
                     }
                 }
 
+                // (web only, for speed: each note's box and mini grid is one picture, drawn once per colour; the
+                // location markers and the text lines are gathered up and drawn a colour at a time, so thousands of
+                // notes on screen are a few thousand image draws rather than tens of thousands of shapes)
+                const markers = new Map(), stems = new Map();
+                const markerSize = noteSize * 0.2;
+                let lastBox = -Infinity;
+                // (one CSS pixel wide, on whole device pixels, as line() draws it)
+                const stemPx = Math.max(1, Math.round(G.pixelRatio)), stemDevice = stemPx / G.pixelRatio;
+                const stemX = v => (Math.floor(v * G.pixelRatio) + (stemPx % 2 ? 0.5 : 0)) / G.pixelRatio;
                 for (let i = low; i < high; i++) {
                     const note = notes.items[i];
                     let isHovering = this.hoveringObject === note;
@@ -1689,19 +1804,35 @@
                     const c = note.byColor || i % colorCount;
 
                     // location marker, note box and mini grid
-                    ctx.fillStyle = this.noteColor(c, a);
-                    ctx.fillRect(x + cellPos(2 - note.x), cellGap + cellPos(2 - note.y), noteSize * 0.2, noteSize * 0.2);
-                    ctx.fillStyle = this.noteColor(c, a / 20);
-                    ctx.fillRect(x, cellGap, noteSize, noteSize);
-                    ctx.strokeStyle = this.noteColor(c, a);
-                    ctx.lineWidth = 1;
-                    ctx.strokeRect(x + 0.5, cellGap + 0.5, noteSize - 1, noteSize - 1);
-                    ctx.strokeStyle = this.noteColor(c, a * 0.45);
-                    for (let k = 0; k < 9; k++)
-                        ctx.strokeRect(x + cellPos(2 - k % 3) + 0.5, cellGap + cellPos(Math.trunc(k / 3)) + 0.5, noteSize * 0.2 - 1, noteSize * 0.2 - 1);
+                    // (a box under a pixel from the last one drawn would only cover it again: skipped, its marker kept)
+                    const box = x - lastBox >= 1 || isHovering || note.selected ? this.trackBox(c, a, noteSize, cellPos) : null;
+                    if (box) {
+                        ctx.drawImage(box.canvas, x, cellGap, box.w, box.w);
+                        lastBox = x;
+                    }
+                    const mk = this.noteColor(c, a);
+                    let path = markers.get(mk);
+                    if (!path)
+                        markers.set(mk, path = new Path2D());
+                    // (one exactly on top of the last of its colour, to the device pixel, isn't drawn twice)
+                    const mx0 = x + cellPos(2 - note.x), my0 = cellGap + cellPos(2 - note.y);
+                    const mKey = Math.round(mx0 * G.pixelRatio) * 100003 + Math.round(my0 * G.pixelRatio);
+                    if (path.last !== mKey) {
+                        path.rect(mx0, my0, markerSize, markerSize);
+                        path.last = mKey;
+                    }
 
                     // text line
-                    this.line(x + 0.5, H + 2, x + 0.5, H * 1.4, this.color(4, !this.hoveringObject || isHovering ? a : 0.35));
+                    const lc = this.color(4, !this.hoveringObject || isHovering ? a : 0.35);
+                    let stem = stems.get(lc);
+                    if (!stem)
+                        stems.set(lc, stem = new Path2D());
+                    const sx = stemX(x + 0.5);
+                    if (stem.last !== sx) {
+                        stem.moveTo(sx, H + 2);
+                        stem.lineTo(sx, H * 1.4);
+                        stem.last = sx;
+                    }
 
                     if (isHovering)
                         this.strokeBox(x - 4, cellGap - 4, noteSize + 8, noteSize + 8, this.color(5));
@@ -1730,6 +1861,15 @@
                         labels.push({ x: x + 3, a: `Note ${fmtInt(i + 1)}`, b: `${fmtInt(note.ms)}ms`, hover: isHovering });
                         lastRenderedText = x;
                     }
+                }
+                for (const [color, path] of markers) {
+                    ctx.fillStyle = color;
+                    ctx.fill(path);
+                }
+                ctx.lineWidth = stemDevice;
+                for (const [color, path] of stems) {
+                    ctx.strokeStyle = color;
+                    ctx.stroke(path);
                 }
             } else {
                 const list = map.renderMode === RenderMode.VFX ? map.vfxObjects : map.specialObjects;
