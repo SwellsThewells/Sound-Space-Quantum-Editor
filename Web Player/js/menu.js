@@ -512,6 +512,8 @@
 
     const background = () => new G.Square(0, 0, 1920, 1080, { color: [30, 30, 30] });
     const button = (x, y, w, h, text, textSize, onClick, props = {}) => new G.Button(x, y, w, h, { text, textSize, onLeftClick: onClick, ...props });
+    // (the main menu's buttons: flat, without the gradient, and nearly square cornered, like the original editor's menu)
+    const flatButton = (x, y, w, h, text, textSize, onClick, props = {}) => button(x, y, w, h, text, textSize, onClick, { gradient: false, cornerRadius: 0.06, ...props });
     const label = (x, y, w, h, text, textSize, props = {}) => new G.Label(x, y, w, h, { text, textSize, centerMode: None, ...props });
     const dynamic = (x, y, w, h, textSize, fn, props = {}) => {
         const l = label(x, y, w, h, '', textSize, props);
@@ -526,7 +528,7 @@
     function buildMenu() {
         const touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
         const startBox = new G.Textbox(60, 790, 300, 50, { textSize: 30, style: G.Styles.Textbox_Uncolored, text: '0:00' });
-        const replayButton = button(1190, 410, 600, 100, 'WATCH REPLAY', 54, () => start('replay'));
+        const replayButton = flatButton(1190, 410, 600, 100, 'WATCH REPLAY', 54, () => start('replay'));
         const toast = new G.Toast(0, 1000, 1920, 64, { textSize: 42 });
 
         const controls = [
@@ -539,24 +541,24 @@
             label(262, 118, 400, 40, 'MAP PLAYER', 38, { font: 'square' }),
             label(60, 195, 200, 40, 'MAP', 42),
 
-            button(60, 250, 280, 50, 'LOAD MAP', 30, async () => {
+            flatButton(60, 250, 280, 50, 'LOAD MAP', 30, async () => {
                 const f = await pickFile('.txt,.sspm,.rhm,text/plain');
                 f && loadMapFile(f);
             }),
-            button(350, 250, 280, 50, 'PASTE MAP', 30, pasteMap),
-            button(640, 250, 280, 50, 'DEMO MAP', 30, demoMap),
+            flatButton(350, 250, 280, 50, 'PASTE MAP', 30, pasteMap),
+            flatButton(640, 250, 280, 50, 'DEMO MAP', 30, demoMap),
             dynamic(60, 315, 880, 30, 24, () => mapInfo
                 ? `${mapInfo.name} - ${mapInfo.notes} notes - ${formatTime(mapInfo.length)}`
                 : mapError ? `Invalid map: ${mapError}` : 'No map loaded', { colorSetting: null }),
 
-            button(60, 375, 280, 50, 'LOAD AUDIO', 30, async () => {
+            flatButton(60, 375, 280, 50, 'LOAD AUDIO', 30, async () => {
                 const f = await pickFile('audio/*,.asset,.mp3,.ogg,.wav,.flac,.m4a,.opus');
                 f && loadAudioFile(f);
             }),
             dynamic(60, 440, 880, 30, 24, () => audioFile
                 ? `${audioFile.name} (${(audioFile.size / 1048576).toFixed(1)} MB)` : 'No audio - the map will play silently'),
 
-            button(60, 500, 280, 50, 'LOAD REPLAY', 30, async () => {
+            flatButton(60, 500, 280, 50, 'LOAD REPLAY', 30, async () => {
                 const f = await pickFile('.sspre,.qer');
                 f && loadReplayFile(f);
             }),
@@ -577,12 +579,12 @@
                 `Mode: ${results.mode}`,
             ].join('\n') : ''),
 
-            button(1190, 180, 600, 100, 'PLAY', 54, () => start('play')),
-            button(1190, 295, 600, 100, 'AUTOPLAY', 54, () => start('autoplay')),
+            flatButton(1190, 180, 600, 100, 'PLAY', 54, () => start('play')),
+            flatButton(1190, 295, 600, 100, 'AUTOPLAY', 54, () => start('autoplay')),
             replayButton,
-            button(1190, 525, 600, 100, 'SETTINGS', 54, () => show(settingsScreen)),
+            flatButton(1190, 525, 600, 100, 'SETTINGS', 54, () => show(settingsScreen)),
             // opened from the editor's menu: a way back to it
-            ...(EMBEDDED ? [button(1190, 640, 600, 100, 'BACK TO EDITOR', 54, () => {
+            ...(EMBEDDED ? [flatButton(1190, 640, 600, 100, 'BACK TO EDITOR', 54, () => {
                 if (game)
                     return;
                 window.parent.postMessage('ssqe-close-player', '*');

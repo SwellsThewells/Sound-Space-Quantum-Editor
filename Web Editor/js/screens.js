@@ -256,7 +256,8 @@
     function menu(app) {
         const s = app.settings;
         const label = (x, y, w, h, props) => new G.Label(x, y, w, h, { centerMode: None, ...props });
-        const button = (x, y, w, h, text, textSize, onClick) => new G.Button(x, y, w, h, { text, textSize, onLeftClick: onClick });
+        // (flat, without the gradient, and nearly square cornered, like the original editor's menu)
+        const button = (x, y, w, h, text, textSize, onClick) => new G.Button(x, y, w, h, { text, textSize, onLeftClick: onClick, gradient: false, cornerRadius: 0.06 });
 
         const changelog = new ScrollingText(60, 230, 890, 715, { content: app.changelog || 'Loading...' });
         // (the buttons are a little shorter than the original's so STATS and CREDITS fit in the column)
