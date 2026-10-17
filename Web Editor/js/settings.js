@@ -94,6 +94,7 @@
         autoMapFill: 'intense',
         autoMapCalm: 30,
         autoMapUseMap: true,
+        autoMapSimilarity: 0, // web only: 0-100, how much of an auto map takes over the map's own parts that sound like it
         allowSpectators: true, // web only: when logged in, people can watch you map (SPECTATE)
         allowInvites: true, // web only: when logged in, people can invite you to map together (COLLABORATE)
         autoMapSetBpm: true,

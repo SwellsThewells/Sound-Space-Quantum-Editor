@@ -112,6 +112,10 @@
                     quantum: Math.min(100, Math.max(0, s.autoMapQuantumPct ?? 0)) / 100,
                     before, avoid: [...before.map(n => n.ms), ...(next ? [next.ms] : [])],
                     styleNotes: s.autoMapUseMap === false ? [] : notes.map(n => ({ x: n.x, y: n.y, ms: n.ms })),
+                    // (Similar to This Map: the notes already mapped, whose parts that sound like what's being mapped
+                    // are taken over)
+                    similarity: Math.min(100, Math.max(0, s.autoMapSimilarity ?? 0)) / 100,
+                    similarNotes: notes.map(n => ({ x: n.x, y: n.y, ms: n.ms })),
                     count: s.autoMapCount || 0,
                     flow: (s.autoMapFlow ?? 70) / 100,
                     follow: (s.autoMapFollow ?? 75) / 100,
@@ -165,6 +169,11 @@
             G.Label.prototype.process.call(this, dt);
             this.text = `Quantum: ${Math.round(s.autoMapQuantumPct ?? 0)}%`;
         };
+        const AutoMapSimilarLabel = label(0, 630, 175, 30, '', 30, { centerMode: None });
+        AutoMapSimilarLabel.process = function (dt) {
+            G.Label.prototype.process.call(this, dt);
+            this.text = `Auto Map Like This Map: ${Math.round(s.autoMapSimilarity ?? 0)}%`;
+        };
         const AutoMapStats = label(370, 280, 175, 90, '', 24, { centerMode: None });
         AutoMapStats.process = function (dt) {
             G.Label.prototype.process.call(this, dt);
@@ -209,6 +218,9 @@
             AutoMapQuantumLabel,
             slider(370, 590, 175, 32, () => s.autoMapQuantumPct ?? 0, v => { s.autoMapQuantumPct = Math.round(v); saveS(); }, 100, 1, 0),
             button(370, 640, 175, 40, 'MORE OPTIONS', 27, () => app.dialogs.autoMapOptions(editor)),
+            // (how much it takes over the parts of this map that sound like what it's mapping, see automapper.js)
+            AutoMapSimilarLabel,
+            slider(0, 665, 210, 32, () => s.autoMapSimilarity ?? 0, v => { s.autoMapSimilarity = Math.round(v); saveS(); }, 100, 1, 0),
             label(370, 480, 175, 30, 'Notes (0 = Auto):', 26, { centerMode: None }),
             numberBox(370, 510, 140, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [0, 100000], get: () => s.autoMapCount ?? 0, set: v => { s.autoMapCount = Math.round(v); saveS(); } }),
             button(370, 430, 175, 40, 'RESET LEARNING', 27, () => {

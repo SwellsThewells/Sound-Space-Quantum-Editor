@@ -877,6 +877,7 @@
             slider('Calm Parts', 'autoMapCalm', 0, 100, 5, 30, pct, 'How many notes calm parts (intros, breakdowns) get: 0% leaves them nearly empty');
             y += 6;
             slider('Quantum', 'autoMapQuantumPct', 0, 100, 1, 0, pct, 'How much of the map is quantum (notes off the 3x3 grid), in the design of the quantum maps it learned: 100% all of it, lower only some parts and tamer, around 10% just a few runs bent into lines and curves like the Bezier tool');
+            slider('Similar to This Map', 'autoMapSimilarity', 0, 100, 5, 0, pct, 'How much it maps like the notes already in the map: each part of the song that sounds like a part you have mapped takes that part over, turned or mirrored so it joins on smoothly, with its rhythm where it has about as many notes as the difficulty wants. 100% does that wherever it can; lower, less often, and the rest only borrows its shapes. Needs some of the song mapped already');
             check('Follow this map\'s own patterns', 'autoMapUseMap', true, 'The notes already in the map are the patterns it prefers');
             check('Set the detected BPM when the map has none', 'autoMapSetBpm', true, 'Adds the song\'s BPM as a timing point so the beat lines match');
             y += 8;
