@@ -139,12 +139,13 @@
                 if (!made.length)
                     editor.toast(`NOTHING TO MAP HERE${bpmText}`, 'other');
                 else {
-                    map.notes.addObjects('AUTO MAP', made.map(n => new SSQE.Note(n.x, n.y, n.ms)));
+                    // (marked as the auto mapper's, so saving the map doesn't teach the auto mapper its own notes)
+                    map.notes.addObjects('AUTO MAP', made.map(n => Object.assign(new SSQE.Note(n.x, n.y, n.ms), { auto: true })));
                     window.SSQEStats && SSQEStats.add('autoMaps');
                     const short = s.autoMapCount > 0 && made.length < s.autoMapCount ? ` (ONLY ${made.length} OF ${s.autoMapCount} FIT THE SONG)` : '';
                     // (a target the song can't reach at a playable speed: as hard as it goes, said so)
                     const aim = s.autoMapCount > 0 ? 0 : s.autoMapStars ?? 5;
-                    const sr = info.stars > 0 ? ` - ${info.stars.toFixed(2)} STARS${aim && info.stars < aim - 0.75 && info.difficulty >= 9.5 ? ' (AS HARD AS THIS SONG GOES)' : ''}` : '';
+                    const sr = info.stars > 0 ? ` - ${info.stars.toFixed(2)} STARS${aim && info.stars < aim - 0.05 ? ' (AS HARD AS THIS SONG GOES)' : ''}` : '';
                     editor.toast(`AUTO MAPPED ${made.length} NOTES${sr}${short}${bpmText}`, 'other');
                 }
             } catch (err) {
@@ -192,7 +193,7 @@
             numberBox(370, 140, 120, 40, { increment: 10, isPositive: true, textSize: 27, bounds: [10, 400], get: () => s.autoMapDensity ?? 100, set: v => { s.autoMapDensity = v; saveS(); } }),
             AutoMapDifficultyLabel,
             // (the star rating the map is aimed at, 1 to 12 in half stars)
-            slider(370, 230, 175, 32, () => ((s.autoMapStars ?? 5) - 1) * 2, v => { s.autoMapStars = 1 + Math.round(v) / 2; saveS(); }, 22, 1, 8),
+            slider(370, 230, 175, 32, () => ((s.autoMapStars ?? 5) - 1) * 10, v => { s.autoMapStars = Math.round(10 + v) / 10; saveS(); }, 140, 1, 40),
             AutoMapStats,
             button(370, 380, 175, 40, 'LEARN FROM MAPS', 27, async () => {
                 const files = await app.pickFile('.sspm,.rhm,.txt,.osu', true);

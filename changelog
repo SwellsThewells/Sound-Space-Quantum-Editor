@@ -2,6 +2,24 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.21 - 10/17/2026 --
+
+- Auto mapper, Target Stars: the map now comes out at the star rating you set, exactly (the same formula as Rhythia
+  and CALCULATE SR/RP; checked against Rhythia's own server). It makes the map a little harder than asked, then takes
+  out notes until it's on the rating. 1 to 15 stars, in steps of 0.1. Past what a song normally rates, its streams are
+  spaced out (two cells a note) to get there
+- Auto mapper, set number of notes: always exactly that many, in every mode, even more than the song has sounds for
+  (the rest are spread evenly into the longest gaps)
+- Auto mapper learns again: the maps it learned now lead what it makes (before, with only a few maps learned, the
+  example maps that come with the editor took over). It also learns from your own maps when you save them, only the
+  notes you placed, never the ones the auto mapper placed
+- COLLABORATE: up to 5 people. The host can invite more from the editor (INVITE on the bar at the bottom), and they
+  join the map as it is. Everyone has their own colour. You see someone's mouse only when they're in the part of the
+  song you're looking at. Invites pop up in the corner, not the middle of the screen, and "Let Others Invite Me To
+  Collab" (Settings, or the account window) turns them off. What others select or move never changes your selection
+- SPECTATE: less text on screen
+
+----------------------------------
    -- Plus 3.0.20 - 10/16/2026 --
 
 - Auto mapper, streams: full circles. A stream now goes round the outside of the grid in laps (a lap or two, as

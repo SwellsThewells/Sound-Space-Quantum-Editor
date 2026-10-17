@@ -244,6 +244,53 @@
             return this.windows[id];
         }
 
+        // web only (collab.js): an invite to map together, in the bottom right corner rather than in the middle of
+        // the screen, so it doesn't get in the way; it answers no by itself after 30 seconds
+        invitePopup(id, text, onAnswer) {
+            const W = 320, H = 120;
+            let answered = false;
+            const answer = yes => {
+                if (answered)
+                    return;
+                answered = true;
+                clearTimeout(timer);
+                w.close();
+                onAnswer(yes);
+            };
+            const w = this.floating(`invite-${id}`, 'Map together?', W, H, [
+                aLabel(text, 12, 10, W - 24, 56),
+                aButton('Accept', () => answer(true), 12, 78, 140, 30),
+                aButton('Decline', () => answer(false), W - 152, 78, 140, 30),
+            ], () => answer(false));
+            w.win.style.transform = '';
+            w.win.style.left = Math.max(0, window.innerWidth - W - 18) + 'px';
+            w.win.style.top = Math.max(0, window.innerHeight - H - 50) + 'px';
+            const timer = setTimeout(() => answer(false), 30000);
+            return w;
+        }
+
+        // web only (collab.js): the people online, to invite into the map you're mapping together
+        collabInvite(list, inviteState, invite, full) {
+            const W = 360, rows = Math.max(1, Math.min(10, list.length));
+            const controls = [];
+            if (!list.length)
+                controls.push(aLabel('Nobody else is online right now.', 16, 16, W - 32, 26));
+            list.slice(0, 10).forEach((u, i) => {
+                const y = 14 + i * 36;
+                controls.push(aLabel(`${u.name}${u.noInvites ? ' (no invites)' : u.busy ? ' (busy)' : ''}`, 16, y + 4, 200, 26));
+                const st = inviteState(u.id);
+                const b = aButton(st === 'sent' ? 'Invited...' : st === 'declined' ? 'Declined' : 'Invite', () => {
+                    invite(u);
+                    b.textContent = 'Invited...';
+                }, W - 126, y, 110, 28);
+                b.disabled = full || !!u.noInvites;
+                controls.push(b);
+            });
+            if (full)
+                controls.push(aLabel('5 people is the most that can map together.', 16, 20 + rows * 36, W - 32, 26));
+            return this.floating('collab-invite', 'Invite to map with you', W, 30 + rows * 36 + (full ? 30 : 0), controls);
+        }
+
         closeAll() {
             for (const w of Object.values(this.windows))
                 w.close();
@@ -689,16 +736,21 @@
                 s.allowSpectators = watch.input.checked;
                 SSQE.Settings.save(s);
             });
+            const invites = aCheck('Let others invite me to collab', s.allowInvites !== false, 16, 0, W - 32, 22);
+            invites.input.addEventListener('change', () => {
+                s.allowInvites = invites.input.checked;
+                SSQE.Settings.save(s);
+            });
             const reopen = () => this.account();
             if (O.loggedIn()) {
                 controls.push(aLabel(`Logged in as ${O.username()}`, 16, 16, W - 32, 26));
                 controls.push(at(watch.label, 16, 56, W - 32, 22));
-                controls.push(aLabel('While you have a map open, people can watch it from SPECTATE (5 seconds behind). Your song\'s audio isn\'t shared.', 16, 86, W - 32, 60));
+                controls.push(at(invites.label, 16, 86, W - 32, 22));
                 controls.push(aButton('Log Out', async () => {
                     await O.logOut();
                     reopen();
-                }, 16, 156, 120, 30));
-                return this.floating('account', 'Account', W, 200, controls);
+                }, 16, 126, 120, 30));
+                return this.floating('account', 'Account', W, 170, controls);
             }
             const name = aBox(120, 16, W - 136, 26);
             const pass = aBox(120, 52, W - 136, 26);
@@ -784,7 +836,7 @@
             };
             const pct = v => `${v}%`;
 
-            slider('Target Stars', 'autoMapStars', 1, 12, 0.5, 5, v => `${v.toFixed(1)}*`, 'How hard, as Rhythia\'s star rating (SR): the map is made, rated with Rhythia\'s star formula and made again harder or easier until it lands close to this. Harder means more notes, faster streams and bigger, quicker jumps; a calm song may not reach a high rating');
+            slider('Target Stars', 'autoMapStars', 1, 15, 0.1, 5, v => `${v.toFixed(1)}*`, 'How hard, as Rhythia\'s star rating (SR): the map comes out at exactly this rating (the same formula as Rhythia and CALCULATE SR/RP). Harder means more notes, faster streams and bigger, quicker jumps; past what a song can normally rate, its streams are spaced out too');
             slider('Density', 'autoMapDensity', 25, 300, 5, 100, pct, 'More or fewer notes than the difficulty gives');
             number('Notes to Add (0 = Auto)', 'autoMapCount', 0, 100000, 0, 'An exact number of notes instead of what the difficulty gives');
             y += 6;

@@ -16,8 +16,9 @@
     let GRID = { x: 810, y: 390, w: 300, h: 300 };
 
     const inRect = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-    // web only: the colour of whoever you're mapping with (collab.js), their selection, new notes and place in the song
-    const PEER = 'rgb(255,160,0)', PEER_A = a => `rgba(255,160,0,${a})`;
+    // web only: the people you're mapping with (collab.js), each in their own colour ([r, g, b]): their selection, the
+    // notes they just placed and where they are in the song
+    const PEER_A = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
     // (how long a note they just placed glows)
     const PEER_FLASH = 900;
     const fmtInt = n => Math.trunc(n).toLocaleString('en-US');
@@ -1402,10 +1403,10 @@
                     if (d.note.selected)
                         this.roundedRect(d.x - 4, d.y - 4, d.size + 8, d.size + 8, null, this.color(6, d.progress), 2);
                     if (d.note.peerSel)
-                        this.roundedRect(d.x - 7, d.y - 7, d.size + 14, d.size + 14, null, PEER_A(d.progress), 2);
+                        this.roundedRect(d.x - 7, d.y - 7, d.size + 14, d.size + 14, null, PEER_A(d.note.peerSel, d.progress), 2);
                     const flash = d.note.peerAt ? (performance.now() - d.note.peerAt) / PEER_FLASH : 1;
                     if (flash < 1)
-                        this.roundedRect(d.x - 4 - 14 * flash, d.y - 4 - 14 * flash, d.size + 8 + 28 * flash, d.size + 8 + 28 * flash, null, PEER_A(1 - flash), 3);
+                        this.roundedRect(d.x - 4 - 14 * flash, d.y - 4 - 14 * flash, d.size + 8 + 28 * flash, d.size + 8 + 28 * flash, null, PEER_A(d.note.peerColor, 1 - flash), 3);
                     if (this.hoveringXY === d.note)
                         this.roundedRect(d.x - 4, d.y - 4, d.size + 8, d.size + 8, null, this.color(5, 0.25), 2);
                 }
@@ -1694,10 +1695,10 @@
                             this.strokeBox(x - 4, cellGap - 4, noteSize + 8, noteSize + 8, this.color(6));
                     }
                     if (note.peerSel)
-                        this.strokeBox(x - 7, cellGap - 7, noteSize + 14, noteSize + 14, PEER);
+                        this.strokeBox(x - 7, cellGap - 7, noteSize + 14, noteSize + 14, PEER_A(note.peerSel));
                     if (note.peerAt && performance.now() - note.peerAt < PEER_FLASH) {
                         const f = (performance.now() - note.peerAt) / PEER_FLASH;
-                        this.strokeBox(x - 4 - 8 * f, cellGap - 4 - 8 * f, noteSize + 8 + 16 * f, noteSize + 8 + 16 * f, PEER_A(1 - f));
+                        this.strokeBox(x - 4 - 8 * f, cellGap - 4 - 8 * f, noteSize + 8 + 16 * f, noteSize + 8 + 16 * f, PEER_A(note.peerColor, 1 - f));
                     }
 
                     if (note.ms <= currentTime - sfxOffset) {
@@ -1893,8 +1894,8 @@
             for (const p of this.peers || []) {
                 const px = msX(p.time);
                 if (px >= 0 && px <= W) {
-                    this.line(px, 0, px, H, PEER);
-                    this.text(p.name, px + 4, 2, 16, PEER);
+                    this.line(px, 0, px, H, PEER_A(p.color));
+                    this.text(p.name, px + 4, 2, 16, PEER_A(p.color));
                 }
             }
             if (this.selecting) {
@@ -2126,7 +2127,7 @@
             // (whoever you're mapping with)
             for (const p of e.peers || []) {
                 const px = line.x + line.w * Math.min(1, Math.max(0, p.time / max));
-                ctx.fillStyle = PEER;
+                ctx.fillStyle = PEER_A(p.color);
                 ctx.beginPath();
                 ctx.moveTo(px, y - 4);
                 ctx.lineTo(px - 6, y - 14);

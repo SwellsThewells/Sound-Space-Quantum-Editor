@@ -136,7 +136,9 @@ window.SSQEAutoMapper = (function () {
     }
 
     // notes: [{ x, y, ms }] in editor coordinates (0..2). Returns true when the map is new to it.
-    async function learn(notes, name = '') {
+    // opts.source: where the notes come from (a map made in the editor, learned again each time it's saved): its
+    // earlier version is replaced rather than kept as well
+    async function learn(notes, name = '', opts = {}) {
         await load();
         if (notes.length < 20)
             return false;
@@ -147,6 +149,10 @@ window.SSQEAutoMapper = (function () {
         if (entry.t.length < 20)
             return false;
         entry.id = id;
+        if (opts.source) {
+            entry.source = opts.source;
+            model.maps = model.maps.filter(m => m.source !== opts.source);
+        }
         model.maps.push(entry);
         model.seen.push(id);
         // keep the newest maps when there are too many notes to store
@@ -1133,7 +1139,7 @@ window.SSQEAutoMapper = (function () {
         // (the shortest gap at a difficulty: lv, with the notes a second it averages)
         // (more Density lets it go faster, but never past difficulty 10's top speed, about 42 notes a second: beyond
         // that a stream can't be played, and a harder map than 10 only gets more notes and bigger jumps)
-        const fastestAt = lv => 1000 / Math.min(Math.max(Math.min(12 * Math.pow(1.15, lv - 1) * Math.max(1, opts.density || 1), 12 * Math.pow(1.15, 9)), countNps * 2.6),
+        const fastestAt = lv => 1000 / Math.min(Math.max(Math.min(12 * Math.pow(1.15, lv - 1) * Math.max(1, opts.density || 1), opts.force ? Infinity : 12 * Math.pow(1.15, 9)), countNps * 2.6),
             (countNps || nps * Math.pow(18, (lv - level10) / 9)) * 2.6);
         const fastest = fastestAt(level10);
         // the finest beat division allowed at a tempo: 1/1 or 1/2 for easy maps up to 1/16 for the hardest
@@ -2738,6 +2744,8 @@ window.SSQEAutoMapper = (function () {
     const QUANTUM_WANT = 0.8;
     // (made-up quantum runs come after the learned maps' own quantum patterns, when those fit as well)
     const MADE_COST = 0.45;
+    // (how much less an example map that comes with the editor is wanted than a map it learned)
+    const EXAMPLE_COST = 0.3;
     // (how much a lap round the outside is wanted over a stream from the learned maps)
     const RING_WANT = 0.5;
 
@@ -2910,7 +2918,9 @@ window.SSQEAutoMapper = (function () {
     // turns are the song's, and it never turns straight back. A gap half again as long as the quick notes is a
     // hop, two cells round instead of one.
     const RING = [[0, 0], [1, 0], [2, 0], [2, 1], [2, 2], [1, 2], [0, 2], [0, 1]];
-    function ringRun(start, before, gaps, acc) {
+    // (stride 2: two cells a note, a square round the corners or a diamond through the middles of the edges, for star
+    // ratings past what one-cell streams can reach)
+    function ringRun(start, before, gaps, acc, stride = 1) {
         const n = gaps.length + 1;
         const x = new Float64Array(n), y = new Float64Array(n), t = new Float64Array(n);
         for (let q = 1; q < n; q++)
@@ -2970,7 +2980,7 @@ window.SSQEAutoMapper = (function () {
                 [px, py] = [1, 1];
                 cut = [[ox, oy]];
             } else {
-                idx = (idx + dir * (hop ? 2 : 1) + 8) % 8;
+                idx = (idx + dir * stride * (hop ? 2 : 1) + 8) % 8;
                 [px, py] = RING[idx];
                 since += hop ? 2 : 1;
             }
@@ -3217,10 +3227,12 @@ window.SSQEAutoMapper = (function () {
         // (and the quick notes themselves, a stream, step a cell at a time in every style, as long as they're quick:
         // a steady run of slower notes, where there's time, is the style's own; and a stream's own, see streamGap)
         const sg = streamGap(gap, fast, prevGap, nextGap, opts);
+        // (a map forced past what one-cell streams can rate: its streams spaced out, two cells a note)
+        const spaced = opts.force && (opts.jumpScale || 1) >= 1.2 ? 2.05 : 0;
         if (sg === 'hop')
-            return reach(gap, fast, opts) >= 1.9 ? 2 : 1.41;
+            return spaced || (reach(gap, fast, opts) >= 1.9 ? 2 : 1.41);
         if ((fast > 0 && gap < 1.3 * fast && gap < g && !opts.quantum) || sg === 'step')
-            return Math.min(want, 1.05, reach(gap, fast, opts));
+            return spaced ? Math.min(want * 2, spaced) : Math.min(want, 1.05, reach(gap, fast, opts));
         const move = Math.min(want, reach(gap, fast, opts));
         // (on the grid, a jump shrunk by a calm part or the difficulty's speed is still a jump: across a corner, or
         // two cells where there's time, not a one-cell step)
@@ -3574,6 +3586,8 @@ window.SSQEAutoMapper = (function () {
                 }
             }
             cost -= e.bonus || 0;
+            // (an example map that came with the editor, where it has learned maps of its own: those first)
+            cost += e.penalty || 0;
             cost -= 0.006 * used_len;
             // Quantum: real quantum patterns (from quantum maps, or quantum slides and jumps made for here) are
             // wanted over notes on the grid
@@ -3582,7 +3596,7 @@ window.SSQEAutoMapper = (function () {
             else if (e.made)
                 // (laps round the outside are what a stream on the grid is wanted to do: one plan, turning with the
                 // song, rather than pieces of the learned maps one after another)
-                cost += e.name === 'stream ring' ? -RING_WANT : (e.name === 'stream reverse' ? 0.8 : 0.15) + (opts.lastName === e.name ? 0.3 : 0);
+                cost += e.name === 'stream ring' ? -(opts.ringWant ?? RING_WANT) : (e.name === 'stream reverse' ? 0.8 : 0.15) + (opts.lastName === e.name ? 0.3 : 0);
             // keeps to one map's design rather than hopping between maps; at a change in the music (a new section,
             // a drop bringing in something new) it does the opposite and starts a new pattern
             if (opts.lastEntry === e) {
@@ -3678,7 +3692,7 @@ window.SSQEAutoMapper = (function () {
                 // (human streams never zigzag like stairs or turn right back at speed, so those shapes aren't offered;
                 // laps round the outside the most, as human stream maps)
                 for (const kind of ['ring', 'ring', 'ring', 'ring', 'snake', 'cross'])
-                    consider(kind === 'ring' ? ringRun(prev, prev2, gaps, opts.acc) : streamRun(kind, prev, prev2, gaps), 0, 0, 0, 0);
+                    consider(kind === 'ring' ? ringRun(prev, prev2, gaps, opts.acc, opts.force && (opts.jumpScale || 1) >= 1.2 ? 2 : 1) : streamRun(kind, prev, prev2, gaps), 0, 0, 0, 0);
         }
         // With the Quantum option: quantum parts of the learned maps, jumped into from here (quantum notes seldom
         // land exactly where a learned run starts), and quantum slides and jumps made for exactly this spot and rhythm
@@ -4379,13 +4393,12 @@ window.SSQEAutoMapper = (function () {
         return 10 + (stars - STARS_AT[10]) / 0.9;
     };
 
-    // A map aimed at a star rating (opts.stars, Rhythia's SR): one knob for how hard (the difficulty from 1 to 10, in
-    // between too; past 10 bigger jumps and more notes, under 1 fewer notes), started where that rating usually comes
-    // out, then searched: quick maps (one pass each) rated with Rhythia's star formula until two tries either side of
-    // the target close in on it (each next try between them, never right next to either, as the rating of a made map
-    // isn't exact from one try to the next), or one lands within a quarter of a star. Then the map is made properly at
-    // the best setting, and the closer of that and the best quick one is kept. Without a target, or with a set number
-    // of notes, the map is made once and its rating noted.
+    // A map at a star rating (opts.stars, Rhythia's SR), exactly: one knob for how hard (the difficulty from 1 to 10,
+    // in between too; past 10 bigger jumps, more notes and, as far as it takes, faster streams; under 1 fewer notes),
+    // started where that rating usually comes out, then searched with quick maps (one pass each) for the easiest
+    // setting that makes it at least that hard. That's made properly, and then brought down to the rating exactly by
+    // taking out notes, the ones that make it hardest on the weakest sounds first (fast moves in and out of a quiet
+    // note), never inside a stream if a jump will do. Without a target the map is made once and its rating noted.
     async function generate(opts) {
         const rate = window.SSQEStarRating && window.SSQEStarRating.rate;
         const target = +opts.stars;
@@ -4396,51 +4409,215 @@ window.SSQEAutoMapper = (function () {
             return notes;
         }
         const js = opts.jumpScale || 1, dens = opts.density || 1;
-        const at = u => u > 10 ? { difficulty: 10, jumpScale: js * (1 + 0.12 * (u - 10)), density: dens * (1 + 0.2 * (u - 10)) }
+        const at = u => u > 10 ? { difficulty: 10, jumpScale: js * (1 + 0.12 * (u - 10)), density: dens * (1 + 0.25 * (u - 10)), force: true }
             : u < 1 ? { difficulty: 1, density: dens * Math.max(0.3, u) } : { difficulty: u };
         const progress = opts.progress || (() => { });
-        const SEARCH = 7, CLOSE = 0.25, LO = 0.3, HI = 11;
+        const SEARCH = 10, LO = 0.3, HI = 20;
         const make = async (u, label, tries) => {
             const trace = opts.trace ? [] : undefined;
-            const notes = await generateAt({ ...opts, ...at(u), trace, tries, progress: text => progress(`AIMING AT ${target.toFixed(1)} STARS (${label}) - ${text}`) });
+            const notes = await generateAt({ ...opts, ...at(u), trace, tries, progress: text => progress(`MAKING ${target.toFixed(1)} STARS (${label}) - ${text}`) });
             return { u, notes, sr: rate(notes), trace };
         };
         const tried = [];
-        let u = Math.max(LO, Math.min(HI, difficultyFor(target))), best = null;
+        let u = Math.max(LO, Math.min(HI, difficultyFor(target)));
         for (let t = 0; t < SEARCH; t++) {
             const r = await make(u, `TRY ${t + 1}`, 1);
             tried.push(r);
-            if (!best || Math.abs(r.sr - target) < Math.abs(best.sr - target))
-                best = r;
-            if (Math.abs(r.sr - target) <= CLOSE)
-                break;
+            const above = tried.filter(x => x.sr >= target).sort((p, q) => p.u - q.u)[0];
             const below = tried.filter(x => x.sr < target).sort((p, q) => q.u - p.u)[0];
-            const above = tried.filter(x => x.sr > target).sort((p, q) => p.u - q.u)[0];
+            // (a little over is what's wanted: the notes that take it over come out after)
+            if (above && above.sr - target <= 0.5)
+                break;
             let next;
-            if (below && above && below.u < above.u) {
-                // (between the closest tries either side, by where the target falls between their ratings, kept off
-                // both ends; done when they're too close together to tell apart)
-                if (above.u - below.u < 0.15)
+            if (above && below && below.u < above.u) {
+                if (above.u - below.u < 0.08)
                     break;
-                const f = Math.min(0.8, Math.max(0.2, (target - below.sr) / Math.max(1e-6, above.sr - below.sr)));
+                const f = Math.min(0.85, Math.max(0.15, (target + 0.2 - below.sr) / Math.max(1e-6, above.sr - below.sr)));
                 next = below.u + (above.u - below.u) * f;
-            } else {
-                // (no try on the other side yet: on from the last by how far the rating has to go, about 0.9 stars a
-                // step of the knob, at most 3 steps; out of room: as hard or as easy as it goes)
-                if ((r.sr < target && u >= HI) || (r.sr > target && u <= LO))
+            } else if (r.sr < target) {
+                if (u >= HI)
                     break;
-                next = Math.max(LO, Math.min(HI, u + Math.max(-3, Math.min(3, (target - r.sr) / 0.9))));
+                next = Math.min(HI, u + Math.max(0.3, Math.min(3, (target - r.sr) / 0.9 + 0.2)));
+            } else {
+                if (u <= LO)
+                    break;
+                next = Math.max(LO, u - Math.max(0.2, Math.min(3, (r.sr - target) / 0.9)));
             }
             u = next;
         }
-        // made properly at the best setting (several passes, the most balanced kept, as without a target)
-        const full = await make(best.u, 'FINISHING', undefined);
-        const keep = Math.abs(full.sr - target) <= Math.max(CLOSE, Math.abs(best.sr - target) + 0.1) ? full : best;
+        let base = tried.filter(x => x.sr >= target).sort((p, q) => p.u - q.u)[0];
+        let keep;
+        if (base) {
+            // made properly at that setting (several passes, the most balanced kept); if that one comes out under,
+            // a little harder, and failing that the quick one, which was over
+            keep = await make(base.u, 'FINISHING', undefined);
+            for (let k = 0; keep.sr < target && k < 2; k++) {
+                const again = await make(base.u + 0.3 * (k + 1), 'FINISHING', undefined);
+                if (again.sr >= target)
+                    keep = again;
+            }
+            if (keep.sr < target)
+                keep = base;
+        } else
+            keep = tried.slice().sort((p, q) => Math.abs(p.sr - target) - Math.abs(q.sr - target))[0];
+        progress(`MAKING ${target.toFixed(1)} STARS - EXACTLY`);
+        const a = opts.buffer ? await analyse(opts.buffer) : null;
+        const trimmed = keep.sr > target ? trimToStars(keep.notes, target, rate, a) : { notes: keep.notes, sr: keep.sr };
+        const notes = trimmed.notes;
+        notes.info = { ...keep.notes.info, stars: trimmed.sr, difficulty: keep.u, target };
         if (opts.trace && keep.trace)
             opts.trace.push(...keep.trace);
-        keep.notes.info.stars = keep.sr;
-        keep.notes.info.difficulty = keep.u;
-        return keep.notes;
+        return notes;
+    }
+
+    // Takes notes out of a map until its star rating is the target (to a hundredth or so, where single notes can
+    // still tell; when one note too many or too few, whichever is closer). Which ones: those whose moves in and out
+    // are fastest on the quietest sounds, notes between jumps first and stream notes only after, and never a note
+    // whose going would put the cursor back on the spot it just left.
+    function trimToStars(notesIn, target, rate, a) {
+        const all = notesIn.slice().sort((p, q) => p.ms - q.ms);
+        let best = trimRound(all, target, rate, a, 0);
+        // Then a note at a time, where taking notes out in order doesn't land on it (a nearly empty map's rating
+        // goes up and down as notes go): each step the one note out, or one taken out put back, that brings it
+        // closest, until it's on it or nothing brings it closer
+        if (Math.abs(best.sr - target) > 0.01) {
+            let kept = best.notes.slice();
+            const steps = kept.length < 800 ? 120 : kept.length < 2500 ? 30 : 12;
+            const tries = kept.length < 800 ? 40 : 14;
+            for (let step = 0; step < steps && Math.abs(best.sr - target) > 0.01; step++) {
+                const keptSet = new Set(kept);
+                const out = all.filter(n => !keptSet.has(n));
+                const options = [];
+                // (out: the ones moving fastest in and out; back: the ones nearest the hardest of what's left)
+                const speed = (list, i) => {
+                    const p = list[i - 1], c = list[i], q = list[i + 1];
+                    return (p ? Math.hypot(c.x - p.x, c.y - p.y) / Math.max(15, c.ms - p.ms) : 0) + (q ? Math.hypot(q.x - c.x, q.y - c.y) / Math.max(15, q.ms - c.ms) : 0);
+                };
+                if (best.sr > target)
+                    kept.map((n, i) => [n, speed(kept, i)]).sort((p, q) => q[1] - p[1]).slice(0, tries)
+                        .forEach(([n]) => options.push(kept.filter(m => m !== n)));
+                else
+                    out.slice().sort(() => Math.random() - 0.5).slice(0, tries)
+                        .forEach(n => options.push([...kept, n].sort((p, q) => p.ms - q.ms)));
+                let pick = null;
+                for (const o of options) {
+                    const sr = rate(o);
+                    if (!pick || Math.abs(sr - target) < Math.abs(pick.sr - target))
+                        pick = { notes: o, sr };
+                }
+                if (!pick || Math.abs(pick.sr - target) >= Math.abs(best.sr - target))
+                    break;
+                best = pick;
+                kept = pick.notes;
+            }
+        }
+        return best;
+    }
+
+    function trimRound(notesIn, target, rate, a, round = 0) {
+        const ns = notesIn.slice().sort((p, q) => p.ms - q.ms);
+        const accAt = ms => {
+            if (!a)
+                return 0.5;
+            let m = 0;
+            for (let f = Math.max(0, Math.round(ms / 10) - 2); f <= Math.min(a.frames - 1, Math.round(ms / 10) + 2); f++)
+                m = Math.max(m, a.beats[f], 0.6 * a.hits[f]);
+            return Math.min(1.2, m);
+        };
+        const jumpsFirst = [], streamsAfter = [];
+        for (let i = 1; i + 1 < ns.length; i++) {
+            const p = ns[i - 1], c = ns[i], q = ns[i + 1];
+            // (back on the spot it just left: only in the last round, when nothing else will do)
+            if (Math.hypot(p.x - q.x, p.y - q.y) < 0.05 && round < 3)
+                continue;
+            const g1 = Math.max(15, c.ms - p.ms), g2 = Math.max(15, q.ms - c.ms);
+            const v = Math.hypot(c.x - p.x, c.y - p.y) / g1 + Math.hypot(q.x - c.x, q.y - c.y) / g2;
+            const score = v * (1.3 - accAt(c.ms));
+            (Math.min(g1, g2) >= 110 ? jumpsFirst : streamsAfter).push([i, score]);
+        }
+        const order = [...jumpsFirst.sort((p, q) => q[1] - p[1]), ...streamsAfter.sort((p, q) => q[1] - p[1])].map(x => x[0]);
+        const cache = new Map();
+        const after = k => {
+            if (!cache.has(k)) {
+                const drop = new Set(order.slice(0, k));
+                const kept = ns.filter((_, i) => !drop.has(i));
+                cache.set(k, { notes: kept, sr: rate(kept) });
+            }
+            return cache.get(k);
+        };
+        // (the fewest notes out that bring it to the target or just under, then the closest around there)
+        let lo = 0, hi = order.length;
+        // (all of them out and still over: again, on what's left, its notes' new neighbours)
+        if (after(hi).sr > target)
+            return round < 3 && hi > 0 ? trimRound(after(hi).notes, target, rate, a, round + 1) : after(hi);
+        while (hi - lo > 1) {
+            const mid = (lo + hi) >> 1;
+            if (after(mid).sr > target)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        let best = null;
+        for (let k = Math.max(0, lo - 4); k <= Math.min(order.length, hi + 4); k++) {
+            const r = after(k);
+            if (!best || Math.abs(r.sr - target) < Math.abs(best.sr - target))
+                best = r;
+        }
+        return best;
+    }
+
+    // A set number of notes, exactly: more times than that (rare), the ones closest to their neighbours go; fewer
+    // (the song's sounds and beat divisions have run out), the rest go evenly into the longest gaps between notes,
+    // each gap split into equal parts (one long gap twice as long as another gets twice the notes), so it's always
+    // the number asked for, as playable as that many notes can be.
+    function exactTimes(times, count, startMs, endMs) {
+        times = times.slice().sort((p, q) => p - q);
+        if (!(count > 0) || times.length === count)
+            return times;
+        if (times.length > count) {
+            while (times.length > count) {
+                let at = -1, gap = Infinity;
+                for (let q = 0; q < times.length; q++) {
+                    const g = Math.min(q ? times[q] - times[q - 1] : Infinity, q + 1 < times.length ? times[q + 1] - times[q] : Infinity);
+                    if (g < gap) {
+                        gap = g;
+                        at = q;
+                    }
+                }
+                times.splice(at, 1);
+            }
+            return times;
+        }
+        if (times.length < 2) {
+            const from = times.length ? times[0] : startMs, span = Math.max(1, endMs - from);
+            return Array.from({ length: count }, (_, q) => Math.round(from + span * q / count));
+        }
+        const missing = count - times.length;
+        const gaps = times.slice(1).map((t, q) => t - times[q]);
+        const need = T => gaps.reduce((n, g) => n + Math.max(0, Math.ceil(g / T - 1e-9) - 1), 0);
+        // (the longest piece any gap is cut into: as long as it can be while still taking all of them)
+        let lo = 0.5, hi = Math.max(...gaps);
+        for (let k = 0; k < 50; k++) {
+            const m = (lo + hi) / 2;
+            if (need(m) >= missing)
+                lo = m;
+            else
+                hi = m;
+        }
+        const split = gaps.map(g => Math.max(0, Math.ceil(g / lo - 1e-9) - 1));
+        let extra = split.reduce((n, v) => n + v, 0) - missing;
+        // (one too many here and there: taken back where the pieces are shortest)
+        const byPiece = split.map((v, q) => q).filter(q => split[q] > 0).sort((p, q) => gaps[p] / (split[p] + 1) - gaps[q] / (split[q] + 1));
+        for (let k = 0; extra > 0 && k < byPiece.length; k++, extra--)
+            split[byPiece[k]]--;
+        const out = [];
+        for (let q = 0; q < times.length; q++) {
+            out.push(times[q]);
+            if (q < gaps.length)
+                for (let z = 1; z <= split[q]; z++)
+                    out.push(Math.round(times[q] + gaps[q] * z / (split[q] + 1)));
+        }
+        return out;
     }
 
     async function generateAt(opts) {
@@ -4474,6 +4651,8 @@ window.SSQEAutoMapper = (function () {
             ctx.shifts = a.tempo.steady ? null : a.tempo.shifts;
         }
         let times = ctx.timing ? chooseTimes(a, opts, nps, ctx) : chooseTimesFree(a, opts, nps);
+        if (opts.count > 0)
+            times = exactTimes(times, opts.count, opts.startMs, opts.endMs);
         await tick();
         if (!times.length)
             return Object.assign([], { info: { bpm: detected && detected.bpm, offsetMs: detected && detected.offsetMs, steady: !!(detected && detected.steady) } });
@@ -4486,12 +4665,19 @@ window.SSQEAutoMapper = (function () {
             own.bonus = 0.12;
             entries.push(own);
         }
-        let lib = prepare(entries, !!opts.quantum);
-        // Jumps, streams or quantum asked for: the example maps of that kind lead, with the learned maps whose design
-        // is like theirs (a stream map doesn't get mixed into a jump map). Otherwise the learned maps, with one map
-        // leading and the maps closest to its design (with many maps learned, copying from all of them at once gives a
-        // patchwork: a stretch in one map's design, then suddenly a completely different one); the example maps only
-        // help out while there are few learned maps.
+        // The maps it learned lead, always: every map loaded into the editor teaches it, and what it makes should look
+        // like them. With jumps, streams or quantum asked for, the learned maps whose design is like that kind first
+        // (and if none are, all of them still); otherwise one learned map leads, with the learned maps closest to its
+        // design (copying from all of them at once gives a patchwork: a stretch in one map's design, then suddenly a
+        // completely different one). The example maps that come with the editor only help out: wherever a learned
+        // map has something that fits, it's used first.
+        const learned = prepare(entries, !!opts.quantum);
+        const helpers = list => {
+            for (const e of list)
+                e.penalty = learned.length ? EXAMPLE_COST : 0;
+            return list;
+        };
+        let lib = learned;
         const want = opts.quantum ? 'quantum' : opts.patterns === 'jumps' || opts.patterns === 'streams' ? opts.patterns : null;
         // (the song's rhythm against each map's, by the gap the notes spend half their time in, which comes out
         // about the same at 8, 9 and 10, so every difficulty of a song picks from the same maps)
@@ -4499,33 +4685,33 @@ window.SSQEAutoMapper = (function () {
         const fit = e => Math.abs(Math.log((e.style.gapT || e.style.gap) / usualGap));
         if (want) {
             const kindEx = prepare(exampleEntries().filter(e => e.kind === want), !!opts.quantum);
-            if (kindEx.length) {
-                const ref = kindEx.map(e => e.style);
-                const like = e => Math.min(...ref.map(r => styleDistance(e.style, r)));
-                // (for quantum, any quantum map it learned)
-                const alike = lib.filter(e => e.bonus || like(e) < 1.6 || (want === 'quantum' && e.style.off >= 0.4))
-                    .sort((p, q) => like(p) - like(q)).slice(0, 6);
-                lib = [...kindEx, ...alike];
-            }
+            const ref = kindEx.map(e => e.style);
+            const like = e => ref.length ? Math.min(...ref.map(r => styleDistance(e.style, r))) : 0;
+            // (for quantum, any quantum map it learned)
+            let alike = learned.filter(e => e.bonus || like(e) < 2.2 || (want === 'quantum' && e.style.off >= 0.4));
+            if (!alike.length)
+                alike = learned.slice();
+            alike = alike.sort((p, q) => like(p) - like(q)).slice(0, 8);
+            lib = [...alike, ...helpers(kindEx)];
         } else {
-            if (lib.length < 3)
-                lib = [...lib, ...prepare(exampleEntries(), !!opts.quantum)];
-            // (maps of a completely different design never come in: a jump map doesn't get stream parts)
-            if (lib.length > 3) {
-                let lead = lib.find(e => e.bonus);
+            if (learned.length > 1) {
+                let lead = learned.find(e => e.bonus);
                 if (!lead) {
-                    // (a jump map or a quantum map can join in, but never leads a mixed map)
-                    const plain = lib.filter(e => e.style.off <= 0.4 && !(e.style.jumps > 0.45 && e.style.back > 0.3));
-                    const ranked = (plain.length >= 2 ? plain : lib).slice().sort((p, q) => fit(p) - fit(q)).slice(0, 3);
+                    // (a jump map or a quantum map leads a mixed map only when it's all there is to go on)
+                    const plain = learned.filter(e => e.style.off <= 0.4 && !(e.style.jumps > 0.45 && e.style.back > 0.3));
+                    const ranked = (plain.length ? plain : learned).slice().sort((p, q) => fit(p) - fit(q)).slice(0, 3);
                     // (the same one for every difficulty of a song, picked by the song itself)
                     const songKey = Math.round(a.frames / 7) + Math.round(1000 * (ctx.timing && ctx.timing[0] ? ctx.timing[0].bpm : 0));
                     lead = ranked[(Math.imul(songKey, 2654435761) >>> 0) % ranked.length];
                 }
-                const near = lib.filter(e => e !== lead)
+                const near = learned.filter(e => e !== lead)
                     .map(e => ({ e, d: styleDistance(e.style, lead.style) + 0.6 * fit(e) }))
                     .filter(x => x.d < 3).sort((p, q) => p.d - q.d).slice(0, 9).map(x => x.e);
                 lib = [lead, ...near];
             }
+            // (the example maps help out while there are few learned maps)
+            if (lib.length < 4)
+                lib = [...lib, ...helpers(prepare(exampleEntries(), !!opts.quantum))];
         }
         // (one entry per map: a map that came with the editor and was learned too counts once)
         {
@@ -4571,6 +4757,10 @@ window.SSQEAutoMapper = (function () {
         // for them, not faster); Jump Size scales it too
         const comfort = 0.55 * 4 * Math.pow(1.36, difficulty - 1) * Math.max(1, opts.jumpScale || 1);
         const runOptions = {
+            // (laps round the outside: less wanted where it has learned maps, whose own streams come first)
+            ringWant: learned.length ? 0.15 : RING_WANT,
+            // (a star rating past what this difficulty's own maps reach, see generate)
+            force: !!opts.force,
             flow: opts.flow ?? 0.7, follow: opts.follow ?? 0.75, variety: opts.variety ?? 0.5, flowModel: fm, patterns: opts.patterns, quantum: !!opts.quantum,
             // how much the moves grow and shrink with the gaps (jump maps keep their jumps big even on quicker notes)
             beta: opts.patterns === 'jumps' ? 0.5 : 0.8,
@@ -4596,7 +4786,8 @@ window.SSQEAutoMapper = (function () {
 
         // how fast one move may make the cursor go: comfortable for the difficulty (about 12 cells a second at 5)
         // (about 63 at 10, which the hardest human maps go past one move in ten)
-        const vmax = 4 * Math.pow(1.36, difficulty - 1);
+        // (forced past 10: as much faster as the jumps are bigger, so spaced-out streams can be played at speed)
+        const vmax = 4 * Math.pow(1.36, difficulty - 1) * (opts.force ? Math.pow(Math.max(1, opts.jumpScale || 1), 2) : 1);
         // what can physically be played: the top speed of a single move and how hard the cursor may turn round
         // (about what the hardest human maps reach at 10, far gentler at the easy end)
         const speedCap = Math.max(8, vmax * 1.6), accelCap = vmax * 160;
@@ -4702,7 +4893,7 @@ window.SSQEAutoMapper = (function () {
                 let want = Math.round(opts.count * times.length / (times.length + added));
                 // (and if the slides of the new times can't stretch to make up the rest, again with that many more)
                 for (let round = 0; round < 4; round++) {
-                    times = chooseTimes(a, { ...opts, count: Math.max(2, want) }, nps, ctx);
+                    times = exactTimes(chooseTimes(a, { ...opts, count: Math.max(2, want) }, nps, ctx), Math.max(2, want), opts.startMs, opts.endMs);
                     list = plan(times);
                     let diff = opts.count - times.length - list.reduce((n, l) => n + l.n, 0);
                     for (let pass = 0; diff !== 0 && pass < 200; pass++) {
@@ -4867,5 +5058,5 @@ window.SSQEAutoMapper = (function () {
     }
 
     load();
-    return { learn, learnFiles, stats, statsSync, reset, generate, analyse, findTempo, findEvents };
+    return { learn, learnFiles, stats, statsSync, reset, generate, analyse, findTempo, findEvents, trimToStars };
 })();

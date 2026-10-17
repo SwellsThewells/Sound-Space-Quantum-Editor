@@ -3,6 +3,8 @@
 // Port of NewMaps/Mapping.cs (open/close/save/cache), NewGUI/Windows/GuiWindowMenu.cs, GuiWindowCreate.cs and
 // GuiWindowSettings.cs, plus browser-specific storage (IndexedDB stands in for the editor's cached/ folder).
 (function () {
+    // (a note's place and time, to remember which notes the auto mapper placed)
+    const autoKey = n => `${Math.round(n.x * 1000)}|${Math.round(n.y * 1000)}|${Math.round(n.ms)}`;
     const { Map, Formats, RenderMode } = SSQE;
     const el = (...a) => SSQE.el(...a);
 
@@ -772,6 +774,11 @@
             }
             if (rec.cover)
                 map.coverBytes = rec.cover;
+            if (rec.auto && rec.auto.length) {
+                const auto = new Set(rec.auto);
+                for (const n of map.notes.items)
+                    n.auto = auto.has(autoKey(n));
+            }
             try {
                 map.dirHandle = await this.storage.getHandle(entry.key) || null;
             } catch {
@@ -880,6 +887,8 @@
                 props: map.props,
                 view: { tempoSlider: map.tempoSlider, zoom: map.zoom },
                 cover: map.coverBytes || null,
+                // (which notes the auto mapper placed: see afterSave)
+                auto: map.notes.items.filter(n => n.auto).map(autoKey),
                 updated: Date.now(),
             };
             entry.rec = rec;
@@ -998,6 +1007,13 @@
         afterSave(map, ok) {
             if (this.editor && this.editor.map === map)
                 this.editor.toast(ok ? 'SAVED' : 'FAILED TO SAVE', ok ? 'info' : 'warn');
+            // web only: a map you've made teaches the auto mapper too, each time it's saved (its latest version, not
+            // every one), but only the notes placed by hand: never what the auto mapper put there itself
+            const own = map.notes.items.filter(n => !n.auto);
+            if (ok && window.SSQEAutoMapper && own.length >= 20)
+                SSQEAutoMapper.learn(own.map(n => ({ x: n.x, y: n.y, ms: n.ms })), map.fileId || '', { source: map.key })
+                    .then(learned => learned && this.editor && this.editor.map === map && this.editor.toast('SAVED - AUTO MAPPER LEARNED FROM IT', 'info'))
+                    .catch(() => { });
             const entry = this.openMaps.find(e => e.map === map);
             if (entry)
                 this.persistEntry(entry);

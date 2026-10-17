@@ -251,7 +251,7 @@
             if (!st || !ptr)
                 msg = Date.now() - this.started > 15000 && !this.feed.heard
                     ? `Nothing from ${this.mapper.name} yet.\nThey may have stopped mapping, or turned watching off.`
-                    : `Watching ${this.mapper.name}...\n(everything shows ${SSQEOnline.DELAY / 1000} seconds after it happens)`;
+                    : `Watching ${this.mapper.name}...`;
             else if (Date.now() - this.feed.heard > 10000)
                 msg = `${this.mapper.name} has stopped sending.\nThey may have closed the map, or turned watching off.`;
             else if (scr === 'playtest')
@@ -290,15 +290,14 @@
                 this.text(this.mapper.name, x + c * 0.8, y + c * 1.1, 20 * k, '#fff');
             }
             // the bar: who, and the way out
-            const bw = 760 * k, bh = 54 * k, bx = (W - bw) / 2, by = 880 * k;
+            const bw = 640 * k, bh = 46 * k, bx = (W - bw) / 2, by = 884 * k;
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             ctx.fillRect(bx, by, bw, bh);
             ctx.strokeStyle = 'rgba(255,255,255,0.35)';
             ctx.lineWidth = Math.max(1, 2 * k);
             ctx.strokeRect(bx, by, bw, bh);
             const title = st ? st.title : this.mapper.map;
-            this.text(`WATCHING ${this.mapper.name} - ${title}`.slice(0, 44), bx + 16 * k, by + 8 * k, 22 * k, '#fff');
-            this.text(`${SSQEOnline.DELAY / 1000} s behind${st && st.v && st.v.dlg ? ' - they have a window open' : ''}`, bx + 16 * k, by + 32 * k, 16 * k, '#aaa');
+            this.text(`WATCHING ${this.mapper.name} - ${title}`.slice(0, 40), bx + 16 * k, by + bh / 2, 22 * k, '#fff', 'left', 'middle');
             const sw = 210 * k, sx = bx + bw - sw - 8 * k, sy = by + 8 * k, sh = bh - 16 * k;
             const hover = this.own.x >= sx && this.own.x <= sx + sw && this.own.y >= sy && this.own.y <= sy + sh;
             ctx.fillStyle = hover ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)';

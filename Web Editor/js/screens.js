@@ -745,6 +745,8 @@
             btn(1270, 755, 500, 50, 'CREDITS', 30, () => { save(); app.showScreen('credits'); }),
             // web only: whether people can watch you map (SPECTATE in the menu) while you're logged in
             chk(150, 955, 'Let Others Watch Me Map', 'allowSpectators'),
+            // web only: whether people can invite you to map together (COLLABORATE)
+            chk(150, 1005, 'Let Others Invite Me To Collab', 'allowInvites'),
             // web only: the whole setup (editor and map player settings, background, cursor, note mesh) in one file
             btn(1270, 810, 500, 50, 'EXPORT SETUP (.SSQES)', 30, () => { save(); app.exportSetup(); }),
             btn(1270, 865, 500, 50, 'IMPORT SETUP (.SSQES)', 30, () => app.importSetup()),
@@ -941,7 +943,6 @@
             new G.Label(560, 160, 800, 50, { text: 'MAPPING NOW - PICK SOMEONE TO WATCH', textSize: 36 }),
             new G.Square(530, 215, 860, 770, { color: [0, 0, 0, 40] }),
             empty, ...picks,
-            new G.Label(560, 990, 800, 40, { text: `You see their whole editor and their mouse, ${O ? O.DELAY / 1000 : 5} seconds behind.`, textSize: 26 }),
             new G.Button(1300, 990, 560, 70, { text: 'BACK TO MENU', textSize: 44, onLeftClick: () => app.showMenu() }),
         ];
         const screen = new Screen(app, controls);
@@ -991,7 +992,7 @@
             new G.Label(560, 160, 800, 50, { text: 'ONLINE NOW - INVITE SOMEONE TO MAP WITH YOU', textSize: 34 }),
             new G.Square(530, 215, 860, 770, { color: [0, 0, 0, 40] }),
             info, login, ...rows.flatMap(r => [r.name, r.inv]),
-            new G.Label(480, 990, 800, 40, { text: 'When they accept, you pick the song and you both map it at the same time.', textSize: 22 }),
+            new G.Label(480, 990, 800, 40, { text: 'Up to 5 people. When they accept, you pick the song and you all map it at the same time.', textSize: 22 }),
             new G.Button(1300, 990, 560, 70, { text: 'BACK TO MENU', textSize: 44, onLeftClick: () => app.showMenu() }),
         ];
         const screen = new Screen(app, controls);
@@ -1005,7 +1006,7 @@
                 r.user = u || null;
                 r.name.visible = r.inv.visible = !!u;
                 if (u) {
-                    r.name.text = `${u.name}${u.busy ? '  (mapping with someone)' : ''}`.slice(0, 40);
+                    r.name.text = `${u.name}${u.noInvites ? '  (invites off)' : u.busy ? '  (mapping with someone)' : ''}`.slice(0, 40);
                     const st = C.inviteState(u.id);
                     r.inv.text = st === 'sent' ? 'INVITED...' : st === 'declined' ? 'DECLINED' : 'INVITE';
                 }

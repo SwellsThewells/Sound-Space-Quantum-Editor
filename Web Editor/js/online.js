@@ -324,14 +324,15 @@ window.SSQEOnline = (function () {
                 for (const metas of Object.values(everyone.presenceState()))
                     for (const m of metas)
                         if (m && m.id && m.name)
-                            people.set(m.id, { id: m.id, name: m.name, busy: !!m.busy });
+                            people.set(m.id, { id: m.id, name: m.name, busy: !!m.busy, noInvites: !!m.noInvites });
             });
             everyone.subscribe(status => {
                 everyoneReady = status === 'SUBSCRIBED';
             });
         }
-        if (everyoneReady && (!meOnline || meOnline.id !== user.id || meOnline.busy !== busy)) {
-            meOnline = { id: user.id, name: nameOf(user), busy };
+        const noInvites = !!(app && app.settings.allowInvites === false);
+        if (everyoneReady && (!meOnline || meOnline.id !== user.id || meOnline.busy !== busy || meOnline.noInvites !== noInvites)) {
+            meOnline = { id: user.id, name: nameOf(user), busy, noInvites };
             everyone.track(meOnline);
         }
         if (inboxFor !== user.id) {
