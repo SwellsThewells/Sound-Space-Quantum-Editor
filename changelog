@@ -2,6 +2,21 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.22 - 10/17/2026 --
+
+- COLLABORATE: map any map together, not only a new one. When they accept, you're back on the menu: create a map,
+  load one, paste one or open one from the map bar, and that's the map you all work on (its song and notes go to
+  everyone). CANCEL COLLAB on the menu stops it
+- COLLABORATE: everyone's notes are in their own colour while you map together, so you can see who placed what (your
+  own notes keep your usual colours)
+- COLLABORATE: each person keeps the same colour the whole time and on everyone's screen (it could change, to orange,
+  after someone clicked away to another window); and nobody is dropped for being quiet
+- COLLABORATE: someone's mouse over the grid shows over the same cell on your screen, whatever shape your windows are
+- COLLABORATE: a note placed at the same moment as someone else's edit now goes out straight away (it could wait a
+  few seconds), and a big map goes over in parts
+- Discord rich presence shows when you're collabing, and who with (desktop app)
+
+----------------------------------
    -- Plus 3.0.21 - 10/17/2026 --
 
 - Auto mapper, Target Stars: the map now comes out at the star rating you set, exactly (the same formula as Rhythia

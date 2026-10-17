@@ -330,6 +330,14 @@
                 details = `Editing a map - ${map.notes.items.length} notes`;
                 state = map.fileId || '';
             }
+            // web only: mapping together (collab.js)
+            const collab = window.SSQECollab && SSQECollab.presenceInfo && SSQECollab.presenceInfo();
+            if (collab && !playing) {
+                const who = collab.names.length ? `with ${collab.names.join(', ')}` : 'waiting for them to join';
+                details = collab.mapping && this.editor && this.editor.map
+                    ? `Collaborating - ${this.editor.map.notes.items.length} notes` : 'Starting a collab';
+                state = `${who} (${collab.people} of 5)`.slice(0, 120);
+            }
             window.ssqeDesktop.setPresence({ details, state });
         }
 
