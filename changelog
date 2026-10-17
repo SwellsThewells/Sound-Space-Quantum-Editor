@@ -16,7 +16,8 @@ NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as yo
   Needs some of the song mapped already
 - AUTO MAPPER: far fewer spins round the outside of the grid. Lap after lap round the edge (made up, or copied from
   a learned map that spins a lot) was the same thing over and over: now a half lap is a flourish, more costs more the
-  more the map has spun lately (notes in spins: 40% down to 12%; full laps: 11 a minute down to 3)
+  more the map has spun lately (mixed and stream maps at 8 and 10: notes in spins 40% down to 24%, full laps 11 a
+  minute down to 6)
 - AUTO MAPPER: new stream shapes made for each part, from its sounds: snakes and turns along the grid's lines, crosses
   through the middle and (in a mixed map's intense parts) star streams of knight's-move hops, turning where the music
   hits and switching spin on a strong sound. Which shape goes where comes from the song: rolling hats snake, kicks
@@ -24,7 +25,8 @@ NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as yo
   that sound the same get the same kind of shape. The jump slides in a mixed map's jump parts use them too (they
   always went round the edge)
 - AUTO MAPPER: less copy and paste: the same 6-move shape, turned or mirrored, costs more each time it's used again,
-  and bars that sound like an earlier one copy its pattern less often (repeated shapes: 68% down to 37%)
+  and bars that sound like an earlier one copy its pattern less often (shapes repeated: 68% down to 59%, different
+  shapes used: 32% up to 40%)
 - AUTO MAPPER: streams no longer step across a diagonal where they hop (from the middle of an edge, a hop is a
   knight's move round to the far corner), as human stream maps never do
 
