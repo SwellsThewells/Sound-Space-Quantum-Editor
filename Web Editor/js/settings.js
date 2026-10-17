@@ -142,6 +142,7 @@
         limitPlayerFPS: false,
         lowerBackgroundFPS: true,
         controlGradients: true,
+        buttonGradients: false, // web only: the gradient on buttons (Show Control Gradients), off unless turned on
         msaa: true,
         waveformDetail: 5,
         fontScale: 1,
@@ -225,12 +226,13 @@
     const EDITOR_BACKGROUNDS = {
         'Default': 'background_editor',
         'Custom Image': null,
-        'Grid': 'worlds/grid',
-        'Vaporwave': 'worlds/vaporwave',
-        'Neon Tunnel': 'worlds/neon_tunnel',
-        'Space Tunnel': 'worlds/space_tunnel',
-        'Deep Space': 'worlds/deep_space',
-        'Cubic': 'worlds/cubic',
+        // (the map player's worlds as its camera sees them, rendered at 3840x2160 so they're sharp on any screen)
+        'Grid': 'backgrounds/grid',
+        'Vaporwave': 'backgrounds/vaporwave',
+        'Neon Tunnel': 'backgrounds/neon_tunnel',
+        'Space Tunnel': 'backgrounds/space_tunnel',
+        'Deep Space': 'backgrounds/deep_space',
+        'Cubic': 'backgrounds/cubic',
     };
 
     function editorBackgroundImage(s) {

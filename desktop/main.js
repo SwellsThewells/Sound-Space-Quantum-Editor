@@ -165,6 +165,8 @@ ipcMain.on('ssqe-check-updates', (_, enabled) => {
     if (enabled !== false && !startupChecked) {
         startupChecked = true;
         setTimeout(() => checkForUpdate(false), 1500);
+        // (and while it's open: a version that comes out meanwhile is offered then, not at the next start)
+        setInterval(() => checkForUpdate(false), 10 * 60 * 1000);
     }
 });
 // the CHECK FOR UPDATES button
@@ -207,6 +209,7 @@ async function latestRelease() {
 }
 
 // manual: from the CHECK FOR UPDATES button, which also says when there's nothing new (or the check failed)
+let declined = null, asking = false;
 async function checkForUpdate(manual = false) {
     if ((!app.isPackaged && !manual) || updating)
         return;
@@ -223,9 +226,13 @@ async function checkForUpdate(manual = false) {
         return;
     }
     const version = release.tag_name.replace(/^v/, '');
+    // (a version offered already and put off isn't asked about again until the next one, or a check by hand)
+    if ((!manual && declined === version) || asking)
+        return;
     const asset = (release.assets || []).find(a => /^SSQEPlus.*\.zip$/i.test(a.name));
     const installDir = path.dirname(process.execPath);
     const canInstall = app.isPackaged && process.platform === 'win32' && asset && writable(installDir);
+    asking = true;
     const { response } = await dialog.showMessageBox(win, {
         type: 'info',
         title: NAME,
@@ -235,8 +242,11 @@ async function checkForUpdate(manual = false) {
         defaultId: 0,
         cancelId: 1,
     });
-    if (response !== 0)
+    asking = false;
+    if (response !== 0) {
+        declined = version;
         return;
+    }
     if (!canInstall) {
         shell.openExternal(release.html_url);
         return;

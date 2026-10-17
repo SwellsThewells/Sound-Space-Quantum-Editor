@@ -341,6 +341,19 @@
             ctx.rect(r.x, r.y, r.w, r.h);
     }
 
+    // web only: the menus' buttons, nearly square cornered like the original editor's menu (every button in a list of
+    // controls, and in the containers inside it, still on the usual rounding)
+    const MENU_RADIUS = 0.06;
+    function squareButtons(controls) {
+        for (const c of controls || []) {
+            if (c instanceof Button && c.cornerRadius === 0.125)
+                c.cornerRadius = MENU_RADIUS;
+            if (c.controls)
+                squareButtons(c.controls);
+        }
+        return controls;
+    }
+
     function fillSquircle(ctx, r, cornerRadius, color, alpha = 1) {
         if (alpha <= 0)
             return;
@@ -651,7 +664,8 @@
             const s = this.style;
             fillSquircle(ctx, this.rect, this.cornerRadius, styleColor(s, 0));
 
-            if (this.gradient && settings.controlGradients !== false) {
+            // (web only: flat by default; Settings > Graphics > Show Control Gradients puts the gradient back)
+            if (this.gradient && settings.buttonGradients === true) {
                 ctx.save();
                 squirclePath(ctx, this.rect, this.cornerRadius);
                 ctx.clip();
@@ -1634,7 +1648,7 @@
         crossfade, fadeIn,
         setSettings: s => settings = s,
         ASSETS, fitCanvas, snap, get pixelRatio() { return pixelRatio; },
-        Styles, CenterMode, Text, loadFonts, texture, drawTile, fillSquircle, strokeSquircle, squirclePath, rgb: C.rgb,
+        Styles, CenterMode, Text, loadFonts, texture, drawTile, fillSquircle, strokeSquircle, squirclePath, rgb: C.rgb, squareButtons, MENU_RADIUS,
         AnimatedValue, Control, Interactive, Label, Square, Button, TexturedButton, Checkbox, Slider, Textbox, NumericTextbox,
         Container, NumberBox, Dropdown, ScrollList, ButtonList, Radio, Toast, Window,
     };

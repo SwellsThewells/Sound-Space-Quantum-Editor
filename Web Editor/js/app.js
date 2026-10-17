@@ -4,6 +4,18 @@
 // GuiWindowSettings.cs, plus browser-specific storage (IndexedDB stands in for the editor's cached/ folder).
 (function () {
     // (a note's place and time, to remember which notes the auto mapper placed)
+    // the newest version in a changelog ('-- Plus 3.0.27 - ...'), and whether one version is newer than another
+    const versionIn = text => {
+        const m = /-- Plus (\d+(?:\.\d+)+)/.exec(text || '');
+        return m ? m[1] : null;
+    };
+    const newerVersion = (a, b) => {
+        const p = a.split('.').map(Number), q = b.split('.').map(Number);
+        for (let i = 0; i < Math.max(p.length, q.length); i++)
+            if ((p[i] || 0) !== (q[i] || 0))
+                return (p[i] || 0) > (q[i] || 0);
+        return false;
+    };
     const autoKey = n => `${Math.round(n.x * 1000)}|${Math.round(n.y * 1000)}|${Math.round(n.ms)}`;
     const { Map, Formats, RenderMode } = SSQE;
     const el = (...a) => SSQE.el(...a);
@@ -166,7 +178,7 @@
             this.openMaps = recs.map(rec => ({ key: rec.key, map: null, rec }));
 
             this.applyTheme();
-            this.loadChangelog();
+            this.loadChangelog().then(() => this.watchForUpdates());
             this.showMenu();
             this.startAutosaving();
             // the STATS page: a session, and time in the app and in the editor
@@ -634,6 +646,43 @@
             } catch {
                 this.changelog = 'The changelog is available in the repository (changelog file next to this folder).';
             }
+            this.version ??= versionIn(this.changelog);
+        }
+
+        // web only, in the browser (the desktop app updates itself, see desktop/main.js): every 10 minutes, whether a
+        // newer version has been put online since this page loaded; if so, a popup offers to reload into it (asked
+        // once per version: 'Later' leaves it until the next one)
+        watchForUpdates() {
+            if (window.ssqeDesktop || this.watchingUpdates)
+                return;
+            this.watchingUpdates = true;
+            let offered = null;
+            this.checkWebUpdate = async () => {
+                if (this.settings.checkUpdates === false || !this.version || this.dialogOpen())
+                    return;
+                let text;
+                try {
+                    const res = await fetch(`../changelog?${Date.now()}`, { cache: 'no-store' });
+                    if (!res.ok)
+                        return;
+                    text = (await res.text()).replace(/\r/g, '');
+                } catch {
+                    return;
+                }
+                const latest = versionIn(text);
+                if (!latest || latest === offered || !newerVersion(latest, this.version))
+                    return;
+                offered = latest;
+                const answer = await this.dialogs.confirm(`Version ${latest} is out (you have ${this.version}).\n\nUpdate now? Your maps are saved first, then the page reloads. What's new is in the changelog.`,
+                    [['Update', 'yes'], ['Later', 'no']], 'Info');
+                if (answer !== 'yes')
+                    return;
+                this.flushCache();
+                SSQE.Settings.save(this.settings);
+                await new Promise(r => setTimeout(r, 500));
+                location.reload();
+            };
+            setInterval(() => this.checkWebUpdate(), 10 * 60 * 1000);
         }
 
         isSaved(entry) {
@@ -787,6 +836,17 @@
                 for (const n of map.notes.items)
                     n.auto = auto.has(autoKey(n));
             }
+            // (who placed which notes in a collab, and everyone's colour on this map: see collab.js)
+            if (rec.authors && rec.authors.length)
+                map.authors = new globalThis.Map(rec.authors);
+            if (rec.by && rec.by.length) {
+                const by = new globalThis.Map(rec.by);
+                for (const n of map.notes.items) {
+                    const id = by.get(autoKey(n));
+                    if (id)
+                        n.by = id;
+                }
+            }
             try {
                 map.dirHandle = await this.storage.getHandle(entry.key) || null;
             } catch {
@@ -897,6 +957,9 @@
                 cover: map.coverBytes || null,
                 // (which notes the auto mapper placed: see afterSave)
                 auto: map.notes.items.filter(n => n.auto).map(autoKey),
+                // (who placed which notes in a collab, and each person's name and colour on this map)
+                by: map.notes.items.filter(n => n.by).map(n => [autoKey(n), n.by]),
+                authors: map.authors ? [...map.authors] : [],
                 updated: Date.now(),
             };
             entry.rec = rec;

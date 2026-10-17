@@ -2,6 +2,24 @@
 NOTICE: You are advised not to use Rhythia Online for uploading SSPM files as you cannot delete maps (nor do they accept valid GDPR data removal requests to do so).
 
 ----------------------------------
+   -- Plus 3.0.28 - 10/17/2026 --
+
+- COLLABORATE: who placed each note is now saved with the map, with everyone's colour on it. Collab on that map again
+  and everyone gets their colour back, and the notes of people who aren't there show in their colours too (your own
+  notes keep your usual colours; the colours show while you're collabing)
+- COLLABORATE: when someone accepts your invite, a popup tells you to choose the map: CREATE NEW MAP, LOAD MAP,
+  PASTE MAP or one from the map bar
+- Every button is flat now (no gradient): the menus, settings, stats, spectate, collaborate (LEAVE too), the map
+  player's menus and the editor. Settings > Graphics > Show Control Gradients puts the gradient back. Buttons on all
+  the menu screens have nearly square corners, and the collab bar's LEAVE and INVITE look like the other buttons
+- STATS looks like the other menus: the title, an EDITOR panel and a PLAYER panel with the numbers in rows, and the
+  button below
+- The editor backgrounds (Grid, Vaporwave, Neon Tunnel, Space Tunnel, Deep Space, Cubic) are sharp now: rendered from
+  the map player's worlds at 3840x2160 instead of small pictures stretched over the screen
+- UPDATES: a new version that comes out while the app is open is offered then: the desktop app checks every 10
+  minutes and asks to Update Now (once per version if you pick Later); in the browser it asks to reload into it
+
+----------------------------------
    -- Plus 3.0.27 - 10/17/2026 --
 
 - TIMELINE: no more jumping back or restarting by itself while the song plays, mapping alone or together

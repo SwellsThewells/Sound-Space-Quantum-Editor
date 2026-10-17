@@ -157,7 +157,7 @@
     class Screen {
         constructor(app, controls) {
             this.app = app;
-            this.win = new G.Window(app, controls);
+            this.win = new G.Window(app, G.squareButtons(controls));
             this.canvas = document.getElementById('editor-canvas');
             this.ctx = this.canvas.getContext('2d');
             this.running = false;
@@ -257,7 +257,7 @@
         const s = app.settings;
         const label = (x, y, w, h, props) => new G.Label(x, y, w, h, { centerMode: None, ...props });
         // (flat, without the gradient, and nearly square cornered, like the original editor's menu)
-        const button = (x, y, w, h, text, textSize, onClick) => new G.Button(x, y, w, h, { text, textSize, onLeftClick: onClick, gradient: false, cornerRadius: 0.06 });
+        const button = (x, y, w, h, text, textSize, onClick) => new G.Button(x, y, w, h, { text, textSize, onLeftClick: onClick });
 
         const changelog = new ScrollingText(60, 230, 890, 715, { content: app.changelog || 'Loading...' });
         // (the buttons are a little shorter than the original's so STATS and CREDITS fit in the column)
@@ -620,7 +620,7 @@
             new G.Label(0, 460, 400, 55, { textSize: 34, centerMode: None, text: '' }),
             chk(0, 510, 'Lower FPS in Background', 'lowerBackgroundFPS'),
             chk(700, 0, 'Use Anti-Aliasing', 'msaa'),
-            chk(700, 60, 'Show Control Gradients', 'controlGradients'),
+            chk(700, 60, 'Show Control Gradients', 'buttonGradients'),
             lbl(700, 120, 200, 26, 'Font Scale:'),
             num(700, 150, 200, 50, 'fontScale', { increment: 0.05, isPositive: true, isFloat: true, textSize: 30, bounds: [0.25, 2.5], style: G.Styles.Textbox_Uncolored }),
             chk(700, 300, 'Grid Squircles', 'gridSquircles'),
@@ -781,53 +781,60 @@
             SSQEBot.stats().then(r => r && (replays = r.replays || 0)).catch(() => { });
         const n = v => S.number(v), t = v => S.duration(v);
         const pct = v => `${(Number(v) || 0).toFixed(2)}%`;
-        const TILES = [
-            ['TIME EDITING', () => t(data.timeEditing)],
-            ['TIME PLAYING', () => t(data.timePlaying)],
-            ['TIME IN THE APP', () => t(data.timeInApp)],
-            ['SESSIONS', () => n(data.sessions)],
-            ['DAYS USED', () => n(data.daysUsed)],
-            ['NOTES PLACED', () => n(data.notesPlaced)],
-            ['NOTES DELETED', () => n(data.notesDeleted)],
-            ['MAPS CREATED', () => n(data.mapsCreated)],
-            ['MAPS OPENED', () => n(data.mapsOpened)],
-            ['MAPS EXPORTED', () => n(data.mapsExported)],
-            ['AUTO MAPS MADE', () => n(data.autoMaps)],
-            ['NOTES AUTO MAPPED', () => n(data.notesAutoMapped)],
-            ['MAPS LEARNED', () => n(learned.maps)],
-            ['REPLAYS LEARNED', () => n(replays)],
-            ['OPEN MAPS', () => n(app.openMaps.length)],
-            ['PLAYS', () => n(data.plays)],
-            ['PLAYTESTS', () => n(data.playtests)],
-            ['NOTES HIT', () => n(data.notesHit)],
-            ['NOTES MISSED', () => n(data.notesMissed)],
-            ['FULL COMBOS', () => n(data.fullCombos)],
-            ['BEST ACCURACY', () => pct(data.bestAccuracy)],
-            ['AVERAGE ACCURACY', () => data.accuracyRuns ? pct(data.accuracySum / data.accuracyRuns) : '-'],
-            ['BEST COMBO', () => n(data.bestCombo)],
-            ['AUTOPLAYS WATCHED', () => n(data.watched)],
-            ['SETUPS SHARED', () => n(data.setupsShared)],
+        // laid out like the main menu: the title top left, the editing numbers in a dark panel on the left, the
+        // playing ones in one on the right, and the button under them
+        const EDITING = [
+            ['Time editing', () => t(data.timeEditing)],
+            ['Time in the app', () => t(data.timeInApp)],
+            ['Sessions', () => n(data.sessions)],
+            ['Days used', () => n(data.daysUsed)],
+            ['Notes placed', () => n(data.notesPlaced)],
+            ['Notes deleted', () => n(data.notesDeleted)],
+            ['Maps created', () => n(data.mapsCreated)],
+            ['Maps opened', () => n(data.mapsOpened)],
+            ['Maps exported', () => n(data.mapsExported)],
+            ['Open maps', () => n(app.openMaps.length)],
+            ['Auto maps made', () => n(data.autoMaps)],
+            ['Notes auto mapped', () => n(data.notesAutoMapped)],
+            ['Maps learned', () => n(learned.maps)],
         ];
-        const W = 340, H = 118, GAP_X = 24, GAP_Y = 18, X0 = 60, Y0 = 170;
+        const PLAYING = [
+            ['Time playing', () => t(data.timePlaying)],
+            ['Plays', () => n(data.plays)],
+            ['Playtests', () => n(data.playtests)],
+            ['Notes hit', () => n(data.notesHit)],
+            ['Notes missed', () => n(data.notesMissed)],
+            ['Full combos', () => n(data.fullCombos)],
+            ['Best accuracy', () => pct(data.bestAccuracy)],
+            ['Average accuracy', () => data.accuracyRuns ? pct(data.accuracySum / data.accuracyRuns) : '-'],
+            ['Best combo', () => n(data.bestCombo)],
+            ['Autoplays watched', () => n(data.watched)],
+            ['Replays learned', () => n(replays)],
+            ['Setups shared', () => n(data.setupsShared)],
+        ];
         const values = [];
-        const tiles = TILES.flatMap(([caption, get], i) => {
-            const x = X0 + (i % 5) * (W + GAP_X), y = Y0 + Math.floor(i / 5) * (H + GAP_Y);
-            const value = new G.Label(x, y + 12, W, 62, { text: get(), textSize: 50, colorSetting: 'color1' });
+        const rows = (list, x, y, w, step) => list.flatMap(([caption, get], i) => {
+            const value = new G.Label(x + w * 0.58, y + i * step, w * 0.42, 36, { text: get(), textSize: 30, centerMode: None });
             values.push([value, get]);
-            return [
-                new G.Square(x, y, W, H, { color: [0, 0, 0, 55], cornerRadius: 0.12 }),
-                value,
-                new G.Label(x, y + 74, W, 32, { text: caption, textSize: 24 }),
-            ];
+            return [new G.Label(x, y + i * step, w * 0.58, 36, { text: caption, textSize: 30, centerMode: None }), value];
         });
-        const since = new G.Label(218, 118, 600, 36, { text: '', textSize: 26, centerMode: None });
+        const since = new G.Label(75, 1000, 900, 36, { text: '', textSize: 24, centerMode: None });
         const controls = [
             background(),
-            new Picture(35, 4, 160, 130, { name: 'logo', align: 'left' }),
-            new G.Label(215, 22, 400, 100, { text: 'STATS', textSize: 96, font: 'square', centerMode: None }),
+            new G.Square(35, 180, 950, 790, { color: [0, 0, 0, 40] }),
+            new G.Square(55, 230, 900, 715, { color: [0, 0, 0, 50] }),
+            new G.Square(1150, 180, 735, 670, { color: [0, 0, 0, 40] }),
+            new G.Square(1170, 230, 695, 600, { color: [0, 0, 0, 50] }),
+            new G.Square(0, 1040, 1920, 40, { color: [0, 0, 0, 50] }),
+            new Picture(35, 4, 212, 172, { name: 'logo', align: 'left' }),
+            new G.Label(262, 26, 700, 90, { text: 'QUANTUM EDITOR PLUS', textSize: 84, font: 'square', centerMode: None }),
+            new G.Label(262, 118, 400, 40, { text: 'STATS', textSize: 38, font: 'square', centerMode: None }),
+            new G.Label(60, 188, 400, 40, { text: 'EDITOR', textSize: 42, centerMode: None }),
+            new G.Label(1175, 188, 400, 40, { text: 'PLAYER', textSize: 42, centerMode: None }),
+            ...rows(EDITING, 80, 248, 850, 53),
+            ...rows(PLAYING, 1195, 248, 650, 48),
             since,
-            ...tiles,
-            new G.Button(660, 930, 600, 100, { text: 'BACK TO MENU', textSize: 52, onLeftClick: () => app.showMenu() }),
+            new G.Button(1190, 880, 600, 100, { text: 'BACK TO MENU', textSize: 54, onLeftClick: () => app.showMenu() }),
         ];
         const screen = new Screen(app, controls);
         let wait = 0;
